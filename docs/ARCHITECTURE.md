@@ -1,0 +1,65 @@
+# Architecture
+
+## Shape of the system
+
+Marketing Team Task Bot is one Next.js application backed by one Supabase PostgreSQL database. It is deliberately a modular monolith.
+
+```text
+Telegram updates ──> webhook adapter ──┐
+                                      ├──> application/domain services ──> repositories ──> PostgreSQL
+Mini App/API ──────> HTTP adapter ─────┘              │
+                                                     └──> shared permission guards
+```
+
+The Telegram and Mini App transports validate and translate external data, resolve a verified actor, call the same application services, and format results. They do not own workflow or authorization rules.
+
+## Runtime and repository boundaries
+
+- `src/app`: Next.js UI and route handlers. Route handlers are adapters, not business services.
+- `src/domain`: pure TypeScript task concepts, validators, event definitions, and permission rules. It does not import Next.js, Telegram, or Supabase.
+- `src/server`: trusted application services, identity verification, database clients, and repository implementations/contracts.
+- `src/telegram`: Telegram Bot API transport, update parsing, and reply formatting.
+- `supabase/migrations`: ordered database schema and security changes.
+- `tests`: unit tests focused on business boundaries.
+
+Node.js is the default runtime. Edge runtime is not needed and would unnecessarily constrain cryptography and server dependencies.
+
+## Data and transaction model
+
+PostgreSQL is the source of truth. Current task state is stored in `tasks`; historical facts are appended to `task_events`. Requests and revision records retain workflow-specific details.
+
+Every important state mutation must update the current projection and append its event in one PostgreSQL transaction. Repository contracts expose atomic state-plus-event operations. Later sprints will implement these as narrowly scoped PostgreSQL functions called through Supabase RPC, with concurrency predicates such as `status = 'PENDING'`. This prevents partial state changes and duplicate request approvals. General-purpose mutation RPCs or a workflow engine are intentionally avoided.
+
+Task events are append-only. Database triggers reject update and delete attempts even from trusted application code. Corrections are represented by new events.
+
+## Security and identity
+
+Browser code never receives `SUPABASE_SERVICE_ROLE_KEY` or `TELEGRAM_BOT_TOKEN`. During the current server-mediated design, application tables are inaccessible to `anon` and `authenticated`; RLS is enabled with no permissive policies, and only trusted server code receives explicit table privileges through `service_role`.
+
+Telegram webhook calls must include the configured secret token header. Incoming update JSON is runtime-validated before use.
+
+Mini App authentication will verify Telegram `initData` server-side using Telegram's documented signature algorithm, expiration checks, and the bot secret. The backend derives `telegram_user_id` from verified data and resolves it to an active internal user. A raw browser-provided ID, username, role, or `isHead` flag is never trusted.
+
+Application services receive an `ActorContext` created only after server verification. Shared guards determine whether that actor is Head, creator, or assignee. Every sensitive action checks those guards even if its UI control is hidden.
+
+## Supabase access
+
+The backend uses a server-only Supabase client with disabled session persistence. The service-role key is used only in the trusted Node.js runtime. No direct database client is created in the Mini App during Sprint 0.
+
+Tables live in `public` for conventional Supabase tooling but are opt-in locked: explicit grants are revoked from public clients, RLS is enabled, and no browser policies are installed. If direct authenticated reads become useful later, they require narrowly scoped policies derived from verified identities and a documented security review.
+
+## Configuration
+
+Secrets and environment-specific identifiers come from environment variables. Separate runtime parsers validate application, Supabase, and Telegram configuration only when that capability is used. This allows builds and pure unit tests without real credentials while still failing early when a configured integration starts.
+
+## Notifications and scheduling
+
+Future scheduled handlers query PostgreSQL for due work and record delivery/idempotency markers before sending. The architecture can use Vercel Cron or Supabase Cron later; the product does not need Redis or a queue for its volume. All schedule calculations use `Asia/Tashkent`, while database timestamps remain `timestamptz`/UTC.
+
+## Deployment
+
+The expected production layout is a single Next.js deployment (for example, Vercel) plus one managed Supabase project and a Telegram HTTPS webhook pointed at the deployment. Migrations are applied in order during a controlled release. No production resources are created during Sprint 0.
+
+## Deferred data structures
+
+Subtasks, checklist/templates, notification delivery markers, and Telegram message links are deferred until their sprints. The task/event design allows them to reference task/user IDs without altering transport or permission boundaries.
