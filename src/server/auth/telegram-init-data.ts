@@ -33,13 +33,14 @@ export function verifyTelegramInitData(
   const receivedHash = params.get("hash");
   const authDateText = params.get("auth_date");
   const userText = params.get("user");
-  if (!receivedHash || !/^[a-f0-9]{64}$/i.test(receivedHash) || !authDateText || !userText) {
+  const hasSingleCriticalValue = ["hash", "auth_date", "user"].every((key) => params.getAll(key).length === 1);
+  if (!hasSingleCriticalValue || !receivedHash || !/^[a-f0-9]{64}$/i.test(receivedHash) || !authDateText || !userText) {
     throw new TelegramInitDataError("Telegram init data is incomplete.");
   }
 
   const dataCheckString = [...params.entries()]
     .filter(([key]) => key !== "hash")
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
 

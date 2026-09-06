@@ -8,6 +8,9 @@ const positiveTelegramInteger = z.string().regex(/^\d+$/, "Must be a positive Te
 const telegramBotToken = z
   .string()
   .regex(/^\d{6,12}:[A-Za-z0-9_-]{30,100}$/, "Must be a valid Telegram bot token");
+const telegramWebhookSecret = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{16,256}$/, "Must be 16-256 URL-safe characters");
 
 const AppConfigSchema = z.object({
   APP_URL: z.string().url(),
@@ -41,7 +44,7 @@ const SupabaseConfigSchema = z
 
 const TelegramConfigSchema = z.object({
   TELEGRAM_BOT_TOKEN: telegramBotToken,
-  TELEGRAM_WEBHOOK_SECRET: requiredSecret,
+  TELEGRAM_WEBHOOK_SECRET: telegramWebhookSecret,
 });
 
 const TeamBootstrapConfigSchema = z.object({

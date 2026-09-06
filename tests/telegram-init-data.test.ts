@@ -13,7 +13,7 @@ function signedInitData(overrides: Record<string, string> = {}) {
     ...overrides,
   });
   const check = [...params.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
   const secret = createHmac("sha256", "WebAppData").update(botToken).digest();
@@ -38,5 +38,10 @@ describe("Telegram Mini App initData verification", () => {
   it("rejects correctly signed but expired data", () => {
     const oldAuthDate = String(Math.floor(now.getTime() / 1000) - 3601);
     expect(() => verifyTelegramInitData(signedInitData({ auth_date: oldAuthDate }), botToken, now)).toThrow(/expired/);
+  });
+
+  it("rejects duplicate identity-bearing parameters", () => {
+    const duplicated = `${signedInitData()}&user=${encodeURIComponent(JSON.stringify({ id: 1, first_name: "Mallory" }))}`;
+    expect(() => verifyTelegramInitData(duplicated, botToken, now)).toThrow(/incomplete/);
   });
 });
