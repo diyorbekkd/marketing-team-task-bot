@@ -26,10 +26,20 @@ const TelegramMessageSchema = z
   })
   .passthrough();
 
+const TelegramCallbackQuerySchema = z
+  .object({
+    id: z.string(),
+    from: TelegramUserSchema,
+    message: TelegramMessageSchema.optional(),
+    data: z.string().max(64).optional(),
+  })
+  .passthrough();
+
 export const TelegramUpdateSchema = z
   .object({
     update_id: z.number().int().nonnegative(),
     message: TelegramMessageSchema.optional(),
+    callback_query: TelegramCallbackQuerySchema.optional(),
   })
   .passthrough();
 

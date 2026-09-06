@@ -1,14 +1,15 @@
 import "server-only";
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseConfig } from "@/server/config";
+import type { Database } from "./database.types";
 
-let adminClient: ReturnType<typeof createClient> | undefined;
+let adminClient: SupabaseClient<Database> | undefined;
 
 export function getSupabaseAdminClient() {
   if (!adminClient) {
     const config = getSupabaseConfig();
-    adminClient = createClient(config.url, config.secretKey, {
+    adminClient = createClient<Database>(config.url, config.secretKey, {
       auth: {
         autoRefreshToken: false,
         detectSessionInUrl: false,

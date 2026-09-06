@@ -1,6 +1,8 @@
 import { ConfigurationError, getTelegramConfig } from "@/server/config";
-import { sendTelegramMessage } from "@/telegram/client";
-import { handleTelegramUpdate, TelegramUpdateSchema } from "@/telegram/update";
+import { getMarketingService } from "@/server/application";
+import { answerTelegramCallback, sendTelegramMessage } from "@/telegram/client";
+import { createTelegramUpdateHandler } from "@/telegram/handler";
+import { TelegramUpdateSchema } from "@/telegram/update";
 import { isValidWebhookSecret } from "@/telegram/webhook-security";
 
 export async function POST(request: Request) {
@@ -32,10 +34,13 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid Telegram update." }, { status: 400 });
   }
 
-  const reply = handleTelegramUpdate(parsed.data);
-  if (reply) {
+  const result = await createTelegramUpdateHandler(getMarketingService())(parsed.data);
+  if (result.callbackQueryId) {
+    await answerTelegramCallback(config.botToken, result.callbackQueryId);
+  }
+  for (const message of result.messages) {
     try {
-      await sendTelegramMessage(config.botToken, reply.chatId, reply.text);
+      await sendTelegramMessage(config.botToken, message);
     } catch {
       // A non-2xx response asks Telegram to retry. This is preferable to
       // silently losing the reply until durable outbound delivery exists.
