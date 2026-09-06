@@ -1,0 +1,29 @@
+# dependencies
+/node_modules/
+
+# Next.js
+/.next/
+/out/
+
+# production output
+/build/
+
+# test output
+/coverage/
+
+# local Supabase state
+/supabase/.branches/
+/supabase/.temp/
+
+# environment files (the documented example is safe)
+.env
+.env.*
+!.env.example
+
+# logs and local tooling
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.DS_Store
+*.tsbuildinfo
