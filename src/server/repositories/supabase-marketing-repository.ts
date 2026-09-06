@@ -219,6 +219,7 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       .from("users")
       .update({ role, is_active: true })
       .eq("id", userId)
+      .eq("is_active", false)
       .select("*")
       .single();
     if (error || !data) throwDataError(error, "Unable to activate user.");

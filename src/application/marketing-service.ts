@@ -54,6 +54,16 @@ export class MarketingService {
     if (!isHead(actorFromUser(actor))) {
       throw new ApplicationError("FORBIDDEN", "Only Head may activate team members.");
     }
+    if (role === "HEAD_OF_MARKETING") {
+      throw new ApplicationError("INVALID_INPUT", "Head role transfer is outside the MVP activation flow.");
+    }
+    const target = await this.repository.getUserById(userId);
+    if (!target) {
+      throw new ApplicationError("NOT_FOUND", "User not found.");
+    }
+    if (target.isActive) {
+      throw new ApplicationError("CONFLICT", "This team member is already active.");
+    }
     return this.repository.activateUser(userId, role);
   }
 

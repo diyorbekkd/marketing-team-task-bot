@@ -1,10 +1,11 @@
 import { z } from "zod";
-import { TeamRoleSchema } from "@/domain/models";
 import { getMarketingService } from "@/server/application";
 import { requireRequestActor } from "@/server/auth/request-actor";
 import { errorResponse } from "@/server/http/errors";
 
-const BodySchema = z.object({ role: TeamRoleSchema }).strict();
+const BodySchema = z.object({
+  role: z.enum(["OPERATOR_VIDEO_EDITOR", "CONTENT_MARKETER", "DIGITAL_MARKETER", "SMM_MANAGER"]),
+}).strict();
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {

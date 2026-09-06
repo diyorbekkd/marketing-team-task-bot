@@ -131,6 +131,17 @@ describe("MarketingService MVP permissions", () => {
     await expect(service.listTasks(head, "team")).resolves.toHaveLength(1);
   });
 
+  it("activates only pending employees and does not allow Head transfer", async () => {
+    const pending = { ...unrelated, isActive: false };
+    const repo = repository({ getUserById: vi.fn(async () => pending) });
+    const service = new MarketingService(repo);
+
+    await expect(service.activateUser(assignee, pending.id, "DIGITAL_MARKETER")).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(service.activateUser(head, pending.id, "HEAD_OF_MARKETING")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await service.activateUser(head, pending.id, "DIGITAL_MARKETER");
+    expect(repo.activateUser).toHaveBeenCalledWith(pending.id, "DIGITAL_MARKETER");
+  });
+
   it("derives Today and Overdue views in Asia/Tashkent without an OVERDUE status", async () => {
     const repo = repository({
       listTasks: vi.fn(async () => [
