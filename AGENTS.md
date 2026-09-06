@@ -16,3 +16,8 @@ These rules apply to every coding agent working in this repository.
 12. Add meaningful tests for important business and permission rules. Run lint, typecheck, tests, and build before declaring work complete.
 13. Prefer straightforward code over framework-like abstractions. This is a small internal system, not a microservice platform.
 14. Report what changed, what was verified, and any remaining limitations after each task.
+15. Recover work from `.ai/PROJECT_STATE.md` and `.ai/CURRENT_SPRINT.md`; chat memory is not authoritative.
+16. Keep `.ai/PROJECT_STATE.md` current after every meaningful implementation/review cycle.
+17. Codex is the lead implementer. Use the repository review scripts for independent Claude review, triage findings instead of accepting them blindly, and never allow two agents to edit the same working tree concurrently.
+18. Before moving to another sprint, satisfy its acceptance criteria, resolve valid Critical/High findings, run the complete quality gate, commit logical work, and prepare the next sprint state.
+19. Public-schema default privileges are revoked. Every migration that creates a table must explicitly enable RLS, revoke browser-role access, and grant only the required `service_role` privileges.

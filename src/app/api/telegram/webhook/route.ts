@@ -34,7 +34,14 @@ export async function POST(request: Request) {
 
   const reply = handleTelegramUpdate(parsed.data);
   if (reply) {
-    await sendTelegramMessage(reply.chatId, reply.text);
+    try {
+      await sendTelegramMessage(config.botToken, reply.chatId, reply.text);
+    } catch {
+      // A non-2xx response asks Telegram to retry. This is preferable to
+      // silently losing the reply until durable outbound delivery exists.
+      console.error("Failed to deliver Telegram reply.");
+      return Response.json({ error: "Telegram reply delivery failed." }, { status: 502 });
+    }
   }
 
   return Response.json({ ok: true });

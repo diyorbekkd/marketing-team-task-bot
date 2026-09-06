@@ -1,15 +1,13 @@
 import "server-only";
 
 import { z } from "zod";
-import { getTelegramConfig } from "@/server/config";
 
 const TelegramApiResponseSchema = z.object({
   ok: z.boolean(),
   description: z.string().optional(),
 });
 
-export async function sendTelegramMessage(chatId: number, text: string): Promise<void> {
-  const { botToken } = getTelegramConfig();
+export async function sendTelegramMessage(botToken: string, chatId: number, text: string): Promise<void> {
   const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },

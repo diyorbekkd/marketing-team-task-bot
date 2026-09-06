@@ -12,25 +12,23 @@ describe("configuration validation", () => {
       APP_URL: "https://tasks.example.com",
       APP_TIMEZONE: "Asia/Tashkent",
       SUPABASE_URL: "https://project.supabase.co",
-      SUPABASE_ANON_KEY: "public-placeholder",
-      SUPABASE_SERVICE_ROLE_KEY: "server-placeholder",
-      TELEGRAM_BOT_TOKEN: "bot-placeholder",
+      SUPABASE_PUBLISHABLE_KEY: "public-placeholder",
+      SUPABASE_SECRET_KEY: "server-placeholder",
+      TELEGRAM_BOT_TOKEN: "123456789:abcdefghijklmnopqrstuvwxyz_ABCD12345",
       TELEGRAM_WEBHOOK_SECRET: "webhook-placeholder",
       TELEGRAM_GROUP_ID: "-1001234567890",
       HEAD_TELEGRAM_USER_ID: "123456789",
     };
 
     expect(getAppConfig(env).timezone).toBe("Asia/Tashkent");
-    expect(getSupabaseConfig(env).serviceRoleKey).toBe("server-placeholder");
-    expect(getTelegramConfig(env).groupId).toBe("-1001234567890");
+    expect(getSupabaseConfig(env).secretKey).toBe("server-placeholder");
+    expect(getTelegramConfig(env).webhookSecret).toBe("webhook-placeholder");
   });
 
   it("fails with the missing variable name but not secret values", () => {
     const env = {
       TELEGRAM_BOT_TOKEN: "",
       TELEGRAM_WEBHOOK_SECRET: "do-not-print-this",
-      TELEGRAM_GROUP_ID: "not-an-id",
-      HEAD_TELEGRAM_USER_ID: "123",
     };
 
     let thrown: unknown;
@@ -42,7 +40,17 @@ describe("configuration validation", () => {
 
     expect(thrown).toBeInstanceOf(ConfigurationError);
     expect(String(thrown)).toContain("TELEGRAM_BOT_TOKEN");
-    expect(String(thrown)).toContain("TELEGRAM_GROUP_ID");
     expect(String(thrown)).not.toContain("do-not-print-this");
+  });
+
+  it("supports legacy Supabase key names during migration", () => {
+    const config = getSupabaseConfig({
+      SUPABASE_URL: "https://project.supabase.co",
+      SUPABASE_ANON_KEY: "legacy-public-placeholder",
+      SUPABASE_SERVICE_ROLE_KEY: "legacy-server-placeholder",
+    });
+
+    expect(config.publishableKey).toBe("legacy-public-placeholder");
+    expect(config.secretKey).toBe("legacy-server-placeholder");
   });
 });

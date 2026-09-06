@@ -1,0 +1,32 @@
+# Project state
+
+- Current sprint: Fast-track MVP vertical slice
+- Current branch: `sprint-0/foundation` (preparing `fast-track/mvp`)
+- Current objective: Deliver a real usable MVP today through P0 database/identity/permissions, P1 Telegram onboarding and task creation, P2 core lifecycle/requests, P3 functional Mini App, P4 live integration/deployment, and P5 reminders if time remains.
+- Completed sprints: Sprint 0 complete and independently reviewed.
+- Completed current tasks:
+  - Product, architecture, sprint, and Sprint 0 documentation
+  - Next.js/TypeScript application skeleton
+  - Foundational Supabase schema and RLS lock-down
+  - Shared permission and event foundations
+  - Telegram webhook and Mini App shell
+  - Foundation test/build gate (19 tests passing after review remediation)
+  - Claude general and security reviews with no Critical/High findings
+  - Revision-history immutability and webhook/config hardening
+- Remaining tasks:
+  - P0: repository implementation, verified Telegram identity, centralized permissions, and database connection
+  - P1: Telegram onboarding and shorthand task creation
+  - P2: accept/blocked/review/revision/deadline-request workflows
+  - P3: My Tasks, Team Tasks, Today, Overdue, Kanban, details, Quick Add
+  - P4: live integration and safe deployment
+  - P5: deadline reminders if time remains
+- Deferred roadmap items: advanced analytics, calendar, subtasks, checklist templates, relay, recurring tasks, categories, exhaustive tests, and nonessential visual polish.
+- Latest test/build state: 2026-09-06 — lint PASS; typecheck PASS; 19/19 tests PASS; Next.js production build PASS; npm production audit reports 0 vulnerabilities.
+- Latest Claude review verdict: General `PASS_WITH_NOTES`; security `PASS_WITH_NOTES`; all required findings remediated locally.
+- Unresolved findings: Webhook update idempotency is required before mutating commands; CSP is required before authenticated Mini App data.
+- Known blockers: Docker is unavailable. The `.env.local` Supabase project (`cbjcclefgxrdyjwkjcpq`) is not visible to the connected Supabase management account, so DDL is currently `PENDING_LIVE_VERIFICATION`. Application keys and Telegram credentials are present. APP_URL and initial Telegram IDs are not yet populated and may be derived/configured during integration.
+- Latest commits:
+  - `b89bec7 chore: keep lint toolchain current`
+  - `15f3ba4 test: add foundation business rule coverage`
+  - `0d9fec6 feat(db): add foundational task schema`
+- Next recommended action: Commit the closed Sprint 0 gate, branch to `fast-track/mvp`, implement P0–P3 locally, then attempt live Telegram and deployment integration.

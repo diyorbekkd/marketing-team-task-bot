@@ -30,6 +30,11 @@ const head: ActorContext = {
   role: "HEAD_OF_MARKETING",
 };
 
+const unrelatedMember: ActorContext = {
+  userId: "unrelated-id",
+  role: "DIGITAL_MARKETER",
+};
+
 describe("task permission foundation", () => {
   it("prevents an assignee from directly changing the deadline", () => {
     expect(canChangeDeadline(assignee, task)).toBe(false);
@@ -62,5 +67,12 @@ describe("task permission foundation", () => {
     expect(canReassignTask(head, task)).toBe(true);
     expect(canReviewTask(head, task)).toBe(true);
     expect(canEditTask(head, task, "assignee")).toBe(true);
+  });
+
+  it("denies a team member unrelated to the task", () => {
+    expect(canEditTask(unrelatedMember, task, "title")).toBe(false);
+    expect(canChangeDeadline(unrelatedMember, task)).toBe(false);
+    expect(canReassignTask(unrelatedMember, task)).toBe(false);
+    expect(canReviewTask(unrelatedMember, task)).toBe(false);
   });
 });

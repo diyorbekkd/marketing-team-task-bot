@@ -8,7 +8,7 @@ let adminClient: ReturnType<typeof createClient> | undefined;
 export function getSupabaseAdminClient() {
   if (!adminClient) {
     const config = getSupabaseConfig();
-    adminClient = createClient(config.url, config.serviceRoleKey, {
+    adminClient = createClient(config.url, config.secretKey, {
       auth: {
         autoRefreshToken: false,
         detectSessionInUrl: false,
