@@ -114,9 +114,10 @@ export class MarketingService {
     }
 
     const allTasks = await this.repository.listTasks();
-    const visible = isHead(actorFromUser(actor)) || scope === "team"
+    const actorTasks = allTasks.filter((task) => task.assigneeId === actor.id || task.creatorId === actor.id);
+    const visible = scope === "team" || (isHead(actorFromUser(actor)) && scope !== "my")
       ? allTasks
-      : allTasks.filter((task) => task.assigneeId === actor.id || task.creatorId === actor.id);
+      : actorTasks;
 
     if (scope === "overdue") {
       return visible.filter((task) => isOverdue({ deadline: new Date(task.deadline), status: task.status }, now));

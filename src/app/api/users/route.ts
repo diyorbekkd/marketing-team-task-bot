@@ -5,7 +5,14 @@ import { errorResponse } from "@/server/http/errors";
 export async function GET() {
   try {
     const actor = await requireRequestActor();
-    return Response.json({ users: await getMarketingService().listUsers(actor) });
+    const users = (await getMarketingService().listUsers(actor)).map((user) => ({
+      id: user.id,
+      telegramUsername: user.telegramUsername,
+      displayName: user.displayName,
+      role: user.role,
+      isActive: user.isActive,
+    }));
+    return Response.json({ users });
   } catch (error) {
     return errorResponse(error);
   }

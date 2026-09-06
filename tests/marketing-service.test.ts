@@ -144,6 +144,19 @@ describe("MarketingService MVP permissions", () => {
     await expect(service.listTasks(head, "team")).resolves.toHaveLength(1);
   });
 
+  it("keeps Head's My Tasks personal while team filters remain team-wide", async () => {
+    const repo = repository({
+      listTasks: vi.fn(async () => [
+        task({ id: ids.task, creatorId: ids.head }),
+        task({ id: "20000000-0000-4000-8000-000000000002" }),
+      ]),
+    });
+    const service = new MarketingService(repo);
+
+    await expect(service.listTasks(head, "my")).resolves.toHaveLength(1);
+    await expect(service.listTasks(head, "team")).resolves.toHaveLength(2);
+  });
+
   it("activates only pending employees and does not allow Head transfer", async () => {
     const pending = { ...unrelated, isActive: false };
     const repo = repository({ getUserById: vi.fn(async () => pending) });

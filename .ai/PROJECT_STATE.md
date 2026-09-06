@@ -15,16 +15,18 @@
   - Revision-history immutability and webhook/config hardening
   - P3 mobile-first Mini App: My Tasks, Team, Today, Overdue, Kanban, detail, Quick Add, workflow actions, deadline requests, and Head activation
   - Secure configured-Head bootstrap and configured marketing-group enforcement
-  - All four ordered migrations applied to the live Supabase project; service-role access succeeds and browser roles remain denied
+  - All five ordered migrations applied to the live Supabase project; service-role access succeeds and browser roles remain denied
+  - Telegram username ownership is kept unambiguous across renames/reuse
+  - Forged Mini App authentication returns a sanitized 401; Head My Tasks and Team scopes are distinct
 - Remaining tasks:
   - P4: provide/configure `APP_URL`, `TELEGRAM_GROUP_ID`, and `HEAD_TELEGRAM_USER_ID`; deploy and set the Telegram webhook/menu
   - P4: perform real Head/team onboarding and end-to-end task workflow smoke checks
-  - Final independent general/security review and release quality gate
+  - Final independent general/security review and release quality gate (latest attempt blocked by Claude usage reset)
   - P5: deadline reminders if time remains
 - Deferred roadmap items: advanced analytics, calendar, subtasks, checklist templates, relay, recurring tasks, categories, exhaustive tests, and nonessential visual polish.
-- Latest test/build state: 2026-09-06 — lint PASS; typecheck PASS; 47/47 tests PASS; Next.js production build PASS; npm production audit reports 0 vulnerabilities.
+- Latest test/build state: 2026-09-06 — lint PASS; typecheck PASS; 50/50 tests PASS; Next.js production build PASS; npm production audit reports 0 vulnerabilities.
 - Latest Claude review verdict: General `PASS_WITH_NOTES`; security `PASS_WITH_NOTES`; all required findings remediated locally.
-- Unresolved findings: Final post-integration independent review is pending. Telegram mutation idempotency uses the unique source update ID for group task creation; other mutation paths are user-initiated callbacks/commands.
+- Unresolved findings: Final post-integration independent review is pending; both review scripts were attempted but the Claude account reported exhausted usage until 00:40 Asia/Tashkent. Telegram mutation idempotency uses the unique source update ID for group task creation; other mutation paths are user-initiated callbacks/commands.
 - Known blockers: `APP_URL`, `TELEGRAM_GROUP_ID`, and `HEAD_TELEGRAM_USER_ID` are not populated. Telegram credentials are valid, but deployment and webhook configuration cannot complete without those values. No Vercel project/token is configured locally.
 - Latest commits:
   - `b89bec7 chore: keep lint toolchain current`

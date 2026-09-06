@@ -3,8 +3,9 @@ import { z } from "zod";
 import { getMarketingService } from "@/server/application";
 import { getTelegramConfig } from "@/server/config";
 import { errorResponse } from "@/server/http/errors";
-import { verifyTelegramInitData } from "@/server/auth/telegram-init-data";
+import { TelegramInitDataError, verifyTelegramInitData } from "@/server/auth/telegram-init-data";
 import { createSessionToken, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from "@/server/auth/session";
+import { ApplicationError } from "@/application/errors";
 
 const BodySchema = z.object({ initData: z.string().min(1).max(8192) }).strict();
 
@@ -25,6 +26,9 @@ export async function POST(request: Request) {
     });
     return response;
   } catch (error) {
+    if (error instanceof TelegramInitDataError) {
+      return errorResponse(new ApplicationError("UNAUTHENTICATED", "Telegram authentication failed."));
+    }
     return errorResponse(error);
   }
 }

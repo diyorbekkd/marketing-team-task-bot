@@ -9,6 +9,10 @@ const secureBootstrapMigration = readFileSync(
   new URL("../supabase/migrations/20260906162000_secure_head_bootstrap.sql", import.meta.url),
   "utf8",
 );
+const usernameIntegrityMigration = readFileSync(
+  new URL("../supabase/migrations/20260906163500_telegram_username_integrity.sql", import.meta.url),
+  "utf8",
+);
 
 describe("fast-track database workflow contract", () => {
   it("locks workflow rows and revalidates lifecycle transitions in the transaction", () => {
@@ -53,5 +57,14 @@ describe("secure Telegram Head bootstrap contract", () => {
     expect(secureBootstrapMigration).toContain(
       "grant execute on function public.register_telegram_user(bigint, text, text, bigint)\n  to service_role",
     );
+  });
+});
+
+describe("Telegram username integrity contract", () => {
+  it("keeps active assignee lookup unambiguous when Telegram reassigns a username", () => {
+    expect(usernameIntegrityMigration).toContain("create unique index users_telegram_username_unique_idx");
+    expect(usernameIntegrityMigration).toContain("before insert or update of telegram_username");
+    expect(usernameIntegrityMigration).toContain("set telegram_username = null");
+    expect(usernameIntegrityMigration).toContain("old.telegram_username is distinct from new.telegram_username");
   });
 });

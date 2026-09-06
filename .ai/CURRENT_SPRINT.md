@@ -20,7 +20,7 @@
 ## Current status
 
 - P0–P3: implemented; local quality gate passes.
-- Live Supabase: all migrations applied and access boundary verified.
+- Live Supabase: all five migrations applied and access boundary verified.
 - P4 remaining: deployment URL, configured group/Head IDs, Telegram webhook/menu, and real end-to-end smoke tests.
 - P5: optional and not started.
 
