@@ -21,14 +21,15 @@ type TaskStatus =
   | "DONE"
   | "CANCELLED";
 
-type Priority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+type Priority = "low" | "normal" | "high";
 
 interface User {
   id: string;
-  name: string;
+  displayName: string;
   role: Role;
-  status: "PENDING" | "ACTIVE";
-  telegramId?: string | null;
+  isActive: boolean;
+  telegramUserId?: string | null;
+  telegramUsername?: string | null;
 }
 
 interface Task {
@@ -39,7 +40,7 @@ interface Task {
   priority: Priority;
   assigneeId: string;
   creatorId: string;
-  deadline?: string | null;
+  deadline: string;
   blockedReason?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -47,19 +48,25 @@ interface Task {
 
 interface TaskEvent {
   id: string;
-  type: string;
-  actorId: string;
+  eventType: string;
+  actorId: string | null;
   createdAt: string;
-  meta?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  oldValue?: unknown;
+  newValue?: unknown;
 }
 
 interface DeadlineRequest {
   id: string;
   taskId: string;
-  requesterId: string;
-  proposedDeadline: string;
+  requestedBy: string;
+  currentDeadline: string;
+  requestedDeadline: string;
   reason: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
+  resolutionNote?: string | null;
+  resolvedBy?: string | null;
+  resolvedAt?: string | null;
   createdAt: string;
 }
 
@@ -69,7 +76,7 @@ interface TaskDetail {
   deadlineRequests: DeadlineRequest[];
 }
 
-type Filter = "mine" | "today" | "overdue" | "team";
+type Filter = "my" | "today" | "overdue" | "team";
 type ViewMode = "list" | "kanban";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -95,10 +102,9 @@ const STATUS_ORDER: TaskStatus[] = [
 ];
 
 const PRIORITY_LABELS: Record<Priority, string> = {
-  LOW: "Low",
-  MEDIUM: "Medium",
-  HIGH: "High",
-  URGENT: "Urgent",
+  low: "Low",
+  normal: "Normal",
+  high: "High",
 };
 
 const ROLE_LABELS: Record<Role, string> = {
@@ -109,21 +115,23 @@ const ROLE_LABELS: Record<Role, string> = {
   HEAD_OF_MARKETING: "Head of Marketing",
 };
 
-const ALL_ROLES: Role[] = [
+const ACTIVATION_ROLES: Role[] = [
   "OPERATOR_VIDEO_EDITOR",
   "CONTENT_MARKETER",
   "DIGITAL_MARKETER",
   "SMM_MANAGER",
-  "HEAD_OF_MARKETING",
 ];
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
+
+const TZ = "Asia/Tashkent";
 
 function fmtDate(iso: string | null | undefined) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString(undefined, {
+  return d.toLocaleDateString("en-US", {
+    timeZone: TZ,
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -134,7 +142,8 @@ function fmtDateTime(iso: string | null | undefined) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString(undefined, {
+  return d.toLocaleString("en-US", {
+    timeZone: TZ,
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -143,15 +152,24 @@ function fmtDateTime(iso: string | null | undefined) {
   });
 }
 
+function getTZDateParts(date: Date): { year: string; month: string; day: string } {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return { year: map.year, month: map.month, day: map.day };
+}
+
 function isToday(iso: string | null | undefined) {
   if (!iso) return false;
   const d = new Date(iso);
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
+  if (isNaN(d.getTime())) return false;
+  const dp = getTZDateParts(d);
+  const np = getTZDateParts(new Date());
+  return dp.year === np.year && dp.month === np.month && dp.day === np.day;
 }
 
 function isOverdue(iso: string | null | undefined) {
@@ -159,11 +177,12 @@ function isOverdue(iso: string | null | undefined) {
   return new Date(iso) < new Date();
 }
 
-/** Convert a datetime-local string (no offset) to offset-bearing ISO string */
+/** Convert a datetime-local string to Asia/Tashkent offset-bearing ISO string (+05:00) */
 function localDatetimeToISO(local: string): string {
   if (!local) return "";
-  const d = new Date(local);
-  return d.toISOString();
+  // local is "YYYY-MM-DDTHH:mm" — append seconds and +05:00 offset
+  const withSeconds = local.length === 16 ? local + ":00" : local;
+  return withSeconds + "+05:00";
 }
 
 async function apiFetch<T>(
@@ -194,7 +213,7 @@ export default function MiniApp() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [filter, setFilter] = useState<Filter>("mine");
+  const [filter, setFilter] = useState<Filter>("my");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [tasksError, setTasksError] = useState<string | null>(null);
@@ -255,8 +274,8 @@ export default function MiniApp() {
       setLoadingTasks(true);
       setTasksError(null);
       const scope =
-        f === "mine"
-          ? "mine"
+        f === "my"
+          ? "my"
           : f === "today"
             ? "today"
             : f === "overdue"
@@ -301,7 +320,7 @@ export default function MiniApp() {
     );
   }
 
-  const pendingUsers = users.filter((u) => u.status === "PENDING");
+  const pendingUsers = users.filter((u) => !u.isActive);
 
   return (
     <div className="ma-shell">
@@ -309,7 +328,7 @@ export default function MiniApp() {
         <div className="ma-brand" aria-hidden="true">M</div>
         <div className="ma-topbar-text">
           <span className="ma-eyebrow">Marketing workspace</span>
-          <span className="ma-username">{currentUser?.name}</span>
+          <span className="ma-username">{currentUser?.displayName}</span>
         </div>
         <div className="ma-topbar-actions">
           {isHead && pendingUsers.length > 0 && (
@@ -332,13 +351,13 @@ export default function MiniApp() {
       </header>
 
       <nav className="ma-filters" aria-label="Task filters">
-        {(["mine", "today", "overdue"] as Filter[]).map((f) => (
+        {(["my", "today", "overdue"] as Filter[]).map((f) => (
           <button
             key={f}
             className={`ma-filter-btn${filter === f ? " active" : ""}`}
             onClick={() => setFilter(f)}
           >
-            {f === "mine" ? "My Tasks" : f === "today" ? "Today" : "Overdue"}
+            {f === "my" ? "My Tasks" : f === "today" ? "Today" : "Overdue"}
           </button>
         ))}
         {isHead && (
@@ -510,7 +529,7 @@ function TaskCard({
       aria-label={`Task: ${task.title}`}
     >
       <div className="ma-task-card-top">
-        <span className={`ma-priority p-${task.priority.toLowerCase()}`}>
+        <span className={`ma-priority p-${task.priority}`}>
           {PRIORITY_LABELS[task.priority]}
         </span>
         <span className={`ma-status-pill s-${task.status.toLowerCase()}`}>
@@ -522,13 +541,11 @@ function TaskCard({
         <div className="ma-task-desc">{task.description}</div>
       )}
       <div className="ma-task-meta">
-        {assignee && <span>{assignee.name}</span>}
-        {task.deadline && (
-          <span className={overdue ? "ma-overdue-text" : today ? "ma-today-text" : ""}>
-            {overdue ? "Overdue · " : today ? "Today · " : ""}
-            {fmtDate(task.deadline)}
-          </span>
-        )}
+        {assignee && <span>{assignee.displayName}</span>}
+        <span className={overdue ? "ma-overdue-text" : today ? "ma-today-text" : ""}>
+          {overdue ? "Overdue · " : today ? "Today · " : ""}
+          {fmtDate(task.deadline)}
+        </span>
       </div>
     </button>
   );
@@ -605,7 +622,7 @@ function TaskDetailPanel({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          proposedDeadline: localDatetimeToISO(dlDate),
+          requestedDeadline: localDatetimeToISO(dlDate),
           reason: dlReason,
         }),
       }
@@ -618,7 +635,7 @@ function TaskDetailPanel({
     await load();
   };
 
-  const resolveDeadline = async (reqId: string, resolution: "APPROVED" | "REJECTED") => {
+  const resolveDeadline = async (reqId: string, approve: boolean) => {
     setActionPending(true);
     setActionError(null);
     const { error: e } = await apiFetch<unknown>(
@@ -626,7 +643,7 @@ function TaskDetailPanel({
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resolution }),
+        body: JSON.stringify({ approve }),
       }
     );
     setActionPending(false);
@@ -647,15 +664,15 @@ function TaskDetailPanel({
 
   const actions: { label: string; action: string; variant?: string }[] = [];
   if (task) {
-    if (task.status === "ASSIGNED" && isAssignee) actions.push({ label: "Accept", action: "accept" });
-    if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Submit Review", action: "submit_review" });
+    if (task.status === "ASSIGNED" && isAssignee) actions.push({ label: "Accept", action: "ACCEPT" });
+    if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
     if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Block", action: "_block", variant: "warn" });
-    if (task.status === "BLOCKED" && isAssignee) actions.push({ label: "Resume", action: "resume" });
-    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Approve", action: "approve" });
-    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Request Revision", action: "request_revision", variant: "warn" });
-    if (task.status === "REVISION" && isAssignee) actions.push({ label: "Submit Review", action: "submit_review" });
-    if (!["DONE", "CANCELLED"].includes(task.status) && (isCreator || isHead)) actions.push({ label: "Cancel", action: "cancel", variant: "danger" });
-    if (task.status === "CANCELLED" && isHead) actions.push({ label: "Reopen", action: "reopen" });
+    if (task.status === "BLOCKED" && isAssignee) actions.push({ label: "Resume", action: "RESUME" });
+    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Approve", action: "APPROVE" });
+    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Request Revision", action: "REQUEST_REVISION", variant: "warn" });
+    if (task.status === "REVISION" && isAssignee) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
+    if (!["DONE", "CANCELLED"].includes(task.status) && (isCreator || isHead)) actions.push({ label: "Cancel", action: "CANCEL", variant: "danger" });
+    if ((task.status === "DONE" || task.status === "CANCELLED") && isHead) actions.push({ label: "Reopen", action: "REOPEN" });
   }
 
   return (
@@ -678,7 +695,7 @@ function TaskDetailPanel({
         {task && (
           <div className="ma-panel-body">
             <div className="ma-detail-top">
-              <span className={`ma-priority p-${task.priority.toLowerCase()}`}>{PRIORITY_LABELS[task.priority]}</span>
+              <span className={`ma-priority p-${task.priority}`}>{PRIORITY_LABELS[task.priority]}</span>
               <span className={`ma-status-pill s-${task.status.toLowerCase()}`}>{STATUS_LABELS[task.status]}</span>
             </div>
 
@@ -686,8 +703,8 @@ function TaskDetailPanel({
             {task.description && <p className="ma-detail-desc">{task.description}</p>}
 
             <dl className="ma-detail-meta">
-              <dt>Assignee</dt><dd>{assignee?.name ?? "—"}</dd>
-              <dt>Creator</dt><dd>{creator?.name ?? "—"}</dd>
+              <dt>Assignee</dt><dd>{assignee?.displayName ?? "—"}</dd>
+              <dt>Creator</dt><dd>{creator?.displayName ?? "—"}</dd>
               <dt>Deadline</dt><dd>{fmtDateTime(task.deadline)}</dd>
               {task.blockedReason && <><dt>Blocked reason</dt><dd className="ma-overdue-text">{task.blockedReason}</dd></>}
             </dl>
@@ -697,15 +714,15 @@ function TaskDetailPanel({
               <section className="ma-section" aria-labelledby="dl-req-title">
                 <h3 id="dl-req-title">Pending Deadline Requests</h3>
                 {pendingDL.map((req) => {
-                  const requester = users.find((u) => u.id === req.requesterId);
+                  const requester = users.find((u) => u.id === req.requestedBy);
                   return (
                     <div key={req.id} className="ma-dl-req">
-                      <span><strong>{requester?.name ?? "Someone"}</strong> → {fmtDateTime(req.proposedDeadline)}</span>
+                      <span><strong>{requester?.displayName ?? "Someone"}</strong> → {fmtDateTime(req.requestedDeadline)}</span>
                       <span className="ma-muted">{req.reason}</span>
                       {(isCreator || isHead) && (
                         <div className="ma-dl-actions">
-                          <button className="ma-btn primary" disabled={actionPending} onClick={() => resolveDeadline(req.id, "APPROVED")}>Approve</button>
-                          <button className="ma-btn warn" disabled={actionPending} onClick={() => resolveDeadline(req.id, "REJECTED")}>Reject</button>
+                          <button className="ma-btn primary" disabled={actionPending} onClick={() => resolveDeadline(req.id, true)}>Approve</button>
+                          <button className="ma-btn warn" disabled={actionPending} onClick={() => resolveDeadline(req.id, false)}>Reject</button>
                         </div>
                       )}
                     </div>
@@ -733,7 +750,7 @@ function TaskDetailPanel({
                         className="ma-btn warn"
                         disabled={actionPending || !blockReason.trim()}
                         onClick={async () => {
-                          await postAction("block", { reason: blockReason });
+                          await postAction("BLOCK", { reason: blockReason });
                           setShowBlockInput(false);
                           setBlockReason("");
                         }}
@@ -792,11 +809,11 @@ function TaskDetailPanel({
                 <h3 id="events-title">Activity</h3>
                 <ol className="ma-events">
                   {events.map((ev) => {
-                    const actor = users.find((u) => u.id === ev.actorId);
+                    const actor = ev.actorId ? users.find((u) => u.id === ev.actorId) : null;
                     return (
                       <li key={ev.id} className="ma-event">
-                        <span className="ma-event-type">{ev.type.replace(/_/g, " ")}</span>
-                        <span className="ma-muted"> · {actor?.name ?? "System"} · {fmtDateTime(ev.createdAt)}</span>
+                        <span className="ma-event-type">{ev.eventType.replace(/_/g, " ")}</span>
+                        <span className="ma-muted"> · {actor?.displayName ?? "System"} · {fmtDateTime(ev.createdAt)}</span>
                       </li>
                     );
                   })}
@@ -827,23 +844,23 @@ function QuickAddPanel({
   const [description, setDescription] = useState("");
   const [assigneeId, setAssigneeId] = useState(currentUser.id);
   const [deadline, setDeadline] = useState("");
-  const [priority, setPriority] = useState<Priority>("MEDIUM");
+  const [priority, setPriority] = useState<Priority>("normal");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const activeUsers = users.filter((u) => u.status === "ACTIVE");
+  const activeUsers = users.filter((u) => u.isActive);
 
   const submit = async () => {
-    if (!title.trim()) return;
+    if (!title.trim() || !assigneeId || !deadline) return;
     setPending(true);
     setError(null);
     const body: Record<string, unknown> = {
       title: title.trim(),
       priority,
       assigneeId,
+      deadline: localDatetimeToISO(deadline),
     };
     if (description.trim()) body.description = description.trim();
-    if (deadline) body.deadline = localDatetimeToISO(deadline);
 
     const { error: e } = await apiFetch<{ task: Task }>("/api/tasks", {
       method: "POST",
@@ -891,10 +908,10 @@ function QuickAddPanel({
             />
           </div>
           <div className="ma-form-group">
-            <label htmlFor="qa-assignee">Assignee</label>
+            <label htmlFor="qa-assignee">Assignee *</label>
             <select id="qa-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
               {activeUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.name}</option>
+                <option key={u.id} value={u.id}>{u.displayName}</option>
               ))}
             </select>
           </div>
@@ -902,18 +919,18 @@ function QuickAddPanel({
             <div className="ma-form-group flex-1">
               <label htmlFor="qa-priority">Priority</label>
               <select id="qa-priority" value={priority} onChange={(e) => setPriority(e.target.value as Priority)}>
-                {(["LOW", "MEDIUM", "HIGH", "URGENT"] as Priority[]).map((p) => (
+                {(["low", "normal", "high"] as Priority[]).map((p) => (
                   <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>
                 ))}
               </select>
             </div>
             <div className="ma-form-group flex-1">
-              <label htmlFor="qa-deadline">Deadline</label>
+              <label htmlFor="qa-deadline">Deadline *</label>
               <input id="qa-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
             </div>
           </div>
           {error && <div className="ma-error-inline" role="alert">{error}</div>}
-          <button className="ma-btn primary full" disabled={pending || !title.trim()} onClick={submit}>
+          <button className="ma-btn primary full" disabled={pending || !title.trim() || !deadline || !assigneeId} onClick={submit}>
             {pending ? "Creating…" : "Create Task"}
           </button>
         </div>
@@ -971,14 +988,14 @@ function PendingUsersPanel({
           {users.length === 0 && <p className="ma-muted">No pending users.</p>}
           {users.map((u) => (
             <div key={u.id} className="ma-pending-user">
-              <div className="ma-pending-name">{u.name}</div>
+              <div className="ma-pending-name">{u.displayName}</div>
               <div className="ma-form-row">
                 <select
-                  aria-label={`Role for ${u.name}`}
+                  aria-label={`Role for ${u.displayName}`}
                   value={roles[u.id] ?? "OPERATOR_VIDEO_EDITOR"}
                   onChange={(e) => setRoles((r) => ({ ...r, [u.id]: e.target.value as Role }))}
                 >
-                  {ALL_ROLES.map((r) => (
+                  {ACTIVATION_ROLES.map((r) => (
                     <option key={r} value={r}>{ROLE_LABELS[r]}</option>
                   ))}
                 </select>
