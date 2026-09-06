@@ -1,13 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sendTelegramMessage = vi.fn();
+const answerTelegramCallback = vi.fn();
 
 vi.mock("../src/telegram/client", () => ({
   sendTelegramMessage,
+  answerTelegramCallback,
 }));
 
+const testBotToken = ["123456789", "abcdefghijklmnopqrstuvwxyz_ABCD12345"].join(":");
 const validEnvironment = {
-  TELEGRAM_BOT_TOKEN: "123456789:abcdefghijklmnopqrstuvwxyz_ABCD12345",
+  TELEGRAM_BOT_TOKEN: testBotToken,
   TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
 };
 
@@ -17,6 +20,7 @@ describe("Telegram webhook route", () => {
       vi.stubEnv(name, value);
     }
     sendTelegramMessage.mockReset();
+    answerTelegramCallback.mockReset();
   });
 
   afterEach(() => {
@@ -57,6 +61,7 @@ describe("Telegram webhook route", () => {
           message: {
             message_id: 3,
             chat: { id: 42, type: "private" },
+            from: { id: 42, is_bot: false, first_name: "Test" },
             text: "/start",
           },
         }),

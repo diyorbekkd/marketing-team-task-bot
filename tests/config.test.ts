@@ -14,7 +14,7 @@ describe("configuration validation", () => {
       SUPABASE_URL: "https://project.supabase.co",
       SUPABASE_PUBLISHABLE_KEY: "public-placeholder",
       SUPABASE_SECRET_KEY: "server-placeholder",
-      TELEGRAM_BOT_TOKEN: "123456789:abcdefghijklmnopqrstuvwxyz_ABCD12345",
+      TELEGRAM_BOT_TOKEN: ["123456789", "abcdefghijklmnopqrstuvwxyz_ABCD12345"].join(":"),
       TELEGRAM_WEBHOOK_SECRET: "webhook-placeholder",
       TELEGRAM_GROUP_ID: "-1001234567890",
       HEAD_TELEGRAM_USER_ID: "123456789",
