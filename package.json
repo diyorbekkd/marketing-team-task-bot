@@ -12,6 +12,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "telegram:configure": "node --env-file-if-exists=.env.local scripts/configure-telegram.mjs",
+    "telegram:status": "node --env-file-if-exists=.env.local scripts/configure-telegram.mjs --status",
     "test:watch": "vitest",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",

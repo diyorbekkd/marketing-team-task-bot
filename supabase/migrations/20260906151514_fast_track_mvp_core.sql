@@ -153,6 +153,10 @@ declare
   v_old_status text;
   v_special_event text;
 begin
+  if not exists (select 1 from public.users where id = p_actor_id and is_active) then
+    raise exception 'actor is not active' using errcode = '42501';
+  end if;
+
   select * into v_task
   from public.tasks
   where id = p_task_id
@@ -165,6 +169,17 @@ begin
   v_old_status := v_task.status;
   if v_old_status = p_new_status then
     return v_task;
+  end if;
+
+  if not (
+    (v_old_status = 'ASSIGNED' and p_new_status in ('IN_PROGRESS', 'CANCELLED'))
+    or (v_old_status = 'IN_PROGRESS' and p_new_status in ('BLOCKED', 'REVIEW', 'CANCELLED'))
+    or (v_old_status = 'BLOCKED' and p_new_status in ('IN_PROGRESS', 'CANCELLED'))
+    or (v_old_status = 'REVIEW' and p_new_status in ('DONE', 'REVISION', 'CANCELLED'))
+    or (v_old_status = 'REVISION' and p_new_status in ('IN_PROGRESS', 'BLOCKED', 'REVIEW', 'CANCELLED'))
+    or (v_old_status in ('DONE', 'CANCELLED') and p_new_status = 'ASSIGNED')
+  ) then
+    raise exception 'task status changed concurrently' using errcode = '40001';
   end if;
 
   if p_new_status = 'BLOCKED' and nullif(btrim(p_reason), '') is null then
@@ -245,8 +260,14 @@ begin
   if not found then
     raise exception 'task not found' using errcode = 'P0002';
   end if;
+  if not exists (select 1 from public.users where id = p_requested_by and is_active) then
+    raise exception 'requester is not active' using errcode = '42501';
+  end if;
   if v_task.assignee_id <> p_requested_by then
     raise exception 'only assignee may request deadline change' using errcode = '42501';
+  end if;
+  if v_task.status in ('DONE', 'CANCELLED') then
+    raise exception 'terminal task cannot change deadline' using errcode = '40001';
   end if;
 
   insert into public.deadline_change_requests (
