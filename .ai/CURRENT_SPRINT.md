@@ -19,11 +19,12 @@
 
 ## Current status
 
-- P0–P3: implemented; local quality gate passes.
+- P0–P4: implemented, deployed, and live-verified.
 - Live Supabase: all five migrations applied and access boundary verified.
-- P4 remaining: deployment URL, configured group/Head IDs, Telegram webhook/menu, and real end-to-end smoke tests.
-- Deployment discovery: the repository branch is pushed to GitHub; the local Vercel CLI is logged out and has no project/token configuration.
-- Independent review: attempted after integration; blocked by Claude usage exhaustion until the recorded reset time.
+- Production: `https://marketing-team-task-bot.vercel.app`; encrypted Vercel environment is complete.
+- Telegram: webhook/menu verified with zero pending updates and no last error; real Head `/start` onboarding succeeded.
+- End-to-end: controlled group restriction/task creation, real outbound notifications, Supabase persistence, signed Mini App APIs, deadline approval, lifecycle, audit, and revision checks pass.
+- Independent review: `FINAL_OPUS_SECURITY_REVIEW=PENDING` due Claude usage exhaustion until the recorded reset time.
 - P5: optional and not started.
 
 ## Definition of Done

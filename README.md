@@ -18,9 +18,13 @@ The product will expose one shared backend and one Supabase PostgreSQL database 
 
 Core business rules and authorization live outside Telegram and UI code so every transport uses the same behavior.
 
+## Live MVP
+
+The fast-track internal MVP is deployed at [marketing-team-task-bot.vercel.app](https://marketing-team-task-bot.vercel.app). It includes Telegram onboarding and group task creation, private assignment delivery, the core task/deadline-review lifecycle, immutable history, and the mobile-first Mini App task views.
+
 ## Local development
 
-The repository currently contains the Sprint 0 foundation. Copy `.env.example` to `.env.local` and provide development credentials when they are available. Never commit that file.
+Copy `.env.example` to `.env.local` and provide development credentials when they are available. Never commit that file.
 
 ```bash
 npm install
