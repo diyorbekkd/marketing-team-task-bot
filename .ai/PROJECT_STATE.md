@@ -29,7 +29,8 @@
 - Unresolved findings: Final post-integration independent review is pending; both review scripts were attempted but the Claude account reported exhausted usage until 00:40 Asia/Tashkent. Telegram mutation idempotency uses the unique source update ID for group task creation; other mutation paths are user-initiated callbacks/commands.
 - Known blockers: `APP_URL`, `TELEGRAM_GROUP_ID`, and `HEAD_TELEGRAM_USER_ID` are not populated. Telegram credentials are valid, but deployment and webhook configuration cannot complete without those values. No Vercel project/token is configured locally.
 - Latest commits:
-  - `b89bec7 chore: keep lint toolchain current`
-  - `15f3ba4 test: add foundation business rule coverage`
-  - `0d9fec6 feat(db): add foundational task schema`
-- Next recommended action: Run independent review, deploy the committed branch, populate the three remaining runtime values, configure Telegram, and execute real onboarding/task smoke checks.
+  - `2f054f3 fix: close MVP identity and task-scope gaps`
+  - `4f58c79 fix: secure fast-track onboarding and integration`
+  - `89347da merge: integrate fast-track Mini App`
+- Remote state: `fast-track/mvp` is pushed to `origin` at `2f054f3`.
+- Next recommended action: Authenticate a deployment provider, deploy the pushed branch, populate the three remaining runtime values, configure Telegram, execute real onboarding/task smoke checks, and rerun independent reviews after the usage reset.

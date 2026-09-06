@@ -22,6 +22,8 @@
 - P0–P3: implemented; local quality gate passes.
 - Live Supabase: all five migrations applied and access boundary verified.
 - P4 remaining: deployment URL, configured group/Head IDs, Telegram webhook/menu, and real end-to-end smoke tests.
+- Deployment discovery: the repository branch is pushed to GitHub; the local Vercel CLI is logged out and has no project/token configuration.
+- Independent review: attempted after integration; blocked by Claude usage exhaustion until the recorded reset time.
 - P5: optional and not started.
 
 ## Definition of Done
