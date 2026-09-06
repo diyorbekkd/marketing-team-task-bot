@@ -21,3 +21,13 @@ These rules apply to every coding agent working in this repository.
 17. Codex is the lead implementer. Use the repository review scripts for independent Claude review, triage findings instead of accepting them blindly, and never allow two agents to edit the same working tree concurrently.
 18. Before moving to another sprint, satisfy its acceptance criteria, resolve valid Critical/High findings, run the complete quality gate, commit logical work, and prepare the next sprint state.
 19. Public-schema default privileges are revoked. Every migration that creates a table must explicitly enable RLS, revoke browser-role access, and grant only the required `service_role` privileges.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

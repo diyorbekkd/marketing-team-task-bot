@@ -573,6 +573,8 @@ function TaskDetailPanel({
   const [actionError, setActionError] = useState<string | null>(null);
   const [blockReason, setBlockReason] = useState("");
   const [showBlockInput, setShowBlockInput] = useState(false);
+  const [showRevisionInput, setShowRevisionInput] = useState(false);
+  const [revisionReason, setRevisionReason] = useState("");
   const [showDLRequest, setShowDLRequest] = useState(false);
   const [dlDate, setDlDate] = useState("");
   const [dlReason, setDlReason] = useState("");
@@ -595,7 +597,7 @@ function TaskDetailPanel({
     if (el) el.focus();
   }, []);
 
-  const postAction = async (action: string, extra?: Record<string, unknown>) => {
+  const postAction = async (action: string, extra?: Record<string, unknown>): Promise<boolean> => {
     setActionPending(true);
     setActionError(null);
     const { error: e } = await apiFetch<{ task: Task }>(
@@ -607,9 +609,10 @@ function TaskDetailPanel({
       }
     );
     setActionPending(false);
-    if (e) { setActionError(e); return; }
+    if (e) { setActionError(e); return false; }
     await load();
     onRefresh();
+    return true;
   };
 
   const requestDeadline = async () => {
@@ -669,7 +672,7 @@ function TaskDetailPanel({
     if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Block", action: "_block", variant: "warn" });
     if (task.status === "BLOCKED" && isAssignee) actions.push({ label: "Resume", action: "RESUME" });
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Approve", action: "APPROVE" });
-    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Request Revision", action: "REQUEST_REVISION", variant: "warn" });
+    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Request Revision", action: "_revision", variant: "warn" });
     if (task.status === "REVISION" && isAssignee) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
     if (!["DONE", "CANCELLED"].includes(task.status) && (isCreator || isHead)) actions.push({ label: "Cancel", action: "CANCEL", variant: "danger" });
     if ((task.status === "DONE" || task.status === "CANCELLED") && isHead) actions.push({ label: "Reopen", action: "REOPEN" });
@@ -750,14 +753,45 @@ function TaskDetailPanel({
                         className="ma-btn warn"
                         disabled={actionPending || !blockReason.trim()}
                         onClick={async () => {
-                          await postAction("BLOCK", { reason: blockReason });
-                          setShowBlockInput(false);
-                          setBlockReason("");
+                          if (await postAction("BLOCK", { reason: blockReason })) {
+                            setShowBlockInput(false);
+                            setBlockReason("");
+                          }
                         }}
                       >
                         Confirm Block
                       </button>
                       <button className="ma-btn secondary" onClick={() => setShowBlockInput(false)}>Cancel</button>
+                    </div>
+                  </div>
+                ) : showRevisionInput ? (
+                  <div className="ma-block-form">
+                    <label htmlFor="revision-reason">Revision comment (optional)</label>
+                    <textarea
+                      id="revision-reason"
+                      value={revisionReason}
+                      onChange={(event) => setRevisionReason(event.target.value)}
+                      rows={3}
+                      maxLength={5000}
+                      placeholder="Explain what should change…"
+                    />
+                    <div className="ma-form-row">
+                      <button
+                        className="ma-btn warn"
+                        disabled={actionPending}
+                        onClick={async () => {
+                          const succeeded = await postAction("REQUEST_REVISION", revisionReason.trim()
+                            ? { reason: revisionReason.trim() }
+                            : undefined);
+                          if (succeeded) {
+                            setShowRevisionInput(false);
+                            setRevisionReason("");
+                          }
+                        }}
+                      >
+                        Request Revision
+                      </button>
+                      <button className="ma-btn secondary" onClick={() => setShowRevisionInput(false)}>Cancel</button>
                     </div>
                   </div>
                 ) : (
@@ -769,6 +803,7 @@ function TaskDetailPanel({
                         disabled={actionPending}
                         onClick={() => {
                           if (a.action === "_block") { setShowBlockInput(true); return; }
+                          if (a.action === "_revision") { setShowRevisionInput(true); return; }
                           postAction(a.action);
                         }}
                       >

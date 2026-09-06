@@ -3,6 +3,7 @@ import {
   ConfigurationError,
   getAppConfig,
   getSupabaseConfig,
+  getTeamBootstrapConfig,
   getTelegramConfig,
 } from "../src/server/config";
 
@@ -23,6 +24,10 @@ describe("configuration validation", () => {
     expect(getAppConfig(env).timezone).toBe("Asia/Tashkent");
     expect(getSupabaseConfig(env).secretKey).toBe("server-placeholder");
     expect(getTelegramConfig(env).webhookSecret).toBe("webhook-placeholder");
+    expect(getTeamBootstrapConfig(env)).toEqual({
+      groupId: "-1001234567890",
+      headTelegramUserId: "123456789",
+    });
   });
 
   it("fails with the missing variable name but not secret values", () => {
@@ -52,5 +57,12 @@ describe("configuration validation", () => {
 
     expect(config.publishableKey).toBe("legacy-public-placeholder");
     expect(config.secretKey).toBe("legacy-server-placeholder");
+  });
+
+  it("rejects a private chat ID as the configured marketing group", () => {
+    expect(() => getTeamBootstrapConfig({
+      TELEGRAM_GROUP_ID: "123456789",
+      HEAD_TELEGRAM_USER_ID: "123456789",
+    })).toThrow(ConfigurationError);
   });
 });

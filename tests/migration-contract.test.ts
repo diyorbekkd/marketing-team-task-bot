@@ -5,6 +5,10 @@ const migration = readFileSync(
   new URL("../supabase/migrations/20260906151514_fast_track_mvp_core.sql", import.meta.url),
   "utf8",
 );
+const secureBootstrapMigration = readFileSync(
+  new URL("../supabase/migrations/20260906162000_secure_head_bootstrap.sql", import.meta.url),
+  "utf8",
+);
 
 describe("fast-track database workflow contract", () => {
   it("locks workflow rows and revalidates lifecycle transitions in the transaction", () => {
@@ -30,5 +34,24 @@ describe("fast-track database workflow contract", () => {
     expect(invokerCount).toBe(functionCount);
     expect(serviceGrantCount).toBe(functionCount);
     expect(migration).toContain("from public, anon, authenticated");
+  });
+});
+
+describe("secure Telegram Head bootstrap contract", () => {
+  it("removes first-user privilege assignment and compares against the configured Head identity", () => {
+    expect(secureBootstrapMigration).toContain("drop function public.register_telegram_user(bigint, text, text)");
+    expect(secureBootstrapMigration).toContain("p_expected_head_telegram_user_id bigint");
+    expect(secureBootstrapMigration).toContain("p_telegram_user_id = p_expected_head_telegram_user_id");
+    expect(secureBootstrapMigration).toContain("else 'SMM_MANAGER' end");
+    expect(secureBootstrapMigration).toContain("v_is_expected_head\n  )");
+  });
+
+  it("exposes the replacement onboarding function only to the trusted service role", () => {
+    expect(secureBootstrapMigration).toContain(
+      "revoke all on function public.register_telegram_user(bigint, text, text, bigint)\n  from public, anon, authenticated",
+    );
+    expect(secureBootstrapMigration).toContain(
+      "grant execute on function public.register_telegram_user(bigint, text, text, bigint)\n  to service_role",
+    );
   });
 });

@@ -12,6 +12,8 @@ const testBotToken = ["123456789", "abcdefghijklmnopqrstuvwxyz_ABCD12345"].join(
 const validEnvironment = {
   TELEGRAM_BOT_TOKEN: testBotToken,
   TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
+  TELEGRAM_GROUP_ID: "-100123",
+  HEAD_TELEGRAM_USER_ID: "42",
 };
 
 describe("Telegram webhook route", () => {

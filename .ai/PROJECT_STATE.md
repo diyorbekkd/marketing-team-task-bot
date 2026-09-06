@@ -2,7 +2,7 @@
 
 - Current sprint: Fast-track MVP vertical slice
 - Current branch: `fast-track/mvp`
-- Current objective: Deliver a real usable MVP today through P0 database/identity/permissions, P1 Telegram onboarding and task creation, P2 core lifecycle/requests, P3 functional Mini App, P4 live integration/deployment, and P5 reminders if time remains.
+- Current objective: Finish P4 live Telegram/deployment integration for the implemented fast-track MVP; P5 reminders remain optional if time permits.
 - Completed sprints: Sprint 0 complete and independently reviewed.
 - Completed current tasks:
   - Product, architecture, sprint, and Sprint 0 documentation
@@ -10,21 +10,24 @@
   - Foundational Supabase schema and RLS lock-down
   - Shared permission and event foundations
   - Telegram webhook and Mini App shell
-  - Foundation test/build gate and fast-track backend gate (34 tests passing)
+  - Foundation test/build gate and fast-track backend gate
   - Claude general and security reviews with no Critical/High findings
   - Revision-history immutability and webhook/config hardening
+  - P3 mobile-first Mini App: My Tasks, Team, Today, Overdue, Kanban, detail, Quick Add, workflow actions, deadline requests, and Head activation
+  - Secure configured-Head bootstrap and configured marketing-group enforcement
+  - All four ordered migrations applied to the live Supabase project; service-role access succeeds and browser roles remain denied
 - Remaining tasks:
-  - P0–P2: implemented locally; remote migration execution remains pending
-  - P3: My Tasks, Team Tasks, Today, Overdue, Kanban, details, Quick Add
-  - P4: live integration and safe deployment
+  - P4: provide/configure `APP_URL`, `TELEGRAM_GROUP_ID`, and `HEAD_TELEGRAM_USER_ID`; deploy and set the Telegram webhook/menu
+  - P4: perform real Head/team onboarding and end-to-end task workflow smoke checks
+  - Final independent general/security review and release quality gate
   - P5: deadline reminders if time remains
 - Deferred roadmap items: advanced analytics, calendar, subtasks, checklist templates, relay, recurring tasks, categories, exhaustive tests, and nonessential visual polish.
-- Latest test/build state: 2026-09-06 — lint PASS; typecheck PASS; 34/34 tests PASS; Next.js production build PASS; npm production audit reports 0 vulnerabilities.
+- Latest test/build state: 2026-09-06 — lint PASS; typecheck PASS; 47/47 tests PASS; Next.js production build PASS; npm production audit reports 0 vulnerabilities.
 - Latest Claude review verdict: General `PASS_WITH_NOTES`; security `PASS_WITH_NOTES`; all required findings remediated locally.
-- Unresolved findings: Webhook update idempotency is required before mutating commands; CSP is required before authenticated Mini App data.
-- Known blockers: Docker is unavailable. The `.env.local` Supabase project (`cbjcclefgxrdyjwkjcpq`) is not visible to the connected Supabase management account, so DDL is currently `PENDING_LIVE_VERIFICATION`. Application keys and Telegram credentials are present. APP_URL and initial Telegram IDs are not yet populated and may be derived/configured during integration.
+- Unresolved findings: Final post-integration independent review is pending. Telegram mutation idempotency uses the unique source update ID for group task creation; other mutation paths are user-initiated callbacks/commands.
+- Known blockers: `APP_URL`, `TELEGRAM_GROUP_ID`, and `HEAD_TELEGRAM_USER_ID` are not populated. Telegram credentials are valid, but deployment and webhook configuration cannot complete without those values. No Vercel project/token is configured locally.
 - Latest commits:
   - `b89bec7 chore: keep lint toolchain current`
   - `15f3ba4 test: add foundation business rule coverage`
   - `0d9fec6 feat(db): add foundational task schema`
-- Next recommended action: Implement P3 Mini App on the stable API contract, integrate it, then execute P4 live Telegram/deployment checks.
+- Next recommended action: Run independent review, deploy the committed branch, populate the three remaining runtime values, configure Telegram, and execute real onboarding/task smoke checks.

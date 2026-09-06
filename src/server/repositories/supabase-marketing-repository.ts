@@ -171,11 +171,12 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return getSupabaseAdminClient();
   }
 
-  async registerTelegramUser(identity: TelegramIdentityInput): Promise<User> {
+  async registerTelegramUser(identity: TelegramIdentityInput, expectedHeadTelegramUserId: string): Promise<User> {
     const { data, error } = await this.client.rpc("register_telegram_user", {
       p_telegram_user_id: identity.telegramUserId,
       p_telegram_username: identity.telegramUsername ?? "",
       p_display_name: identity.displayName,
+      p_expected_head_telegram_user_id: expectedHeadTelegramUserId,
     });
     if (error || !data) throwDataError(error, "Unable to register Telegram user.");
     return mapUser(rpcRecord(data));

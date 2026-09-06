@@ -98,7 +98,12 @@ export interface Database {
     Views: Record<never, never>;
     Functions: {
       register_telegram_user: {
-        Args: { p_telegram_user_id: string; p_telegram_username: string; p_display_name: string };
+        Args: {
+          p_telegram_user_id: string;
+          p_telegram_username: string;
+          p_display_name: string;
+          p_expected_head_telegram_user_id: string;
+        };
         Returns: UserRow;
       };
       create_task_with_event: {

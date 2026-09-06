@@ -18,6 +18,11 @@ export interface TelegramHandlerResult {
   readonly callbackQueryId?: string;
 }
 
+export interface TelegramHandlerConfig {
+  readonly marketingGroupId: string;
+  readonly headTelegramUserId: string;
+}
+
 function displayName(from: Readonly<{ first_name: string; last_name?: string }>): string {
   return [from.first_name, from.last_name].filter(Boolean).join(" ");
 }
@@ -56,7 +61,7 @@ function commandAction(command: string): TaskAction | null {
   return actions[command] ?? null;
 }
 
-export function createTelegramUpdateHandler(service: MarketingService) {
+export function createTelegramUpdateHandler(service: MarketingService, config: TelegramHandlerConfig) {
   return async function handle(update: TelegramUpdate): Promise<TelegramHandlerResult> {
     try {
       if (update.callback_query?.data) {
@@ -78,11 +83,14 @@ export function createTelegramUpdateHandler(service: MarketingService) {
       const firstWord = text.split(/\s+/, 1)[0]?.split("@", 1)[0]?.toLowerCase() ?? "";
 
       if (firstWord === "/start" && message.chat.type === "private") {
-        const user = await service.onboardTelegram({
-          telegramUserId: String(message.from.id),
-          telegramUsername: message.from.username,
-          displayName: displayName(message.from),
-        });
+        const user = await service.onboardTelegram(
+          {
+            telegramUserId: String(message.from.id),
+            telegramUsername: message.from.username,
+            displayName: displayName(message.from),
+          },
+          config.headTelegramUserId,
+        );
         return {
           messages: [{
             chatId: message.chat.id,
@@ -127,6 +135,12 @@ export function createTelegramUpdateHandler(service: MarketingService) {
       }
 
       if (/(^|\n)T:\s*/i.test(text) && /(^|\n)A:\s*/i.test(text)) {
+        const isConfiguredMarketingGroup =
+          ["group", "supergroup"].includes(message.chat.type) &&
+          String(message.chat.id) === config.marketingGroupId;
+        if (!isConfiguredMarketingGroup) {
+          throw new TaskShorthandError("Tasks may only be created in the configured marketing group.");
+        }
         const parsed = parseTaskShorthand(text);
         const { task, assignee } = await service.createTaskForUsername(actor, parsed, update.update_id);
         return {

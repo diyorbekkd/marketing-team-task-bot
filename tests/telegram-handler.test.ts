@@ -40,6 +40,11 @@ const task: Task = {
   updatedAt: "2026-09-06T12:00:00.000Z",
 };
 
+const handlerConfig = {
+  marketingGroupId: "-100123",
+  headTelegramUserId: "42",
+} as const;
+
 function serviceMock(overrides: Record<string, unknown> = {}) {
   return {
     onboardTelegram: vi.fn(async () => actor),
@@ -54,7 +59,7 @@ function serviceMock(overrides: Record<string, unknown> = {}) {
 describe("Telegram MVP handler", () => {
   it("onboards a private-chat user from Telegram identity", async () => {
     const service = serviceMock();
-    const result = await createTelegramUpdateHandler(service)(TelegramUpdateSchema.parse({
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
       update_id: 10,
       message: {
         message_id: 1,
@@ -64,17 +69,20 @@ describe("Telegram MVP handler", () => {
       },
     }));
 
-    expect(service.onboardTelegram).toHaveBeenCalledWith({
-      telegramUserId: "42",
-      telegramUsername: "lead",
-      displayName: "Team Lead",
-    });
+    expect(service.onboardTelegram).toHaveBeenCalledWith(
+      {
+        telegramUserId: "42",
+        telegramUsername: "lead",
+        displayName: "Team Lead",
+      },
+      "42",
+    );
     expect(result.messages[0]?.text).toContain("HEAD_OF_MARKETING");
   });
 
   it("creates an idempotent group task and notifies the assignee", async () => {
     const service = serviceMock();
-    const result = await createTelegramUpdateHandler(service)(TelegramUpdateSchema.parse({
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
       update_id: 11,
       message: {
         message_id: 2,
@@ -92,10 +100,26 @@ describe("Telegram MVP handler", () => {
     expect(result.messages[1]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe(`task:${task.id}:ACCEPT`);
   });
 
+  it("rejects shorthand task creation outside the configured marketing group", async () => {
+    const service = serviceMock();
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 12,
+      message: {
+        message_id: 3,
+        chat: { id: -100999, type: "supergroup" },
+        from: { id: 42, is_bot: false, first_name: "Team", last_name: "Lead", username: "lead" },
+        text: "T: Publish launch reel\nA: @editor\nDL: 08.09.2026 18:00",
+      },
+    }));
+
+    expect(service.createTaskForUsername).not.toHaveBeenCalled();
+    expect(result.messages[0]?.text).toBe("Tasks may only be created in the configured marketing group.");
+  });
+
   it("maps a Telegram callback to the shared workflow service", async () => {
     const service = serviceMock();
-    const result = await createTelegramUpdateHandler(service)(TelegramUpdateSchema.parse({
-      update_id: 12,
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 13,
       callback_query: {
         id: "callback-1",
         from: { id: 43, is_bot: false, first_name: "Editor" },

@@ -17,6 +17,13 @@
 | P4 live integration/deployment | Codex | P0–P3 | Configuration/deployment | false | Live connections attempted safely; unavailable operations recorded as pending | Health/webhook/data smoke tests |
 | P5 reminders | Codex | P4 | Scheduler/service | false | Idempotent due reminders implemented if time remains | Timing/idempotency tests |
 
+## Current status
+
+- P0–P3: implemented; local quality gate passes.
+- Live Supabase: all migrations applied and access boundary verified.
+- P4 remaining: deployment URL, configured group/Head IDs, Telegram webhook/menu, and real end-to-end smoke tests.
+- P5: optional and not started.
+
 ## Definition of Done
 
 - P0–P4 vertical slice is complete locally and all available live checks pass.

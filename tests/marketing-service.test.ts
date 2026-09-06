@@ -93,6 +93,19 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
 }
 
 describe("MarketingService MVP permissions", () => {
+  it("passes the configured Head identity through the onboarding boundary", async () => {
+    const repo = repository({ registerTelegramUser: vi.fn(async () => head) });
+    const service = new MarketingService(repo);
+    const identity = {
+      telegramUserId: "1001",
+      telegramUsername: "lead",
+      displayName: "Team Lead",
+    };
+
+    await expect(service.onboardTelegram(identity, "1001")).resolves.toEqual(head);
+    expect(repo.registerTelegramUser).toHaveBeenCalledWith(identity, "1001");
+  });
+
   it("allows only the assignee to accept and block a task", async () => {
     const repo = repository();
     const service = new MarketingService(repo);

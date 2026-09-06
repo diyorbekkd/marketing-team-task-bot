@@ -3,7 +3,7 @@ import "server-only";
 import { z } from "zod";
 
 const requiredSecret = z.string().trim().min(1);
-const telegramInteger = z.string().regex(/^-?\d+$/, "Must be a Telegram integer ID");
+const negativeTelegramInteger = z.string().regex(/^-\d+$/, "Must be a negative Telegram group ID");
 const positiveTelegramInteger = z.string().regex(/^\d+$/, "Must be a positive Telegram integer ID");
 const telegramBotToken = z
   .string()
@@ -48,7 +48,7 @@ const TelegramConfigSchema = z.object({
 });
 
 const TeamBootstrapConfigSchema = z.object({
-  TELEGRAM_GROUP_ID: telegramInteger,
+  TELEGRAM_GROUP_ID: negativeTelegramInteger,
   HEAD_TELEGRAM_USER_ID: positiveTelegramInteger,
 });
 

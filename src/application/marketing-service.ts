@@ -25,8 +25,8 @@ function taskAccess(task: Task) {
 export class MarketingService {
   constructor(private readonly repository: MarketingRepository) {}
 
-  async onboardTelegram(identity: TelegramIdentityInput): Promise<User> {
-    return this.repository.registerTelegramUser(identity);
+  async onboardTelegram(identity: TelegramIdentityInput, expectedHeadTelegramUserId: string): Promise<User> {
+    return this.repository.registerTelegramUser(identity, expectedHeadTelegramUserId);
   }
 
   async requireActorByTelegramId(telegramUserId: string): Promise<User> {

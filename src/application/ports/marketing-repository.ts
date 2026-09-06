@@ -19,7 +19,7 @@ export interface CreateTaskRecord {
 }
 
 export interface MarketingRepository {
-  registerTelegramUser(identity: TelegramIdentityInput): Promise<User>;
+  registerTelegramUser(identity: TelegramIdentityInput, expectedHeadTelegramUserId: string): Promise<User>;
   getUserById(id: string): Promise<User | null>;
   getUserByTelegramId(telegramUserId: string): Promise<User | null>;
   findActiveUserByUsername(username: string): Promise<User | null>;
