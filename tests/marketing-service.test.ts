@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MarketingService } from "../src/application/marketing-service";
+import type { AssignmentNotifier } from "../src/application/ports/assignment-notifier";
 import type { MarketingRepository } from "../src/application/ports/marketing-repository";
 import type { DeadlineChangeRequest, Task, User } from "../src/domain/models";
 
@@ -92,10 +93,17 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
   };
 }
 
+function notifier(overrides: Partial<AssignmentNotifier> = {}): AssignmentNotifier {
+  return {
+    notifyAssignment: vi.fn(async () => ({ status: "SENT" as const })),
+    ...overrides,
+  };
+}
+
 describe("MarketingService MVP permissions", () => {
   it("passes the configured Head identity through the onboarding boundary", async () => {
     const repo = repository({ registerTelegramUser: vi.fn(async () => head) });
-    const service = new MarketingService(repo);
+    const service = new MarketingService(repo, notifier());
     const identity = {
       telegramUserId: "1001",
       telegramUsername: "lead",
@@ -108,7 +116,7 @@ describe("MarketingService MVP permissions", () => {
 
   it("allows only the assignee to accept and block a task", async () => {
     const repo = repository();
-    const service = new MarketingService(repo);
+    const service = new MarketingService(repo, notifier());
 
     await expect(service.performTaskAction(creator, ids.task, { action: "ACCEPT" })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await service.performTaskAction(assignee, ids.task, { action: "ACCEPT" });
@@ -123,7 +131,7 @@ describe("MarketingService MVP permissions", () => {
     const reviewed = task({ status: "REVIEW" });
     for (const reviewer of [creator, head]) {
       const repo = repository({ getTask: vi.fn(async () => reviewed) });
-      await new MarketingService(repo).performTaskAction(reviewer, ids.task, { action: "APPROVE" });
+      await new MarketingService(repo, notifier()).performTaskAction(reviewer, ids.task, { action: "APPROVE" });
       expect(repo.transitionTask).toHaveBeenCalledWith(expect.objectContaining({ newStatus: "DONE" }));
     }
   });
@@ -131,7 +139,7 @@ describe("MarketingService MVP permissions", () => {
   it("preserves cancellation as a terminal state unless Head reopens it", async () => {
     const cancelled = task({ status: "CANCELLED", cancelledAt: "2026-09-06T13:00:00.000Z" });
     const repo = repository({ getTask: vi.fn(async () => cancelled) });
-    const service = new MarketingService(repo);
+    const service = new MarketingService(repo, notifier());
 
     await expect(service.performTaskAction(creator, ids.task, { action: "ACCEPT" })).rejects.toMatchObject({ code: "CONFLICT" });
     await expect(service.performTaskAction(creator, ids.task, { action: "REOPEN" })).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -139,7 +147,7 @@ describe("MarketingService MVP permissions", () => {
   });
 
   it("denies team-wide task data to a normal employee", async () => {
-    const service = new MarketingService(repository());
+    const service = new MarketingService(repository(), notifier());
     await expect(service.listTasks(assignee, "team")).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(service.listTasks(head, "team")).resolves.toHaveLength(1);
   });
@@ -151,7 +159,7 @@ describe("MarketingService MVP permissions", () => {
         task({ id: "20000000-0000-4000-8000-000000000002" }),
       ]),
     });
-    const service = new MarketingService(repo);
+    const service = new MarketingService(repo, notifier());
 
     await expect(service.listTasks(head, "my")).resolves.toHaveLength(1);
     await expect(service.listTasks(head, "team")).resolves.toHaveLength(2);
@@ -160,7 +168,7 @@ describe("MarketingService MVP permissions", () => {
   it("activates only pending employees and does not allow Head transfer", async () => {
     const pending = { ...unrelated, isActive: false };
     const repo = repository({ getUserById: vi.fn(async () => pending) });
-    const service = new MarketingService(repo);
+    const service = new MarketingService(repo, notifier());
 
     await expect(service.activateUser(assignee, pending.id, "DIGITAL_MARKETER")).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(service.activateUser(head, pending.id, "HEAD_OF_MARKETING")).rejects.toMatchObject({ code: "INVALID_INPUT" });
@@ -175,7 +183,7 @@ describe("MarketingService MVP permissions", () => {
         task({ id: "20000000-0000-4000-8000-000000000002", deadline: "2026-09-07T18:00:00.000Z" }),
       ]),
     });
-    const service = new MarketingService(repo);
+    const service = new MarketingService(repo, notifier());
     const now = new Date("2026-09-06T20:00:00.000Z");
 
     await expect(service.listTasks(assignee, "overdue", now)).resolves.toHaveLength(1);
@@ -184,7 +192,7 @@ describe("MarketingService MVP permissions", () => {
 
   it("permits only the assignee to request a deadline change", async () => {
     const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })) });
-    const service = new MarketingService(repo);
+    const service = new MarketingService(repo, notifier());
     const input = { requestedDeadline: "2026-09-09T13:00:00.000Z", reason: "Assets are late" };
 
     await expect(service.requestDeadlineChange(creator, ids.task, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -194,7 +202,7 @@ describe("MarketingService MVP permissions", () => {
 
   it("allows only creator or Head to resolve a pending deadline request", async () => {
     const repo = repository();
-    const service = new MarketingService(repo);
+    const service = new MarketingService(repo, notifier());
 
     await expect(service.resolveDeadlineChangeRequest(unrelated, ids.request, true)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await service.resolveDeadlineChangeRequest(creator, ids.request, true);
@@ -204,9 +212,45 @@ describe("MarketingService MVP permissions", () => {
 
   it("rejects a request already resolved before invoking the transactional repository", async () => {
     const repo = repository({ getDeadlineChangeRequest: vi.fn(async () => deadlineRequest({ status: "APPROVED" })) });
-    const service = new MarketingService(repo);
+    const service = new MarketingService(repo, notifier());
 
     await expect(service.resolveDeadlineChangeRequest(creator, ids.request, true)).rejects.toMatchObject({ code: "CONFLICT" });
     expect(repo.resolveDeadlineChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it("uses the shared assignment notifier after persisting a task", async () => {
+    const created = task();
+    const repo = repository({ createTask: vi.fn(async () => created) });
+    const assignmentNotifier = notifier();
+    const service = new MarketingService(repo, assignmentNotifier);
+
+    const result = await service.createTask(creator, {
+      title: created.title,
+      assigneeId: assignee.id,
+      deadline: created.deadline,
+      priority: created.priority,
+    });
+
+    expect(result).toEqual({ task: created, assignee, notification: { status: "SENT" } });
+    expect(assignmentNotifier.notifyAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
+  });
+
+  it("keeps the persisted task result when assignment delivery fails", async () => {
+    const created = task();
+    const repo = repository({ createTask: vi.fn(async () => created) });
+    const assignmentNotifier = notifier({
+      notifyAssignment: vi.fn(async () => { throw new Error("delivery failed"); }),
+    });
+    const service = new MarketingService(repo, assignmentNotifier);
+
+    const result = await service.createTask(creator, {
+      title: created.title,
+      assigneeId: assignee.id,
+      deadline: created.deadline,
+    });
+
+    expect(result.task).toEqual(created);
+    expect(result.notification).toEqual({ status: "FAILED", reason: "DELIVERY_FAILED" });
+    expect(repo.createTask).toHaveBeenCalledTimes(1);
   });
 });

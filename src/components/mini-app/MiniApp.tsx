@@ -76,6 +76,10 @@ interface TaskDetail {
   deadlineRequests: DeadlineRequest[];
 }
 
+type AssignmentNotificationResult =
+  | { status: "SENT" }
+  | { status: "FAILED"; reason: "ASSIGNEE_NOT_ONBOARDED" | "DELIVERY_FAILED" };
+
 type Filter = "my" | "today" | "overdue" | "team";
 type ViewMode = "list" | "kanban";
 
@@ -220,6 +224,7 @@ export default function MiniApp() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showPendingUsers, setShowPendingUsers] = useState(false);
+  const [taskNotice, setTaskNotice] = useState<{ kind: "success" | "warning"; text: string } | null>(null);
 
   const isHead = currentUser?.role === "HEAD_OF_MARKETING";
 
@@ -389,6 +394,12 @@ export default function MiniApp() {
       </nav>
 
       <main className="ma-main">
+        {taskNotice && (
+          <div className={`ma-notice ${taskNotice.kind}`} role="status">
+            <span>{taskNotice.text}</span>
+            <button onClick={() => setTaskNotice(null)} aria-label="Dismiss notification">×</button>
+          </div>
+        )}
         {loadingTasks && (
           <div className="ma-center-inline">
             <div className="ma-spinner" aria-label="Loading tasks" />
@@ -425,9 +436,15 @@ export default function MiniApp() {
           currentUser={currentUser!}
           users={users}
           onClose={() => setShowQuickAdd(false)}
-          onCreated={() => {
+          onCreated={(notification) => {
             setShowQuickAdd(false);
-            loadTasks(filter);
+            setTaskNotice(notification.status === "SENT"
+              ? { kind: "success", text: "Task created and assignee notified." }
+              : {
+                  kind: "warning",
+                  text: "Task created, but the private notification was not delivered. Ask the assignee to send /start to the bot.",
+                });
+            void loadTasks(filter);
           }}
         />
       )}
@@ -873,7 +890,7 @@ function QuickAddPanel({
   currentUser: User;
   users: User[];
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (notification: AssignmentNotificationResult) => void;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -897,14 +914,15 @@ function QuickAddPanel({
     };
     if (description.trim()) body.description = description.trim();
 
-    const { error: e } = await apiFetch<{ task: Task }>("/api/tasks", {
+    const { data, error: e } = await apiFetch<{ task: Task; notification: AssignmentNotificationResult }>("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
     setPending(false);
     if (e) { setError(e); return; }
-    onCreated();
+    if (!data) { setError("Task was not created."); return; }
+    onCreated(data.notification);
   };
 
   return (

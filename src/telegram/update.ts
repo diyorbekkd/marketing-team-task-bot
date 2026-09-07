@@ -17,12 +17,21 @@ const TelegramChatSchema = z
   })
   .passthrough();
 
+const TelegramMessageEntitySchema = z
+  .object({
+    type: z.string(),
+    offset: z.number().int().nonnegative(),
+    length: z.number().int().positive(),
+  })
+  .passthrough();
+
 const TelegramMessageSchema = z
   .object({
     message_id: z.number().int().nonnegative(),
     from: TelegramUserSchema.optional(),
     chat: TelegramChatSchema,
     text: z.string().optional(),
+    entities: z.array(TelegramMessageEntitySchema).optional(),
   })
   .passthrough();
 

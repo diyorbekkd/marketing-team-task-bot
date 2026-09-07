@@ -36,6 +36,22 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid Telegram update." }, { status: 400 });
   }
 
+  const message = parsed.data.message;
+  console.info(JSON.stringify({
+    event: "telegram_update_received",
+    updateId: parsed.data.update_id,
+    updateKind: parsed.data.callback_query ? "callback_query" : message ? "message" : "other",
+    ...(message ? {
+      message: {
+        chatType: message.chat.type,
+        hasSender: Boolean(message.from),
+        hasText: typeof message.text === "string",
+        textLength: message.text?.length ?? 0,
+        entityTypes: [...new Set(message.entities?.map((entity) => entity.type) ?? [])],
+      },
+    } : {}),
+  }));
+
   const result = await createTelegramUpdateHandler(getMarketingService(), {
     marketingGroupId: teamConfig.groupId,
     headTelegramUserId: teamConfig.headTelegramUserId,

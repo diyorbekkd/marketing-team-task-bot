@@ -9,7 +9,7 @@ const TelegramApiResponseSchema = z.object({
 
 export async function sendTelegramMessage(
   botToken: string,
-  input: Readonly<{ chatId: number; text: string; replyMarkup?: unknown }>,
+  input: Readonly<{ chatId: number | string; text: string; replyMarkup?: unknown }>,
 ): Promise<void> {
   const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: "POST",

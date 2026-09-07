@@ -19,8 +19,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const actor = await requireRequestActor();
-    const task = await getMarketingService().createTask(actor, await request.json());
-    return Response.json({ task }, { status: 201 });
+    const result = await getMarketingService().createTask(actor, await request.json());
+    return Response.json(result, { status: 201 });
   } catch (error) {
     return errorResponse(error);
   }

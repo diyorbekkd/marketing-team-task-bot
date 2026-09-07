@@ -2,7 +2,12 @@ import { ApplicationError } from "@/application/errors";
 import type { MarketingService } from "@/application/marketing-service";
 import type { Task, User } from "@/domain/models";
 import type { TaskAction } from "@/domain/workflow";
-import { TaskShorthandError, parseTaskShorthand, parseTashkentDeadline } from "./task-shorthand";
+import {
+  TaskShorthandError,
+  looksLikeTaskShorthand,
+  parseTaskShorthand,
+  parseTashkentDeadline,
+} from "./task-shorthand";
 import type { TelegramUpdate } from "./update";
 
 export interface TelegramOutgoingMessage {
@@ -39,18 +44,6 @@ function compactTask(task: Task, assignee: User): string {
   return `#${task.id.slice(0, 8)} · ${task.title}\nAssignee: ${assignee.displayName}\nDeadline: ${deadline}\nPriority: ${task.priority}`;
 }
 
-function actionKeyboard(task: Task) {
-  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
-  if (task.status === "ASSIGNED") rows.push([{ text: "Accept", callback_data: `task:${task.id}:ACCEPT` }]);
-  if (["IN_PROGRESS", "REVISION"].includes(task.status)) {
-    rows.push([{ text: "Send to review", callback_data: `task:${task.id}:SUBMIT_REVIEW` }]);
-  }
-  if (task.status === "REVIEW") {
-    rows.push([{ text: "Approve", callback_data: `task:${task.id}:APPROVE` }]);
-  }
-  return rows.length ? { inline_keyboard: rows } : undefined;
-}
-
 function commandAction(command: string): TaskAction | null {
   const actions: Readonly<Record<string, TaskAction>> = {
     "/accept": "ACCEPT",
@@ -59,6 +52,22 @@ function commandAction(command: string): TaskAction | null {
     "/resume": "RESUME",
   };
   return actions[command] ?? null;
+}
+
+function taskFormatError(reason: string): string {
+  return [
+    "❌ Task yaratilmadi.",
+    `Sabab: ${reason}`,
+    "",
+    "Kerakli format:",
+    "T: Task nomi",
+    "A: @username",
+    "DL: DD.MM HH:mm",
+  ].join("\n");
+}
+
+function notificationWarning(): string {
+  return "⚠️ Task saqlandi, lekin assignee'ga private xabar yuborilmadi. Assignee botga private chatda /start yuborsin.";
 }
 
 export function createTelegramUpdateHandler(service: MarketingService, config: TelegramHandlerConfig) {
@@ -134,24 +143,41 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
         return { messages: [{ chatId: message.chat.id, text: `Deadline request created: ${request.id}` }] };
       }
 
-      if (/(^|\n)T:\s*/i.test(text) && /(^|\n)A:\s*/i.test(text)) {
+      if (looksLikeTaskShorthand(text)) {
         const isConfiguredMarketingGroup =
           ["group", "supergroup"].includes(message.chat.type) &&
           String(message.chat.id) === config.marketingGroupId;
         if (!isConfiguredMarketingGroup) {
-          throw new TaskShorthandError("Tasks may only be created in the configured marketing group.");
+          throw new ApplicationError("FORBIDDEN", "Tasks may only be created in the configured marketing group.");
         }
-        const parsed = parseTaskShorthand(text);
-        const { task, assignee } = await service.createTaskForUsername(actor, parsed, update.update_id);
+        let parsed;
+        try {
+          parsed = parseTaskShorthand(text);
+        } catch (error) {
+          if (error instanceof TaskShorthandError) {
+            console.warn(JSON.stringify({
+              event: "group_task_parse_failed",
+              updateId: update.update_id,
+              reason: error.message,
+            }));
+          }
+          throw error;
+        }
+        const { task, assignee, notification } = await service.createTaskForUsername(actor, parsed, update.update_id);
+        console.info(JSON.stringify({
+          event: "group_task_created",
+          updateId: update.update_id,
+          taskId: task.id,
+          notificationStatus: notification.status,
+        }));
         return {
-          messages: [
-            { chatId: message.chat.id, text: `Task created.\n${compactTask(task, assignee)}` },
-            {
-              chatId: Number(assignee.telegramUserId),
-              text: `New task assigned to you.\n${compactTask(task, assignee)}\nTask ID: ${task.id}`,
-              replyMarkup: actionKeyboard(task),
-            },
-          ],
+          messages: [{
+            chatId: message.chat.id,
+            text: [
+              `Task created.\n${compactTask(task, assignee)}`,
+              ...(notification.status === "FAILED" ? [notificationWarning()] : []),
+            ].join("\n"),
+          }],
         };
       }
 
@@ -159,8 +185,10 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
     } catch (error) {
       const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
       if (!chatId) return { messages: [], callbackQueryId: update.callback_query?.id };
-      const message = error instanceof TaskShorthandError || error instanceof ApplicationError
-        ? error.message
+      const message = error instanceof TaskShorthandError
+        ? taskFormatError(error.message)
+        : error instanceof ApplicationError
+          ? error.message
         : "The task service is temporarily unavailable.";
       return { messages: [{ chatId, text: message }], callbackQueryId: update.callback_query?.id };
     }

@@ -4,6 +4,10 @@ import { canApproveDeadlineRequest, isAssignee, isCreator, isHead } from "@/doma
 import type { DeadlineChangeRequest, Task, User } from "@/domain/models";
 import { TaskActionInputSchema, canTransition, statusForAction } from "@/domain/workflow";
 import type { MarketingRepository, TelegramIdentityInput } from "./ports/marketing-repository";
+import type {
+  AssignmentNotificationResult,
+  AssignmentNotifier,
+} from "./ports/assignment-notifier";
 import { ApplicationError } from "./errors";
 import { z } from "zod";
 
@@ -14,6 +18,12 @@ const DeadlineRequestInputSchema = z.object({
 
 export type TaskScope = "my" | "team" | "today" | "overdue" | "review";
 
+export interface TaskCreationResult {
+  readonly task: Task;
+  readonly assignee: User;
+  readonly notification: AssignmentNotificationResult;
+}
+
 function actorFromUser(user: User): ActorContext {
   return { userId: user.id, role: user.role };
 }
@@ -23,7 +33,10 @@ function taskAccess(task: Task) {
 }
 
 export class MarketingService {
-  constructor(private readonly repository: MarketingRepository) {}
+  constructor(
+    private readonly repository: MarketingRepository,
+    private readonly assignmentNotifier: AssignmentNotifier,
+  ) {}
 
   async onboardTelegram(identity: TelegramIdentityInput, expectedHeadTelegramUserId: string): Promise<User> {
     return this.repository.registerTelegramUser(identity, expectedHeadTelegramUserId);
@@ -71,14 +84,14 @@ export class MarketingService {
     actor: User,
     input: unknown,
     sourceTelegramUpdateId?: number,
-  ): Promise<Task> {
+  ): Promise<TaskCreationResult> {
     const parsed = CreateTaskInputSchema.parse(input);
     const assignee = await this.repository.getUserById(parsed.assigneeId);
     if (!assignee?.isActive) {
       throw new ApplicationError("INVALID_INPUT", "Assignee must be an active team member.");
     }
 
-    return this.repository.createTask({
+    const task = await this.repository.createTask({
       creatorId: actor.id,
       assigneeId: parsed.assigneeId,
       title: parsed.title,
@@ -87,25 +100,43 @@ export class MarketingService {
       deadline: parsed.deadline,
       sourceTelegramUpdateId,
     });
+
+    let notification: AssignmentNotificationResult;
+    try {
+      notification = await this.assignmentNotifier.notifyAssignment({ task, creator: actor, assignee });
+    } catch {
+      notification = { status: "FAILED", reason: "DELIVERY_FAILED" };
+    }
+
+    const log = {
+      event: notification.status === "SENT"
+        ? "task_assignment_notification_sent"
+        : "task_assignment_notification_failed",
+      taskId: task.id,
+      ...(notification.status === "FAILED" ? { reason: notification.reason } : {}),
+    };
+    if (notification.status === "SENT") console.info(JSON.stringify(log));
+    else console.warn(JSON.stringify(log));
+
+    return { task, assignee, notification };
   }
 
   async createTaskForUsername(
     actor: User,
     input: Omit<z.input<typeof CreateTaskInputSchema>, "assigneeId"> & { assigneeUsername: string },
     sourceTelegramUpdateId?: number,
-  ): Promise<{ task: Task; assignee: User }> {
+  ): Promise<TaskCreationResult> {
     const assignee = await this.repository.findActiveUserByUsername(input.assigneeUsername);
     if (!assignee) {
       throw new ApplicationError("INVALID_INPUT", `No active teammate matches @${input.assigneeUsername}.`);
     }
-    const task = await this.createTask(actor, {
+    return this.createTask(actor, {
       title: input.title,
       assigneeId: assignee.id,
       deadline: input.deadline,
       priority: input.priority,
       description: input.description,
     }, sourceTelegramUpdateId);
-    return { task, assignee };
   }
 
   async listTasks(actor: User, scope: TaskScope = "my", now = new Date()): Promise<Task[]> {

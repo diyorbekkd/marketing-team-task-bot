@@ -10,6 +10,7 @@ vi.mock("../src/telegram/client", () => ({
 
 const testBotToken = ["123456789", "abcdefghijklmnopqrstuvwxyz_ABCD12345"].join(":");
 const validEnvironment = {
+  APP_URL: "https://tasks.example.com",
   TELEGRAM_BOT_TOKEN: testBotToken,
   TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
   TELEGRAM_GROUP_ID: "-100123",
@@ -50,6 +51,7 @@ describe("Telegram webhook route", () => {
   it("returns a sanitized retryable response when reply delivery fails", async () => {
     sendTelegramMessage.mockRejectedValueOnce(new Error("secret-bearing transport details"));
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
     const { POST } = await import("../src/app/api/telegram/webhook/route");
     const response = await POST(
       new Request("https://tasks.example.com/api/telegram/webhook", {
@@ -73,5 +75,8 @@ describe("Telegram webhook route", () => {
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: "Telegram reply delivery failed." });
     expect(log).toHaveBeenCalledWith("Failed to deliver Telegram reply.");
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('"event":"telegram_update_received"'));
+    expect(info.mock.calls[0]?.[0]).not.toContain("/start");
+    expect(info.mock.calls[0]?.[0]).not.toContain("Test");
   });
 });

@@ -17,6 +17,10 @@ export class TaskShorthandError extends Error {
   }
 }
 
+export function looksLikeTaskShorthand(text: string): boolean {
+  return /(?:^|\n)\s*(?:@[A-Za-z0-9_]{3,32}\s+)?(?:T|A|DL|P|D)\s*:/i.test(text);
+}
+
 export function parseTashkentDeadline(value: string, now = new Date()): string {
   const match = value.trim().match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?\s+(\d{1,2}):(\d{2})$/);
   if (!match) throw new TaskShorthandError("DL must use DD.MM HH:mm or DD.MM.YYYY HH:mm.");
@@ -50,9 +54,11 @@ export function parseTashkentDeadline(value: string, now = new Date()): string {
 export function parseTaskShorthand(text: string, now = new Date()): ParsedTaskShorthand {
   const fields = new Map<string, string>();
   for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim();
+    const line = rawLine
+      .trim()
+      .replace(/^@[A-Za-z0-9_]{3,32}\s+(?=(?:T|A|DL|P|D)\s*:)/i, "");
     if (!line || /^@[A-Za-z0-9_]+$/.test(line)) continue;
-    const match = line.match(/^(T|A|DL|P|D):\s*(.*)$/i);
+    const match = line.match(/^(T|A|DL|P|D)\s*:\s*(.*)$/i);
     if (!match) continue;
     const key = match[1].toUpperCase();
     if (fields.has(key)) throw new TaskShorthandError(`${key} may only appear once.`);

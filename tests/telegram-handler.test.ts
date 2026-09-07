@@ -49,7 +49,7 @@ function serviceMock(overrides: Record<string, unknown> = {}) {
   return {
     onboardTelegram: vi.fn(async () => actor),
     requireActorByTelegramId: vi.fn(async () => actor),
-    createTaskForUsername: vi.fn(async () => ({ task, assignee })),
+    createTaskForUsername: vi.fn(async () => ({ task, assignee, notification: { status: "SENT" as const } })),
     performTaskAction: vi.fn(async () => ({ ...task, status: "IN_PROGRESS" })),
     requestDeadlineChange: vi.fn(),
     ...overrides,
@@ -80,7 +80,7 @@ describe("Telegram MVP handler", () => {
     expect(result.messages[0]?.text).toContain("HEAD_OF_MARKETING");
   });
 
-  it("creates an idempotent group task and notifies the assignee", async () => {
+  it("creates an idempotent group task through the notification-aware service", async () => {
     const service = serviceMock();
     const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
       update_id: 11,
@@ -96,8 +96,51 @@ describe("Telegram MVP handler", () => {
       title: "Publish launch reel",
       assigneeUsername: "editor",
     }), 11);
-    expect(result.messages.map((message) => message.chatId)).toEqual([-100123, 43]);
-    expect(result.messages[1]?.replyMarkup?.inline_keyboard[0]?.[0]?.callback_data).toBe(`task:${task.id}:ACCEPT`);
+    expect(result.messages.map((message) => message.chatId)).toEqual([-100123]);
+    expect(result.messages[0]?.text).toContain("Task created.");
+  });
+
+  it("returns a useful format response for incomplete group shorthand", async () => {
+    const service = serviceMock();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 14,
+      message: {
+        message_id: 4,
+        chat: { id: -100123, type: "supergroup" },
+        from: { id: 42, is_bot: false, first_name: "Team", username: "lead" },
+        text: "@marketing_team_task_bot T: Publish launch reel",
+        entities: [{ type: "mention", offset: 0, length: 24 }],
+      },
+    }));
+
+    expect(service.createTaskForUsername).not.toHaveBeenCalled();
+    expect(result.messages[0]?.text).toContain("Task yaratilmadi");
+    expect(result.messages[0]?.text).toContain("A: @username");
+    expect(result.messages[0]?.text).toContain("DL: DD.MM HH:mm");
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('"event":"group_task_parse_failed"'));
+  });
+
+  it("confirms persistence while warning when assignment notification fails", async () => {
+    const service = serviceMock({
+      createTaskForUsername: vi.fn(async () => ({
+        task,
+        assignee,
+        notification: { status: "FAILED" as const, reason: "DELIVERY_FAILED" as const },
+      })),
+    });
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 15,
+      message: {
+        message_id: 5,
+        chat: { id: -100123, type: "supergroup" },
+        from: { id: 42, is_bot: false, first_name: "Team", username: "lead" },
+        text: "T: Publish launch reel\nA: @editor\nDL: 08.09.2026 18:00",
+      },
+    }));
+
+    expect(result.messages[0]?.text).toContain("Task saqlandi");
+    expect(result.messages[0]?.text).toContain("/start");
   });
 
   it("rejects shorthand task creation outside the configured marketing group", async () => {

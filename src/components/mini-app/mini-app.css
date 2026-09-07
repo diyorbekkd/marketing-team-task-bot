@@ -187,6 +187,39 @@
   padding: 16px;
 }
 
+.ma-notice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid;
+  border-radius: 10px;
+  font-size: 0.875rem;
+}
+
+.ma-notice.success {
+  color: #256029;
+  background: rgba(46, 125, 50, 0.08);
+  border-color: rgba(46, 125, 50, 0.3);
+}
+
+.ma-notice.warning {
+  color: #7a4d00;
+  background: rgba(237, 165, 24, 0.1);
+  border-color: rgba(180, 118, 0, 0.35);
+}
+
+.ma-notice button {
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
 /* ── States ────────────────────────────────────────────────────────────────── */
 
 .ma-center {
