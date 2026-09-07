@@ -6,8 +6,9 @@ import { TaskActionInputSchema, canTransition, statusForAction } from "@/domain/
 import type { MarketingRepository, TelegramIdentityInput } from "./ports/marketing-repository";
 import type {
   AssignmentNotificationResult,
-  AssignmentNotifier,
-} from "./ports/assignment-notifier";
+  NotificationDispatcher,
+  WorkflowNotificationInput,
+} from "./ports/notification-dispatcher";
 import { ApplicationError } from "./errors";
 import { z } from "zod";
 
@@ -35,7 +36,7 @@ function taskAccess(task: Task) {
 export class MarketingService {
   constructor(
     private readonly repository: MarketingRepository,
-    private readonly assignmentNotifier: AssignmentNotifier,
+    private readonly notificationDispatcher: NotificationDispatcher,
   ) {}
 
   async onboardTelegram(identity: TelegramIdentityInput, expectedHeadTelegramUserId: string): Promise<User> {
@@ -103,7 +104,7 @@ export class MarketingService {
 
     let notification: AssignmentNotificationResult;
     try {
-      notification = await this.assignmentNotifier.notifyAssignment({ task, creator: actor, assignee });
+      notification = await this.notificationDispatcher.notifyAssignment({ task, creator: actor, assignee });
     } catch {
       notification = { status: "FAILED", reason: "DELIVERY_FAILED" };
     }
@@ -203,12 +204,38 @@ export class MarketingService {
       throw new ApplicationError("FORBIDDEN", "Only Head may reopen a task.");
     }
 
-    return this.repository.transitionTask({
+    const transitionedTask = await this.repository.transitionTask({
       taskId,
       actorId: actor.id,
       newStatus: statusForAction(action.action),
       reason: action.reason,
     });
+
+    if (action.action === "SUBMIT_REVIEW") {
+      await this.dispatchWorkflowNotification(
+        { event: "REVIEW_REQUESTED", task: transitionedTask, actor },
+        [task.creatorId],
+        true,
+      );
+    } else if (action.action === "APPROVE") {
+      await this.dispatchWorkflowNotification(
+        { event: "TASK_COMPLETED", task: transitionedTask, actor },
+        [task.assigneeId],
+      );
+    } else if (action.action === "REQUEST_REVISION") {
+      await this.dispatchWorkflowNotification(
+        { event: "REVISION_REQUESTED", task: transitionedTask, actor, comment: action.reason },
+        [task.assigneeId],
+      );
+    } else if (action.action === "BLOCK") {
+      await this.dispatchWorkflowNotification(
+        { event: "TASK_BLOCKED", task: transitionedTask, actor, comment: action.reason },
+        [task.creatorId],
+        true,
+      );
+    }
+
+    return transitionedTask;
   }
 
   async requestDeadlineChange(actor: User, taskId: string, input: unknown): Promise<DeadlineChangeRequest> {
@@ -220,12 +247,18 @@ export class MarketingService {
     if (["DONE", "CANCELLED"].includes(task.status)) {
       throw new ApplicationError("CONFLICT", "A terminal task cannot request a new deadline.");
     }
-    return this.repository.createDeadlineChangeRequest({
+    const deadlineRequest = await this.repository.createDeadlineChangeRequest({
       taskId,
       requestedBy: actor.id,
       requestedDeadline: parsed.requestedDeadline,
       reason: parsed.reason,
     });
+    await this.dispatchWorkflowNotification(
+      { event: "DEADLINE_CHANGE_REQUESTED", task, actor, deadlineRequest },
+      [task.creatorId],
+      true,
+    );
+    return deadlineRequest;
   }
 
   async resolveDeadlineChangeRequest(
@@ -248,12 +281,112 @@ export class MarketingService {
     if (request.status !== "PENDING") {
       throw new ApplicationError("CONFLICT", "Deadline request is already resolved.");
     }
-    return this.repository.resolveDeadlineChangeRequest({
+    const resolvedRequest = await this.repository.resolveDeadlineChangeRequest({
       requestId,
       resolvedBy: actor.id,
       approve,
       resolutionNote,
     });
+    await this.dispatchWorkflowNotification(
+      {
+        event: approve ? "DEADLINE_CHANGE_APPROVED" : "DEADLINE_CHANGE_REJECTED",
+        task,
+        actor,
+        deadlineRequest: resolvedRequest,
+      },
+      [request.requestedBy, task.assigneeId],
+    );
+    return resolvedRequest;
+  }
+
+  private async dispatchWorkflowNotification(
+    notification: Omit<WorkflowNotificationInput, "recipients">,
+    directRecipientIds: readonly string[],
+    includeHeads = false,
+  ): Promise<void> {
+    try {
+      const users = await this.repository.listUsers();
+      const usersById = new Map(users.map((user) => [user.id, user]));
+      const recipientIds = [...new Set(directRecipientIds)];
+      const directRecipients = recipientIds.flatMap((id) => {
+        const recipient = usersById.get(id);
+        if (!recipient) {
+          this.logWorkflowDelivery(notification, {
+            status: "FAILED",
+            recipientUserId: id,
+            reason: "RECIPIENT_NOT_FOUND",
+          });
+          return [];
+        }
+        if (!recipient.isActive) {
+          this.logWorkflowDelivery(notification, {
+            status: "FAILED",
+            recipientUserId: id,
+            reason: "RECIPIENT_INACTIVE",
+          });
+          return [];
+        }
+        return [recipient];
+      });
+      const heads = includeHeads
+        ? users.filter((user) => user.isActive && user.role === "HEAD_OF_MARKETING")
+        : [];
+      if (includeHeads && heads.length === 0) {
+        this.logWorkflowDelivery(notification, {
+          status: "FAILED",
+          reason: "HEAD_NOT_FOUND",
+        });
+      }
+
+      const recipients = [...directRecipients, ...heads];
+      if (recipients.length === 0) return;
+
+      let result;
+      try {
+        result = await this.notificationDispatcher.notifyWorkflow({ ...notification, recipients });
+      } catch {
+        const uniqueRecipients = new Map(recipients.map((recipient) => [
+          /^\d+$/.test(recipient.telegramUserId) ? `telegram:${recipient.telegramUserId}` : `user:${recipient.id}`,
+          recipient,
+        ]));
+        for (const recipient of uniqueRecipients.values()) {
+          this.logWorkflowDelivery(notification, {
+            status: "FAILED",
+            recipientUserId: recipient.id,
+            reason: "DISPATCH_FAILED",
+          });
+        }
+        return;
+      }
+
+      for (const delivery of result.deliveries) {
+        this.logWorkflowDelivery(notification, delivery);
+      }
+    } catch {
+      this.logWorkflowDelivery(notification, {
+        status: "FAILED",
+        reason: "RECIPIENT_LOOKUP_FAILED",
+      });
+    }
+  }
+
+  private logWorkflowDelivery(
+    notification: Omit<WorkflowNotificationInput, "recipients">,
+    delivery: Readonly<{
+      status: "SENT" | "FAILED";
+      recipientUserId?: string;
+      reason?: string;
+    }>,
+  ): void {
+    const log = {
+      event: delivery.status === "SENT" ? "workflow_notification_sent" : "workflow_notification_failed",
+      workflowEvent: notification.event,
+      taskId: notification.task.id,
+      ...(delivery.recipientUserId ? { recipientUserId: delivery.recipientUserId } : {}),
+      ...(delivery.reason ? { reason: delivery.reason } : {}),
+    };
+    if (delivery.status === "SENT") console.info(JSON.stringify(log));
+    else console.warn(JSON.stringify(log));
   }
 
   private async requireVisibleTask(actor: User, taskId: string): Promise<Task> {

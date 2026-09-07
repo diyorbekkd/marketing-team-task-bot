@@ -32,19 +32,19 @@ All interfaces use the same backend, database, application services, and authori
 
 ### Marketing group
 
-The primary fast task input is a bot mention followed by shorthand:
+The primary fast task input is a positional message sent without mentioning the bot:
 
 ```text
-@marketingbot
-
-T: Create 5 ad creatives for import campaign
-A: @ali
-DL: 08.09 18:00
-P: high
-D: Construction, plumbing and auto-parts variations
+Create 5 ad creatives for import campaign
+@ali
+08.09.2026 18:00
+high
+Construction, plumbing and auto-parts variations
 ```
 
-Supported fields are `T` (title), `A` (assignee), `DL` (deadline), `P` (priority), and `D` (description). Title, assignee, and deadline are required. Priority is `high`, `normal`, or `low` and defaults to `normal`. Description is optional. A deadline always contains a date and time and is interpreted in `Asia/Tashkent`.
+The first three meaningful lines are title, assignee username, and deadline. A fourth-line `high`, `normal`, or `low` value sets priority; otherwise priority defaults to `normal` and line four onward is the optional multiline description. The previous labeled `T:`, `A:`, `DL:`, `P:`, and `D:` format and explicit bot mentions remain supported for compatibility. A deadline always contains an unambiguous date and time and is interpreted in `Asia/Tashkent`.
+
+To avoid treating group conversation as work, positional input is considered only in the configured marketing group when its assignee/deadline lines have the task shape. The sender and assignee must both resolve to active onboarded team members, and the deadline must be in the future before any task or audit event is created.
 
 ### Private bot chat
 

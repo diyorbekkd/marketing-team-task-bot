@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { MarketingService } from "../src/application/marketing-service";
-import type { AssignmentNotifier } from "../src/application/ports/assignment-notifier";
+import type {
+  NotificationDispatcher,
+  WorkflowNotificationInput,
+} from "../src/application/ports/notification-dispatcher";
 import type { MarketingRepository } from "../src/application/ports/marketing-repository";
 import type { DeadlineChangeRequest, Task, User } from "../src/domain/models";
 
@@ -93,9 +96,15 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
   };
 }
 
-function notifier(overrides: Partial<AssignmentNotifier> = {}): AssignmentNotifier {
+function notifier(overrides: Partial<NotificationDispatcher> = {}): NotificationDispatcher {
   return {
     notifyAssignment: vi.fn(async () => ({ status: "SENT" as const })),
+    notifyWorkflow: vi.fn(async ({ recipients }: WorkflowNotificationInput) => ({
+      deliveries: recipients.map((recipient) => ({
+        recipientUserId: recipient.id,
+        status: "SENT" as const,
+      })),
+    })),
     ...overrides,
   };
 }
@@ -192,22 +201,116 @@ describe("MarketingService MVP permissions", () => {
 
   it("permits only the assignee to request a deadline change", async () => {
     const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })) });
-    const service = new MarketingService(repo, notifier());
+    const notifications = notifier();
+    const service = new MarketingService(repo, notifications);
     const input = { requestedDeadline: "2026-09-09T13:00:00.000Z", reason: "Assets are late" };
 
     await expect(service.requestDeadlineChange(creator, ids.task, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await service.requestDeadlineChange(assignee, ids.task, input);
     expect(repo.createDeadlineChangeRequest).toHaveBeenCalledWith(expect.objectContaining({ requestedBy: ids.assignee }));
+    expect(notifications.notifyWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "DEADLINE_CHANGE_REQUESTED",
+      recipients: expect.arrayContaining([creator, head]),
+    }));
   });
 
   it("allows only creator or Head to resolve a pending deadline request", async () => {
     const repo = repository();
-    const service = new MarketingService(repo, notifier());
+    const notifications = notifier();
+    const service = new MarketingService(repo, notifications);
 
     await expect(service.resolveDeadlineChangeRequest(unrelated, ids.request, true)).rejects.toMatchObject({ code: "FORBIDDEN" });
     await service.resolveDeadlineChangeRequest(creator, ids.request, true);
     await service.resolveDeadlineChangeRequest(head, ids.request, false);
     expect(repo.resolveDeadlineChangeRequest).toHaveBeenCalledTimes(2);
+    expect(notifications.notifyWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "DEADLINE_CHANGE_APPROVED",
+      recipients: [assignee],
+    }));
+    expect(notifications.notifyWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "DEADLINE_CHANGE_REJECTED",
+      recipients: [assignee],
+    }));
+  });
+
+  it("dispatches review, completion, revision, and blocked notifications from the shared workflow", async () => {
+    const notifications = notifier();
+
+    await new MarketingService(repository({
+      getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })),
+    }), notifications).performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" });
+
+    await new MarketingService(repository({
+      getTask: vi.fn(async () => task({ status: "REVIEW" })),
+    }), notifications).performTaskAction(creator, ids.task, { action: "APPROVE" });
+
+    await new MarketingService(repository({
+      getTask: vi.fn(async () => task({ status: "REVIEW" })),
+    }), notifications).performTaskAction(creator, ids.task, {
+      action: "REQUEST_REVISION",
+      reason: "Use the approved copy",
+    });
+
+    await new MarketingService(repository({
+      getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })),
+    }), notifications).performTaskAction(assignee, ids.task, {
+      action: "BLOCK",
+      reason: "Waiting for assets",
+    });
+
+    expect(notifications.notifyWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "REVIEW_REQUESTED",
+      recipients: expect.arrayContaining([creator, head]),
+    }));
+    expect(notifications.notifyWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "TASK_COMPLETED",
+      recipients: [assignee],
+    }));
+    expect(notifications.notifyWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "REVISION_REQUESTED",
+      comment: "Use the approved copy",
+      recipients: [assignee],
+    }));
+    expect(notifications.notifyWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "TASK_BLOCKED",
+      comment: "Waiting for assets",
+      recipients: expect.arrayContaining([creator, head]),
+    }));
+  });
+
+  it("excludes a deactivated direct recipient from workflow notifications", async () => {
+    const inactiveCreator = { ...creator, isActive: false };
+    const notifications = notifier();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await new MarketingService(repository({
+      listUsers: vi.fn(async () => [head, inactiveCreator, assignee, unrelated]),
+      getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })),
+    }), notifications).performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" });
+
+    expect(notifications.notifyWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "REVIEW_REQUESTED",
+      recipients: [head],
+    }));
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('"reason":"RECIPIENT_INACTIVE"'));
+    warning.mockRestore();
+  });
+
+  it("preserves a completed workflow mutation when notification dispatch fails", async () => {
+    const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })) });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const notifications = notifier({
+      notifyWorkflow: vi.fn(async () => { throw new Error("delivery failed"); }),
+    });
+    const service = new MarketingService(repo, notifications);
+
+    await expect(service.performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }))
+      .resolves.toMatchObject({ status: "REVIEW" });
+    expect(repo.transitionTask).toHaveBeenCalledTimes(1);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('"event":"workflow_notification_failed"'));
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('"workflowEvent":"REVIEW_REQUESTED"'));
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining('"reason":"DISPATCH_FAILED"'));
+    warning.mockRestore();
   });
 
   it("rejects a request already resolved before invoking the transactional repository", async () => {
@@ -233,6 +336,41 @@ describe("MarketingService MVP permissions", () => {
 
     expect(result).toEqual({ task: created, assignee, notification: { status: "SENT" } });
     expect(assignmentNotifier.notifyAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
+  });
+
+  it("resolves positional assignees before persistence and preserves assignment notification delivery", async () => {
+    const created = task();
+    const repo = repository({
+      findActiveUserByUsername: vi.fn(async () => assignee),
+      createTask: vi.fn(async () => created),
+    });
+    const notifications = notifier();
+    const service = new MarketingService(repo, notifications);
+
+    await service.createTaskForUsername(creator, {
+      title: created.title,
+      assigneeUsername: "misbahmarketing",
+      deadline: created.deadline,
+      priority: "normal",
+    }, 18);
+
+    expect(repo.findActiveUserByUsername).toHaveBeenCalledWith("misbahmarketing");
+    expect(repo.createTask).toHaveBeenCalledTimes(1);
+    expect(notifications.notifyAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
+  });
+
+  it("does not persist or notify when a positional assignee is unknown", async () => {
+    const repo = repository({ findActiveUserByUsername: vi.fn(async () => null) });
+    const notifications = notifier();
+    const service = new MarketingService(repo, notifications);
+
+    await expect(service.createTaskForUsername(creator, {
+      title: "Yangi creative",
+      assigneeUsername: "unknownuser",
+      deadline: "2026-09-08T13:00:00.000Z",
+    })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(repo.createTask).not.toHaveBeenCalled();
+    expect(notifications.notifyAssignment).not.toHaveBeenCalled();
   });
 
   it("keeps the persisted task result when assignment delivery fails", async () => {

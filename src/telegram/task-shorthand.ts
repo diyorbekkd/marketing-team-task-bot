@@ -17,8 +17,37 @@ export class TaskShorthandError extends Error {
   }
 }
 
+const TelegramUsernameLine = /^@([A-Za-z0-9_]{3,32})$/;
+
+function meaningfulLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function requireFutureDeadline(deadline: string, now: Date): string {
+  if (new Date(deadline).getTime() <= now.getTime()) {
+    throw new TaskShorthandError("Deadline must be in the future.");
+  }
+  return deadline;
+}
+
 export function looksLikeTaskShorthand(text: string): boolean {
-  return /(?:^|\n)\s*(?:@[A-Za-z0-9_]{3,32}\s+)?(?:T|A|DL|P|D)\s*:/i.test(text);
+  return /(?:^|\n)\s*(?:@[A-Za-z0-9_]{3,32}\s+)?T\s*:/i.test(text);
+}
+
+export function looksLikePositionalTask(text: string): boolean {
+  const lines = meaningfulLines(text);
+  if (lines.length < 3) return false;
+
+  const hasAssigneeHint = /^@\S+$/.test(lines[1]);
+  // Anchored to the whole line so ordinary sentences that merely mention a clock
+  // time (e.g. "soat 18:00 da") don't trigger the classifier; separators are kept
+  // permissive (./-) so common near-miss formats still surface a helpful parse
+  // error instead of being silently ignored as conversation.
+  const hasDeadlineHint = /^\d{1,2}[./-]\d{1,2}(?:[./-]\d{2,4})?\s+\d{1,2}:\d{2}$/.test(lines[2]);
+  return hasAssigneeHint && hasDeadlineHint;
 }
 
 export function parseTashkentDeadline(value: string, now = new Date()): string {
@@ -73,7 +102,7 @@ export function parseTaskShorthand(text: string, now = new Date()): ParsedTaskSh
   const result = ParsedTaskSchema.safeParse({
     title: fields.get("T"),
     assigneeUsername: assignee,
-    deadline: parseTashkentDeadline(fields.get("DL")!, now),
+    deadline: requireFutureDeadline(parseTashkentDeadline(fields.get("DL")!, now), now),
     priority: fields.get("P")?.toLowerCase() || undefined,
     description: fields.get("D") || undefined,
   });
@@ -81,4 +110,47 @@ export function parseTaskShorthand(text: string, now = new Date()): ParsedTaskSh
     throw new TaskShorthandError(result.error.issues[0]?.message ?? "Task format is invalid.");
   }
   return result.data;
+}
+
+export function parsePositionalTask(text: string, now = new Date()): ParsedTaskShorthand {
+  const lines = meaningfulLines(text);
+  if (lines.length < 3) {
+    throw new TaskShorthandError("Task requires title, @assignee, and deadline lines.");
+  }
+
+  const assigneeMatch = lines[1].match(TelegramUsernameLine);
+  if (!assigneeMatch) {
+    throw new TaskShorthandError("Line 2 must be exactly @username.");
+  }
+
+  let deadline: string;
+  try {
+    deadline = requireFutureDeadline(parseTashkentDeadline(lines[2], now), now);
+  } catch (error) {
+    if (error instanceof TaskShorthandError && error.message.startsWith("DL ")) {
+      throw new TaskShorthandError(error.message.replace(/^DL/, "Line 3"));
+    }
+    throw error;
+  }
+
+  const possiblePriority = lines[3]?.toLowerCase();
+  const hasPriority = possiblePriority === "high" || possiblePriority === "normal" || possiblePriority === "low";
+  const descriptionLines = lines.slice(hasPriority ? 4 : 3);
+  const result = ParsedTaskSchema.safeParse({
+    title: lines[0],
+    assigneeUsername: assigneeMatch[1],
+    deadline,
+    priority: hasPriority ? possiblePriority : undefined,
+    description: descriptionLines.length > 0 ? descriptionLines.join("\n") : undefined,
+  });
+  if (!result.success) {
+    throw new TaskShorthandError(result.error.issues[0]?.message ?? "Task format is invalid.");
+  }
+  return result.data;
+}
+
+export function parseGroupTaskMessage(text: string, now = new Date()): ParsedTaskShorthand | null {
+  if (looksLikeTaskShorthand(text)) return parseTaskShorthand(text, now);
+  if (looksLikePositionalTask(text)) return parsePositionalTask(text, now);
+  return null;
 }

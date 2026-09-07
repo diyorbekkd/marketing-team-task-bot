@@ -5,7 +5,7 @@ import type { TaskAction } from "@/domain/workflow";
 import {
   TaskShorthandError,
   looksLikeTaskShorthand,
-  parseTaskShorthand,
+  parseGroupTaskMessage,
   parseTashkentDeadline,
 } from "./task-shorthand";
 import type { TelegramUpdate } from "./update";
@@ -60,9 +60,9 @@ function taskFormatError(reason: string): string {
     `Sabab: ${reason}`,
     "",
     "Kerakli format:",
-    "T: Task nomi",
-    "A: @username",
-    "DL: DD.MM HH:mm",
+    "Task nomi",
+    "@username",
+    "DD.MM.YYYY HH:mm",
   ].join("\n");
 }
 
@@ -74,16 +74,45 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
   return async function handle(update: TelegramUpdate): Promise<TelegramHandlerResult> {
     try {
       if (update.callback_query?.data) {
-        const match = update.callback_query.data.match(/^task:([0-9a-f-]{36}):(ACCEPT|SUBMIT_REVIEW|APPROVE|RESUME)$/i);
-        if (!match) return { messages: [], callbackQueryId: update.callback_query.id };
+        const taskMatch = update.callback_query.data.match(
+          /^task:([0-9a-f-]{36}):(ACCEPT|SUBMIT_REVIEW|APPROVE|REQUEST_REVISION|RESUME)$/i,
+        );
+        const deadlineMatch = update.callback_query.data.match(
+          /^deadline:([0-9a-f-]{36}):(APPROVE|REJECT)$/i,
+        );
+        if (!taskMatch && !deadlineMatch) {
+          return { messages: [], callbackQueryId: update.callback_query.id };
+        }
+
         const actor = await service.requireActorByTelegramId(String(update.callback_query.from.id));
-        const task = await service.performTaskAction(actor, match[1], { action: match[2].toUpperCase() });
-        return {
-          callbackQueryId: update.callback_query.id,
-          messages: update.callback_query.message
-            ? [{ chatId: update.callback_query.message.chat.id, text: `Task is now ${task.status}.` }]
-            : [],
-        };
+        if (taskMatch) {
+          const task = await service.performTaskAction(actor, taskMatch[1], { action: taskMatch[2].toUpperCase() });
+          return {
+            callbackQueryId: update.callback_query.id,
+            messages: update.callback_query.message
+              ? [{ chatId: update.callback_query.message.chat.id, text: `Task is now ${task.status}.` }]
+              : [],
+          };
+        }
+
+        if (deadlineMatch) {
+          const deadlineRequest = await service.resolveDeadlineChangeRequest(
+            actor,
+            deadlineMatch[1],
+            deadlineMatch[2].toUpperCase() === "APPROVE",
+          );
+          return {
+            callbackQueryId: update.callback_query.id,
+            messages: update.callback_query.message
+              ? [{
+                  chatId: update.callback_query.message.chat.id,
+                  text: `Deadline request is now ${deadlineRequest.status}.`,
+                }]
+              : [],
+          };
+        }
+
+        return { messages: [], callbackQueryId: update.callback_query.id };
       }
 
       const message = update.message;
@@ -108,6 +137,62 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
               : `Thanks, ${user.displayName}. Your account is pending activation by Head of Marketing.`,
           }],
         };
+      }
+
+      const isGroupChat = ["group", "supergroup"].includes(message.chat.type);
+      const isConfiguredMarketingGroup = isGroupChat && String(message.chat.id) === config.marketingGroupId;
+      if (isGroupChat) {
+        if (!isConfiguredMarketingGroup) {
+          if (looksLikeTaskShorthand(text)) {
+            throw new ApplicationError("FORBIDDEN", "Tasks may only be created in the configured marketing group.");
+          }
+          return { messages: [] };
+        }
+
+        let parsedTask = null;
+        let taskParseError: unknown;
+        try {
+          parsedTask = parseGroupTaskMessage(text);
+        } catch (error) {
+          taskParseError = error;
+        }
+
+        if (parsedTask || taskParseError) {
+          const actor = await service.requireActorByTelegramId(String(message.from.id));
+          if (taskParseError) {
+            if (taskParseError instanceof TaskShorthandError) {
+              console.warn(JSON.stringify({
+                event: "group_task_parse_failed",
+                updateId: update.update_id,
+                reason: taskParseError.message,
+              }));
+            }
+            throw taskParseError;
+          }
+
+          const { task, assignee, notification } = await service.createTaskForUsername(
+            actor,
+            parsedTask!,
+            update.update_id,
+          );
+          console.info(JSON.stringify({
+            event: "group_task_created",
+            updateId: update.update_id,
+            taskId: task.id,
+            notificationStatus: notification.status,
+          }));
+          return {
+            messages: [{
+              chatId: message.chat.id,
+              text: [
+                `Task created.\n${compactTask(task, assignee)}`,
+                ...(notification.status === "FAILED" ? [notificationWarning()] : []),
+              ].join("\n"),
+            }],
+          };
+        }
+
+        if (!firstWord.startsWith("/")) return { messages: [] };
       }
 
       const actor = await service.requireActorByTelegramId(String(message.from.id));
@@ -144,41 +229,7 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
       }
 
       if (looksLikeTaskShorthand(text)) {
-        const isConfiguredMarketingGroup =
-          ["group", "supergroup"].includes(message.chat.type) &&
-          String(message.chat.id) === config.marketingGroupId;
-        if (!isConfiguredMarketingGroup) {
-          throw new ApplicationError("FORBIDDEN", "Tasks may only be created in the configured marketing group.");
-        }
-        let parsed;
-        try {
-          parsed = parseTaskShorthand(text);
-        } catch (error) {
-          if (error instanceof TaskShorthandError) {
-            console.warn(JSON.stringify({
-              event: "group_task_parse_failed",
-              updateId: update.update_id,
-              reason: error.message,
-            }));
-          }
-          throw error;
-        }
-        const { task, assignee, notification } = await service.createTaskForUsername(actor, parsed, update.update_id);
-        console.info(JSON.stringify({
-          event: "group_task_created",
-          updateId: update.update_id,
-          taskId: task.id,
-          notificationStatus: notification.status,
-        }));
-        return {
-          messages: [{
-            chatId: message.chat.id,
-            text: [
-              `Task created.\n${compactTask(task, assignee)}`,
-              ...(notification.status === "FAILED" ? [notificationWarning()] : []),
-            ].join("\n"),
-          }],
-        };
+        throw new ApplicationError("FORBIDDEN", "Tasks may only be created in the configured marketing group.");
       }
 
       return { messages: [] };

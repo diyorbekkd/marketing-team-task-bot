@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { ApplicationError } from "../src/application/errors";
 import type { MarketingService } from "../src/application/marketing-service";
 import type { Task, User } from "../src/domain/models";
 import { createTelegramUpdateHandler } from "../src/telegram/handler";
@@ -52,6 +53,7 @@ function serviceMock(overrides: Record<string, unknown> = {}) {
     createTaskForUsername: vi.fn(async () => ({ task, assignee, notification: { status: "SENT" as const } })),
     performTaskAction: vi.fn(async () => ({ ...task, status: "IN_PROGRESS" })),
     requestDeadlineChange: vi.fn(),
+    resolveDeadlineChangeRequest: vi.fn(async () => ({ status: "APPROVED" })),
     ...overrides,
   } as unknown as MarketingService;
 }
@@ -100,6 +102,106 @@ describe("Telegram MVP handler", () => {
     expect(result.messages[0]?.text).toContain("Task created.");
   });
 
+  it("keeps accepting an explicit bot mention with the labeled format", async () => {
+    const service = serviceMock();
+    await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 23,
+      message: {
+        message_id: 23,
+        chat: { id: -100123, type: "supergroup" },
+        from: { id: 42, is_bot: false, first_name: "Team", last_name: "Lead" },
+        text: "@ibox_marketing_tasks_bot\nT: Publish launch reel\nA: @editor\nDL: 08.09.2026 18:00",
+        entities: [{ type: "mention", offset: 0, length: 25 }],
+      },
+    }));
+
+    expect(service.createTaskForUsername).toHaveBeenCalledWith(actor, expect.objectContaining({
+      title: "Publish launch reel",
+      assigneeUsername: "editor",
+    }), 23);
+  });
+
+  it("creates a positional task without a bot mention through the same service", async () => {
+    const service = serviceMock();
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 18,
+      message: {
+        message_id: 8,
+        chat: { id: -100123, type: "supergroup" },
+        from: { id: 42, is_bot: false, first_name: "Team", last_name: "Lead", username: "lead" },
+        text: "Yangi creative\n@misbahmarketing\n08.09.2026 18:00",
+      },
+    }));
+
+    expect(service.createTaskForUsername).toHaveBeenCalledWith(actor, {
+      title: "Yangi creative",
+      assigneeUsername: "misbahmarketing",
+      deadline: "2026-09-08T13:00:00.000Z",
+      priority: "normal",
+    }, 18);
+    expect(result.messages[0]?.text).toContain("Task created.");
+  });
+
+  it("silently ignores ordinary three-line group conversation before actor lookup", async () => {
+    for (const [updateId, text] of [
+      [19, "Bugun yig‘ilish bor\nHamma qatnashsin\nSoat oltida"],
+      [24, "Yig‘ilish\nHamma qatnashsin\n09.09.2026 14:00"],
+    ] as const) {
+      const service = serviceMock();
+      const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+        update_id: updateId,
+        message: {
+          message_id: updateId,
+          chat: { id: -100123, type: "supergroup" },
+          from: { id: 99, is_bot: false, first_name: "Guest" },
+          text,
+        },
+      }));
+
+      expect(result.messages).toEqual([]);
+      expect(service.requireActorByTelegramId).not.toHaveBeenCalled();
+      expect(service.createTaskForUsername).not.toHaveBeenCalled();
+    }
+  });
+
+  it("returns a concise error without creating when a positional deadline is malformed or past", async () => {
+    for (const [updateId, deadline] of [[20, "08-09-2026 18:00"], [21, "01.01.2020 10:00"]] as const) {
+      const service = serviceMock();
+      const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+        update_id: updateId,
+        message: {
+          message_id: updateId,
+          chat: { id: -100123, type: "supergroup" },
+          from: { id: 42, is_bot: false, first_name: "Team", last_name: "Lead" },
+          text: `Yangi creative\n@misbahmarketing\n${deadline}`,
+        },
+      }));
+
+      expect(result.messages[0]?.text).toContain("Task yaratilmadi");
+      expect(service.createTaskForUsername).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects an unknown positional assignee without a success confirmation", async () => {
+    const service = serviceMock({
+      createTaskForUsername: vi.fn(async () => {
+        throw new ApplicationError("INVALID_INPUT", "No active teammate matches @unknownuser.");
+      }),
+    });
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 22,
+      message: {
+        message_id: 22,
+        chat: { id: -100123, type: "supergroup" },
+        from: { id: 42, is_bot: false, first_name: "Team", last_name: "Lead" },
+        text: "Yangi creative\n@unknownuser\n08.09.2026 18:00",
+      },
+    }));
+
+    expect(result.messages[0]?.text).toBe("No active teammate matches @unknownuser.");
+    expect(result.messages[0]?.text).not.toContain("Task created.");
+  });
+
   it("returns a useful format response for incomplete group shorthand", async () => {
     const service = serviceMock();
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -116,8 +218,8 @@ describe("Telegram MVP handler", () => {
 
     expect(service.createTaskForUsername).not.toHaveBeenCalled();
     expect(result.messages[0]?.text).toContain("Task yaratilmadi");
-    expect(result.messages[0]?.text).toContain("A: @username");
-    expect(result.messages[0]?.text).toContain("DL: DD.MM HH:mm");
+    expect(result.messages[0]?.text).toContain("@username");
+    expect(result.messages[0]?.text).toContain("DD.MM.YYYY HH:mm");
     expect(warning).toHaveBeenCalledWith(expect.stringContaining('"event":"group_task_parse_failed"'));
   });
 
@@ -173,5 +275,38 @@ describe("Telegram MVP handler", () => {
 
     expect(service.performTaskAction).toHaveBeenCalledWith(actor, task.id, { action: "ACCEPT" });
     expect(result.callbackQueryId).toBe("callback-1");
+  });
+
+  it("maps deadline approval buttons to the shared resolution workflow", async () => {
+    const service = serviceMock();
+    const requestId = "30000000-0000-4000-8000-000000000001";
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 16,
+      callback_query: {
+        id: "callback-2",
+        from: { id: 42, is_bot: false, first_name: "Team", last_name: "Lead" },
+        data: `deadline:${requestId}:APPROVE`,
+        message: { message_id: 6, chat: { id: 42, type: "private" } },
+      },
+    }));
+
+    expect(service.resolveDeadlineChangeRequest).toHaveBeenCalledWith(actor, requestId, true);
+    expect(result.messages[0]?.text).toContain("APPROVED");
+    expect(result.callbackQueryId).toBe("callback-2");
+  });
+
+  it("maps review revision buttons to the shared task workflow", async () => {
+    const service = serviceMock();
+    await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 17,
+      callback_query: {
+        id: "callback-3",
+        from: { id: 42, is_bot: false, first_name: "Team", last_name: "Lead" },
+        data: `task:${task.id}:REQUEST_REVISION`,
+        message: { message_id: 7, chat: { id: 42, type: "private" } },
+      },
+    }));
+
+    expect(service.performTaskAction).toHaveBeenCalledWith(actor, task.id, { action: "REQUEST_REVISION" });
   });
 });
