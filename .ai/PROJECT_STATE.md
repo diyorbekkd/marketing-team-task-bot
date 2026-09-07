@@ -2,7 +2,7 @@
 
 - Current sprint: Fast-track MVP vertical slice
 - Current branch: `fast-track/mvp`
-- Current objective: Live-verify the deployed workflow-notification fixes and the safe no-mention positional Telegram group task creation with real human-originated Telegram traffic (see "Pending live checks" below); Codex can resume this without further handoff summary.
+- Current objective: Finish the remaining live-verification checks (ordinary-conversation non-trigger, deadline-request round trip, review round trip, Mini App Quick Add) against the now-deployed notification/positional-parser fix and the Mini App audit+redesign; Codex can resume this without further handoff summary.
 - Completed sprints: Sprint 0 complete and independently reviewed.
 - Completed current tasks:
   - Product, architecture, sprint, and Sprint 0 documentation
@@ -39,30 +39,33 @@
   - Final Opus security review of the complete combined diff (notification fixes + positional syntax) passed `PASS_WITH_NOTES` with no Critical/High findings after Opus quota reset; both Low findings (inactive-recipient notification leakage; an unanchored deadline-hint regex that could fire the classifier on a bare clock-time mention in ordinary conversation) were fixed and covered by new regression tests before this pass
   - Commits `77b2c4b` (fix) and `729e379` (docs/review artifacts) pushed to `origin/fast-track/mvp` and deployed to production (Vercel deployment `dpl_7VWZ1zijsex3D4EchY2dD8CSjUws`)
   - Post-deploy checks passed: `/api/health` returns 200; Telegram webhook still points at the production origin with zero pending updates and no last error; Mini App menu button still resolves to the production origin; Supabase REST is reachable with the service-role key
+  - **Real human positional group task creation verified in production**: update `4315796` ("Yangi creative PROD POSITIONAL TEST" / `@misbahmarketing` / `08.09.2026 18:00` / `high` / description, no bot mention, no `T:/A:/DL:`) → positional classifier activated → sender `diyorbek_samadov` (HEAD_OF_MARKETING, active) authenticated → assignee `misbahmarketing` (CONTENT_MARKETER, active) resolved → exactly one task persisted (`74360fff-f0d5-4c41-9ba1-2c03cdc7a77b`, all fields matching the sent message) → exactly one `TASK_CREATED` audit event → group confirmation logged → private assignment notification `SENT`. Full chain traced via `vercel logs` and direct Supabase REST queries.
+  - Practical full-MVP audit completed (`docs/MVP_AUDIT.md`): no P0 findings; P1s (unstyled default-priority pill, missing Home dashboard) fixed; several P2 cleanups fixed (dead CSS, unreachable Review/Blocked filters, stale Home data after mutation, generic empty/error copy, mismatched theme color).
+  - Mini App redesigned to a blue SaaS visual system (`#2563EB`/`#0039B7`, Inter, 14–18px radii) with a new Home tab (stat tiles, Head team workload, priority tasks), a Team tab, and bottom navigation; no backend/API changes. Committed `2b37acc`, pushed, and deployed to production; post-deploy health/webhook/menu/Supabase checks re-passed.
 - Remaining tasks:
-  - Have a real human send the positional test message into the marketing group and confirm: webhook received → positional classifier activated → sender authenticated → assignee resolved → exactly one task persisted → `TASK_CREATED` audit event → group confirmation → private assignment notification `SENT`
-  - Confirm a real three-line non-task group message (no `@assignee`-shaped line 2) creates no task and draws no bot reply
+  - Confirm a real three-line non-task group message (no `@assignee`-shaped line 2) creates no task and draws no bot reply (message text was handed to the user; sending it was interrupted by this session's redirect to the audit/redesign work — retry next session)
   - Run a real deadline-change-request round trip (request → notify creator/Head → Approve → notify requester) and inspect Supabase state/audit
   - Run a real review round trip (SUBMIT_REVIEW → notify creator/Head → REQUEST_REVISION → notify assignee → SUBMIT_REVIEW again → APPROVE → notify assignee) and inspect audit history
-  - Run the real Mini App Quick Add test against the deployed backend and verify the private assignment notification
+  - Run the real Mini App Quick Add test against the deployed backend (now the redesigned UI) and verify the private assignment notification
+  - Interactive visual QA of the redesigned Mini App from a real Telegram session (this session could only SSR-smoke-test; no Telegram session or headless browser was available to click through Home/Tasks/Team/Kanban/Detail/Quick Add as a user)
   - P5 deadline reminders remain optional/deferred and are not required for the fast-track usable MVP
-- Deferred roadmap items: advanced analytics, calendar, subtasks, checklist templates, relay, recurring tasks, categories, exhaustive tests, and nonessential visual polish.
-- Latest test/build state: 2026-09-07 — lint PASS; typecheck PASS; 84/84 tests PASS; Next.js production build PASS; npm production audit (prod deps) reports 0 vulnerabilities; `git diff --check` clean; changed-tree secret scan PASS.
-- Latest Claude review verdict: 2026-09-07 General `PASS_WITH_NOTES` (`.ai/reviews/20260907T092529Z-review.md`); final Opus security `PASS_WITH_NOTES` (`.ai/reviews/20260907T104412Z-security-review.md`); no Critical/High findings; both Low findings from the final Opus pass were fixed pre-commit. Full triage history in `.ai/reviews/20260907-workflow-notification-triage.md`.
-- Unresolved findings: None blocking. Optional/deferred: targeted per-recipient lookup instead of `listUsers()` after each workflow mutation; unrelated session-signing-key/webhook-secret separation (pre-existing, tracked separately). Telegram mutation idempotency uses the unique source update ID for group task creation; other mutation paths are user-initiated callbacks/commands.
-- Known blockers: FINAL_OPUS_SECURITY_REVIEW is no longer pending (resolved this pass). The positional-task, ordinary-conversation, deadline-request, and review-workflow live checks listed under "Remaining tasks" require real human-originated Telegram messages/actions and could not be fabricated from this session; they are `PENDING_LIVE_VERIFICATION`. The Mini App Quick Add validation still requires one task created from a real signed Telegram Mini App session.
+- Deferred roadmap items: advanced analytics, calendar, subtasks, checklist templates, relay, recurring tasks, categories, exhaustive tests, and nonessential visual polish. Deferred audit item: splitting `MiniApp.tsx` (now larger post-redesign) into multiple files — no concrete maintainability problem yet (see `docs/MVP_AUDIT.md` G3).
+- Latest test/build state: 2026-09-07 — lint PASS; typecheck PASS; 84/84 tests PASS; Next.js production build PASS; npm production audit (prod deps) reports 0 vulnerabilities; `git diff --check` clean; changed-tree secret scan PASS. (Test count unchanged by the Mini App redesign — it touched no unit-tested backend code.)
+- Latest Claude review verdict: 2026-09-07 General `PASS_WITH_NOTES` (`.ai/reviews/20260907T092529Z-review.md`); final Opus security `PASS_WITH_NOTES` (`.ai/reviews/20260907T104412Z-security-review.md`); no Critical/High findings; both Low findings from the final Opus pass were fixed pre-commit. Full triage history in `.ai/reviews/20260907-workflow-notification-triage.md`. The Mini App audit/redesign (`docs/MVP_AUDIT.md`) was a practical audit, not a further security review — no new security review was run over it since it changed no authorization/business logic.
+- Unresolved findings: None blocking. Optional/deferred: targeted per-recipient lookup instead of `listUsers()` after each workflow mutation; unrelated session-signing-key/webhook-secret separation (pre-existing, tracked separately); `MiniApp.tsx` file-splitting (deferred, no concrete problem yet). Telegram mutation idempotency uses the unique source update ID for group task creation; other mutation paths are user-initiated callbacks/commands.
+- Known blockers: None on FINAL_OPUS_SECURITY_REVIEW (resolved). Remaining live checks (ordinary-conversation non-trigger, deadline-request round trip, review round trip, Mini App Quick Add, redesigned-UI click-through) require real human-originated Telegram/Mini-App actions and could not be completed from this session; they are `PENDING_LIVE_VERIFICATION`.
 - Latest commits:
+  - `2b37acc feat(mini-app): practical audit fixes + blue SaaS redesign`
+  - `9c94a52 docs: record deployment and pending live verification state`
   - `729e379 docs: record combined notification/positional-task review history`
   - `77b2c4b fix: notify workflow participants and support positional group tasks`
   - `ffb6355 docs: record real group notification verification`
-  - `9282fc9 docs: record production bug-fix deployment`
-  - `63d12c6 fix: deliver task assignment notifications consistently`
-- Remote state: `fast-track/mvp` through `729e379` is pushed to `origin` and deployed to production.
+- Remote state: `fast-track/mvp` through `2b37acc` is pushed to `origin` and deployed to production.
 
 ## Live release state
 
-- Production URL: `https://marketing-team-task-bot.vercel.app` — includes the notification-workflow and positional group-creation fixes as of commit `729e379`
-- Supabase: READY — five migrations in parity; trusted server access succeeds; browser roles are denied; reachability reverified post-deploy.
-- Telegram: READY — webhook points at production with zero pending updates and no last error; Mini App menu button verified; real human group shorthand, private assignment notification, and Accept callback were previously verified on an earlier deployment. The new positional syntax and the deadline-request/review notification workflows have not yet been exercised by a real human message on this deployment — see "Remaining tasks".
-- Mini App: notification fix is deployed; signed live Quick Add and its private notification still await the final human test.
-- Smoke artifact: one self-assigned production smoke task retained as `DONE` with full audit history.
+- Production URL: `https://marketing-team-task-bot.vercel.app` — includes the notification-workflow fix, positional group-creation fix, MVP audit fixes, and Mini App redesign as of commit `2b37acc`
+- Supabase: READY — five migrations in parity; trusted server access succeeds; browser roles are denied; reachability reverified post-redesign-deploy.
+- Telegram: READY — webhook points at production with zero pending updates and no last error; Mini App menu button verified. Positional group task creation is **live-verified** with a real human message (see above). Ordinary-conversation non-trigger, deadline-request, and review notification round trips are implemented and unit-tested but not yet exercised by a real human on this deployment.
+- Mini App: redesigned UI (Home/Tasks/Team, blue SaaS system) is deployed; signed live Quick Add, its private notification, and an interactive click-through still await a real Telegram session.
+- Smoke artifacts: one earlier self-assigned production smoke task retained as `DONE` with full audit history; one new positional-test task (`74360fff…`, `ASSIGNED`) from this session's live verification.

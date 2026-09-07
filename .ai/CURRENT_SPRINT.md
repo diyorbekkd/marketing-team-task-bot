@@ -21,12 +21,13 @@
 
 - P0–P4: implemented, deployed, and live-verified.
 - Production workflow-notification hotfix: implemented, committed (`77b2c4b`), reviewed, and deployed to production. Live human-originated verification of the deadline-request and review notification round trips is still pending (see `.ai/PROJECT_STATE.md`).
-- Telegram group-creation UX hotfix: safe no-mention positional parsing is implemented, committed (`77b2c4b`), reviewed, and deployed to production. Live human-originated verification (real positional task creation and confirmation that ordinary conversation does not create a task) is still pending.
+- Telegram group-creation UX hotfix: safe no-mention positional parsing implemented, committed (`77b2c4b`), reviewed, deployed, and **live-verified with a real human group message** (task `74360fff…` created end to end: classifier → auth → assignee resolution → single task/audit event → group confirmation → notification `SENT`).
+- Practical MVP audit + Mini App redesign: `docs/MVP_AUDIT.md` covers Telegram group, private bot, Mini App, business logic, date/time, reliability, and code quality. No P0s; P1s and useful P2s fixed. Mini App rebuilt with a blue SaaS visual system, a new Home dashboard, a Team workload tab, and bottom navigation, with no backend/API changes. Committed `2b37acc` and deployed to production.
 - Live Supabase: all five migrations applied and access boundary verified; reachability reverified post-deploy.
-- Production: `https://marketing-team-task-bot.vercel.app`; encrypted Vercel environment is complete; deployed commit `729e379`.
+- Production: `https://marketing-team-task-bot.vercel.app`; encrypted Vercel environment is complete; deployed commit `2b37acc`.
 - Telegram: webhook/menu verified with zero pending updates and no last error; real Head `/start` onboarding succeeded.
-- End-to-end: controlled group restriction/task creation, real outbound notifications, Supabase persistence, signed Mini App APIs, deadline approval, lifecycle, audit, and revision checks pass (prior deployment). The positional-syntax and workflow-notification round trips have not yet been exercised on this deployment by a real human.
-- Independent review: General `PASS_WITH_NOTES` and final Opus security `PASS_WITH_NOTES`, both with no Critical/High findings; the two Low findings from the final Opus pass were fixed pre-commit.
+- End-to-end: controlled group restriction/task creation, real outbound notifications, Supabase persistence, signed Mini App APIs, deadline approval, lifecycle, audit, and revision checks pass (prior deployment); the new positional syntax is now also live-verified. The ordinary-conversation non-trigger check, the deadline-request/review notification round trips, and an interactive click-through of the redesigned Mini App have not yet been exercised on this deployment by a real human — see `.ai/PROJECT_STATE.md` "Remaining tasks".
+- Independent review: General `PASS_WITH_NOTES` and final Opus security `PASS_WITH_NOTES`, both with no Critical/High findings; the two Low findings from the final Opus pass were fixed pre-commit. The audit/redesign changed no authorization or business logic, so no additional security review was run over it.
 - P5: optional and not started.
 
 ## Definition of Done
