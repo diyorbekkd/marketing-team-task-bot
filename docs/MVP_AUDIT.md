@@ -1,0 +1,89 @@
+# MVP practical audit
+
+Date: 2026-09-07. Scope: the full fast-track MVP as deployed (Telegram group, private bot, Mini App, business logic, date/time handling, reliability, code quality). This is a practical audit for a 5-person marketing team's daily use, not a penetration test — see `.ai/reviews/` for the independent security reviews (General + Opus, both `PASS_WITH_NOTES`, no Critical/High).
+
+Severity: **P0** breaks core use · **P1** important, fix now · **P2** useful improvement · **P3** optional polish.
+
+## Summary
+
+No P0 findings. Four P1 findings, all fixed in this pass (three in application code, one addressed structurally by the Mini App redesign in Part 3). Several P2 findings fixed opportunistically; the rest are listed for later. Backend business logic (permissions, workflow transitions, notification recipients, idempotency, deadline/Tashkent arithmetic) was already covered by two independent review rounds this session (`.ai/reviews/20260907T092529Z-review.md`, `.ai/reviews/20260907T104412Z-security-review.md`) and is not re-litigated here except where this audit found something new.
+
+## A. Telegram group
+
+| # | Finding | Severity | Fixed |
+| - | - | - | - |
+| A1 | Positional format, labeled `T:/A:/DL:` compatibility, ordinary-conversation false-positive avoidance, unknown-user handling, malformed-deadline handling, and duplicate-creation prevention (unique `source_telegram_update_id` constraint with `ON CONFLICT DO NOTHING`) were all verified correct by reading and by the live production test in this session (see `.ai/PROJECT_STATE.md`). | — | N/A (verified, no defect) |
+| A2 | Success/error messages (`taskFormatError`, `group_task_created` confirmation) are useful and give the exact expected format on failure. | — | N/A (verified) |
+| A3 | Creator identification and assignment notification are handled by the shared, tested `createTaskForUsername` → `notifyAssignment` path for both positional and labeled input. | — | N/A (verified) |
+
+No new findings in this area beyond the two already fixed earlier this session (assignee/deadline-shape false positive, inactive-recipient/regex-noise Lows — see the review triage doc).
+
+## B. Private bot
+
+| # | Finding | Severity | Fixed |
+| - | - | - | - |
+| B1 | `/start` onboarding, Accept, Block, deadline requests, review/approve/revision, and callback authorization all route through the same `MarketingService` methods used by the Mini App, so there is one authorization surface. Verified by reading `src/telegram/handler.ts` end to end. | — | N/A (verified) |
+| B2 | Repeated/stale button presses (e.g., double-tapping Approve) are safe: `transition_task_with_events` takes a row lock (`for update`) and short-circuits to a no-op if the task is already in the requested status, so a duplicate callback cannot double-transition or double-log an audit event. Deadline resolution is guarded by an explicit `CONFLICT` check on an already-resolved request ("first resolution wins"). | — | N/A (verified) |
+
+No P0/P1 findings in this area.
+
+## C. Mini App
+
+| # | Finding | Severity | Fixed |
+| - | - | - | - |
+| C1 | **Default task priority renders with no color styling.** `TaskCard`/`TaskDetailPanel` apply class `p-${task.priority}`, and `normal` is the schema default, but `mini-app.css` only defined `.p-low`, `.p-medium`, `.p-high`, `.p-urgent` — `.p-medium`/`.p-urgent` are unreachable dead code (the `Priority` type only allows `low`/`normal`/`high`) and `.p-normal` never existed. Every normal-priority task (the majority of tasks) showed an unstyled priority pill. | P1 | **Fixed** — new design system defines `.p-low`/`.p-normal`/`.p-high`; dead `.p-medium`/`.p-urgent` rules removed. |
+| C2 | **No Home/dashboard view.** The Mini App opens straight into a flat task list with no at-a-glance summary (today/overdue/blocked/review counts) and no team-workload view for the Head, despite `docs/PRODUCT.md`'s Mini App scope including a useful landing view. | P1 | **Fixed** — new Home tab added in Part 3 (stat tiles, team workload for Head, priority/recent tasks), computed client-side from already-available `/api/tasks` scopes, no new endpoints. |
+| C3 | Two named backend scopes (`review`, and status `BLOCKED`) were never reachable from the Mini App UI — only `my`/`today`/`overdue`/`team` had chips, so a Head could not filter directly to "needs my review" or "blocked" without scanning the full list. | P2 | **Fixed** — added a compact "More filters" control exposing Review and Blocked, and Home's stat tiles jump straight into a filtered Tasks view. |
+| C4 | Mutating a task from the detail panel or creating one from Quick Add only refreshed the currently active Tasks-tab list (`onRefresh` → `loadTasks(filter)`); the new Home tab's counts would go stale until a full remount. | P2 | **Fixed** — `onRefresh`/`onCreated` now refresh both the active task list and the Home dataset. |
+| C5 | Loading/empty/error states existed but were minimal (a bare "No tasks here." for every filter) and error text was passed through verbatim from the API, which is fine for validation messages (they're already written for humans) but not for a raw network failure string. | P2 | **Fixed** — per-filter empty copy (including the requested Uzbek "Bugun task yo'q" / "Overdue tasklar yo'q" strings for Today/Overdue), and a `friendlyError()` wrapper that only rewrites recognizably technical failures (network errors, generic 5xx) rather than the existing human-authored validation messages. |
+| C6 | Kanban already scrolls horizontally on mobile rather than trying to cram all seven columns on screen — this satisfies the "don't show all columns at once" requirement, so it was kept and polished (scroll-snap, sticky column headers) rather than rebuilt as tabs, to avoid unnecessary churn on working, tested interaction code. | — | Verified / polished |
+| C7 | Visual design used a warm cream/serif "editorial" theme (`--accent: #de704e`, Georgia headings) left over from the Sprint 0 landing page, not the requested blue SaaS system; ~150 lines of that landing page's CSS (`.hero-card`, `.foundation-grid`, etc.) are dead — `src/app/page.tsx` has rendered `<MiniApp />` since the fast-track merge and never used them. | P2 | **Fixed** — new design system (Part 3) and dead CSS removed. |
+| B/C8 | `viewport.themeColor` in `layout.tsx` was `#18251f` (the old dark ink), which no longer matches the light UI chrome and would show as a mismatched Telegram title-bar color. | P3 | **Fixed** — updated to the new paper background. |
+
+## D. Business logic
+
+Verified directly against `src/domain/workflow.ts`, `src/domain/permissions.ts`, `src/domain/task.ts`, and `src/application/marketing-service.ts`:
+
+- One task = one assignee: `assigneeId` is a single required UUID field; no multi-assignee path exists.
+- Creator/Head rights: `canApproveDeadlineRequest`, `canReviewTask`, `canChangeDeadline`, `canReassignTask` are all `isHead || isCreator`; enforced in `performTaskAction` and `resolveDeadlineChangeRequest`.
+- Assignee cannot directly change the deadline: there is no `TaskAction` for it; the only path is `createDeadlineChangeRequest` (assignee-only) → `resolveDeadlineChangeRequest` (creator/Head-only).
+- Review/revision lifecycle (`REVIEW → DONE/REVISION`, `REVISION → IN_PROGRESS/BLOCKED/REVIEW`) matches `TRANSITIONS` exactly.
+- Blocked reason is required by `TaskActionInputSchema`'s `superRefine` and persisted as an audit event.
+- DONE/CANCELLED are terminal except `REOPEN`, which is Head-only and explicitly checked (`performTaskAction` line ~201).
+- `OVERDUE` remains derived (`isOverdue()` computed from `deadline`/`status`, never stored).
+- Audit history is appended atomically with each state change inside `transition_task_with_events` (single Postgres function, row-locked).
+- Notification recipients match the documented matrix (creator+Head for review/deadline-request/blocked, assignee for approve/revision/deadline-decision) and are deduplicated by Telegram user ID at the dispatcher layer (verified by test and by this session's Opus review).
+
+No P0/P1 findings. No new defects found beyond C1 above (which is presentation-layer, not business-logic).
+
+## E. Date/time
+
+- Telegram deadline parsing (`parseTashkentDeadline`) and the Mini App's `localDatetimeToISO`/`fmtDate`/`fmtDateTime`/`isToday` helpers all anchor to `Asia/Tashkent` (`+05:00`, no DST in this zone, so the fixed offset is correct and won't drift).
+- `isToday`/`getTZDateParts` compute "today" using `Intl.DateTimeFormat` with an explicit `timeZone`, so it is correct regardless of the viewer's browser/OS timezone — verified by reading; this avoids the common bug of using the browser's local timezone for a team that is not all in one place.
+- `Overdue` is computed the same way (`deadline < now`) on both the server (`isOverdue` in `src/domain/task.ts`) and the client (`isOverdue` in `MiniApp.tsx`), so a task cannot appear overdue in one surface and not the other except for clock skew between the viewer's device and the server, which is an inherent (and here inconsequential) limitation of any client-side "is it overdue" display — the server is always the source of truth for the `OVERDUE` badge computation.
+
+No findings.
+
+## F. Reliability
+
+- Double-click / duplicate submission: Quick Add and all task-detail actions synchronously set a `pending`/`actionPending` flag before the `await`, and the trigger button is `disabled` while pending — verified no double-submit window.
+- Repeated Telegram callback execution: see B2 above — DB-level idempotent no-op, not merely a client-side guard.
+- API errors are not swallowed: every `apiFetch` call surfaces its `error` to the caller, which either sets a visible error state or (Quick Add / task actions) blocks the "success" path entirely — the UI never claims success when the backend request failed. Notification delivery failure is explicitly surfaced as a distinct warning state (`"Task created, but the private notification was not delivered…"`), never hidden.
+- Race conditions realistic for a 5-person team (two people acting on the same task near-simultaneously) are handled by the row-locked transition function, not by client-side assumptions.
+- Missing-onboarding notification recipients never receive a fabricated chat ID (verified in the Opus review).
+
+No P0/P1 findings.
+
+## G. Code quality
+
+| # | Finding | Severity | Fixed |
+| - | - | - | - |
+| G1 | ~150 lines of dead CSS in `globals.css` from the pre-merge landing page (`.hero-card`, `.foundation-grid`, `.metric`, `.section-preview`, `.footnote`, serif `h1`/`h2`), unreachable since `page.tsx` renders `<MiniApp />`. | P2 | **Fixed** — removed. |
+| G2 | Dead/unreachable priority CSS classes (`.p-medium`, `.p-urgent`) that don't correspond to any value the `Priority` type can hold. | P2 | **Fixed** — removed (see C1). |
+| G3 | The Mini App is a single 1070-line component file. It is not unmanageable today (clear section comments, one concern per function), and splitting it purely for line count would be churn without a concrete maintainability problem. Left as-is; flagged for a future pass only if it keeps growing. | P3 | Not fixed (deliberately deferred) |
+
+Transport-specific logic does not leak into the domain layer anywhere inspected (`src/domain/*` has no Telegram/HTTP imports); this was already true before this audit.
+
+## Part 3 — Mini App redesign
+
+Implemented after the above fixes; see the design system section of `.ai/PROJECT_STATE.md` and the diff for specifics (new Home tab, Team workload tab, bottom navigation, blue SaaS visual system, Inter typography, refreshed status/priority colors, polished Kanban scrolling, friendlier empty/error states).

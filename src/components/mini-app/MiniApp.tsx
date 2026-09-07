@@ -80,8 +80,10 @@ type AssignmentNotificationResult =
   | { status: "SENT" }
   | { status: "FAILED"; reason: "ASSIGNEE_NOT_ONBOARDED" | "DELIVERY_FAILED" };
 
-type Filter = "my" | "today" | "overdue" | "team";
+type Filter = "my" | "today" | "overdue" | "team" | "review" | "blocked";
+type BackendScope = "my" | "today" | "overdue" | "team" | "review";
 type ViewMode = "list" | "kanban";
+type Nav = "home" | "tasks" | "team";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -111,6 +113,8 @@ const PRIORITY_LABELS: Record<Priority, string> = {
   high: "High",
 };
 
+const PRIORITY_RANK: Record<Priority, number> = { high: 0, normal: 1, low: 2 };
+
 const ROLE_LABELS: Record<Role, string> = {
   OPERATOR_VIDEO_EDITOR: "Video Editor",
   CONTENT_MARKETER: "Content Marketer",
@@ -125,6 +129,32 @@ const ACTIVATION_ROLES: Role[] = [
   "DIGITAL_MARKETER",
   "SMM_MANAGER",
 ];
+
+const FILTER_LABELS: Record<Filter, string> = {
+  my: "My Tasks",
+  today: "Today",
+  overdue: "Overdue",
+  team: "Team",
+  review: "Review",
+  blocked: "Blocked",
+};
+
+const EMPTY_COPY: Record<Filter, string> = {
+  my: "No tasks assigned to you yet.",
+  today: "Bugun task yo‘q",
+  overdue: "Overdue tasklar yo‘q",
+  team: "No team tasks yet.",
+  review: "Nothing waiting for review.",
+  blocked: "No blocked tasks.",
+};
+
+function isTerminal(status: TaskStatus): boolean {
+  return status === "DONE" || status === "CANCELLED";
+}
+
+function scopeForFilter(filter: Filter, isHead: boolean): BackendScope {
+  return filter === "blocked" ? (isHead ? "team" : "my") : filter;
+}
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -181,12 +211,27 @@ function isOverdue(iso: string | null | undefined) {
   return new Date(iso) < new Date();
 }
 
+function tashkentGreeting(): string {
+  const hour = new Date(Date.now() + 5 * 60 * 60 * 1000).getUTCHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
 /** Convert a datetime-local string to Asia/Tashkent offset-bearing ISO string (+05:00) */
 function localDatetimeToISO(local: string): string {
   if (!local) return "";
   // local is "YYYY-MM-DDTHH:mm" — append seconds and +05:00 offset
   const withSeconds = local.length === 16 ? local + ":00" : local;
   return withSeconds + "+05:00";
+}
+
+/** Recognizably technical failures get a human message; validation messages
+ * from the API are already human-authored and are shown as-is. */
+function friendlyError(message: string | null): string | null {
+  if (!message) return message;
+  const technical = /fetch|network|unexpected token|http 5\d\d|internal server error|typeerror/i;
+  return technical.test(message) ? "Something went wrong. Please try again." : message;
 }
 
 async function apiFetch<T>(
@@ -208,6 +253,45 @@ async function apiFetch<T>(
   }
 }
 
+// ─── Derived view helpers ───────────────────────────────────────────────────
+
+function countsFor(tasks: Task[]) {
+  const open = tasks.filter((t) => !isTerminal(t.status));
+  return {
+    today: open.filter((t) => isToday(t.deadline)).length,
+    overdue: open.filter((t) => isOverdue(t.deadline)).length,
+    blocked: open.filter((t) => t.status === "BLOCKED").length,
+    review: open.filter((t) => t.status === "REVIEW").length,
+  };
+}
+
+function workloadFor(tasks: Task[], users: User[]) {
+  return users
+    .filter((u) => u.isActive)
+    .map((u) => {
+      const mine = tasks.filter((t) => t.assigneeId === u.id && !isTerminal(t.status));
+      return {
+        user: u,
+        open: mine.length,
+        today: mine.filter((t) => isToday(t.deadline)).length,
+        overdue: mine.filter((t) => isOverdue(t.deadline)).length,
+      };
+    })
+    .sort((a, b) => b.overdue - a.overdue || b.today - a.today || b.open - a.open);
+}
+
+function priorityTasks(tasks: Task[], limit = 5) {
+  return tasks
+    .filter((t) => !isTerminal(t.status))
+    .slice()
+    .sort(
+      (a, b) =>
+        PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] ||
+        new Date(a.deadline).getTime() - new Date(b.deadline).getTime()
+    )
+    .slice(0, limit);
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function MiniApp() {
@@ -216,11 +300,16 @@ export default function MiniApp() {
   >("loading");
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
+  const [nav, setNav] = useState<Nav>("home");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [filter, setFilter] = useState<Filter>("my");
+  const [memberFilter, setMemberFilter] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [tasksError, setTasksError] = useState<string | null>(null);
+  const [homeTasks, setHomeTasks] = useState<Task[]>([]);
+  const [homeLoading, setHomeLoading] = useState(false);
+  const [homeError, setHomeError] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showPendingUsers, setShowPendingUsers] = useState(false);
@@ -273,34 +362,64 @@ export default function MiniApp() {
     if (data?.users) setUsers(data.users);
   }, []);
 
-  // Load tasks
+  // Load the Tasks-tab list for the active filter
   const loadTasks = useCallback(
     async (f: Filter) => {
       setLoadingTasks(true);
       setTasksError(null);
-      const scope =
-        f === "my"
-          ? "my"
-          : f === "today"
-            ? "today"
-            : f === "overdue"
-              ? "overdue"
-              : "team";
+      const scope = scopeForFilter(f, isHead);
       const { data, error } = await apiFetch<{ tasks: Task[] }>(
         `/api/tasks?scope=${scope}`
       );
       setLoadingTasks(false);
-      if (data?.tasks) setTasks(data.tasks);
-      else setTasksError(error ?? "Failed to load tasks");
+      if (data?.tasks) {
+        setTasks(f === "blocked" ? data.tasks.filter((t) => t.status === "BLOCKED") : data.tasks);
+      } else {
+        setTasksError(friendlyError(error) ?? "Failed to load tasks");
+      }
     },
-    []
+    [isHead]
   );
+
+  // Load the Home/Team overview dataset (team-wide for Head, personal otherwise)
+  const loadHome = useCallback(async () => {
+    setHomeLoading(true);
+    setHomeError(null);
+    const { data, error } = await apiFetch<{ tasks: Task[] }>(
+      `/api/tasks?scope=${isHead ? "team" : "my"}`
+    );
+    setHomeLoading(false);
+    if (data?.tasks) setHomeTasks(data.tasks);
+    else setHomeError(friendlyError(error) ?? "Failed to load overview");
+  }, [isHead]);
 
   useEffect(() => {
     if (authState !== "authed") return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void Promise.all([loadUsers(), loadTasks(filter)]);
-  }, [authState, filter, loadUsers, loadTasks]);
+    void Promise.all([loadUsers(), loadTasks(filter), loadHome()]);
+  }, [authState, filter, loadUsers, loadTasks, loadHome]);
+
+  const refreshAll = useCallback(() => {
+    void loadTasks(filter);
+    void loadHome();
+  }, [loadTasks, filter, loadHome]);
+
+  const goToFilter = useCallback((f: Filter) => {
+    setMemberFilter(null);
+    setFilter(f);
+    setNav("tasks");
+  }, []);
+
+  const changeFilter = useCallback((f: Filter) => {
+    setMemberFilter(null);
+    setFilter(f);
+  }, []);
+
+  const selectMember = useCallback((userId: string) => {
+    setMemberFilter(userId);
+    setFilter("team");
+    setNav("tasks");
+  }, []);
 
   if (authState === "loading") {
     return (
@@ -326,6 +445,10 @@ export default function MiniApp() {
   }
 
   const pendingUsers = users.filter((u) => !u.isActive);
+  const visibleTasks = memberFilter && filter === "team"
+    ? tasks.filter((t) => t.assigneeId === memberFilter)
+    : tasks;
+  const memberFilterUser = memberFilter ? users.find((u) => u.id === memberFilter) ?? null : null;
 
   return (
     <div className="ma-shell">
@@ -355,44 +478,6 @@ export default function MiniApp() {
         </div>
       </header>
 
-      <nav className="ma-filters" aria-label="Task filters">
-        {(["my", "today", "overdue"] as Filter[]).map((f) => (
-          <button
-            key={f}
-            className={`ma-filter-btn${filter === f ? " active" : ""}`}
-            onClick={() => setFilter(f)}
-          >
-            {f === "my" ? "My Tasks" : f === "today" ? "Today" : "Overdue"}
-          </button>
-        ))}
-        {isHead && (
-          <button
-            className={`ma-filter-btn${filter === "team" ? " active" : ""}`}
-            onClick={() => setFilter("team")}
-          >
-            Team
-          </button>
-        )}
-        <div className="ma-view-toggle" role="group" aria-label="View mode">
-          <button
-            className={`ma-view-btn${viewMode === "list" ? " active" : ""}`}
-            onClick={() => setViewMode("list")}
-            aria-pressed={viewMode === "list"}
-            title="List view"
-          >
-            ☰
-          </button>
-          <button
-            className={`ma-view-btn${viewMode === "kanban" ? " active" : ""}`}
-            onClick={() => setViewMode("kanban")}
-            aria-pressed={viewMode === "kanban"}
-            title="Kanban view"
-          >
-            ⊞
-          </button>
-        </div>
-      </nav>
-
       <main className="ma-main">
         {taskNotice && (
           <div className={`ma-notice ${taskNotice.kind}`} role="status">
@@ -400,26 +485,53 @@ export default function MiniApp() {
             <button onClick={() => setTaskNotice(null)} aria-label="Dismiss notification">×</button>
           </div>
         )}
-        {loadingTasks && (
-          <div className="ma-center-inline">
-            <div className="ma-spinner" aria-label="Loading tasks" />
-          </div>
+
+        {nav === "home" && (
+          <HomeView
+            isHead={isHead}
+            displayName={currentUser?.displayName ?? ""}
+            tasks={homeTasks}
+            users={users}
+            loading={homeLoading}
+            error={homeError}
+            onRetry={loadHome}
+            onSelectTask={setSelectedTaskId}
+            onGoToFilter={goToFilter}
+            onSelectMember={selectMember}
+          />
         )}
-        {!loadingTasks && tasksError && (
-          <div className="ma-error" role="alert">
-            {tasksError}
-            <button onClick={() => loadTasks(filter)}>Retry</button>
-          </div>
+
+        {nav === "tasks" && (
+          <TasksView
+            isHead={isHead}
+            filter={filter}
+            onFilterChange={changeFilter}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            tasks={visibleTasks}
+            users={users}
+            loading={loadingTasks}
+            error={tasksError}
+            onRetry={() => loadTasks(filter)}
+            onSelect={setSelectedTaskId}
+            memberFilterUser={memberFilterUser}
+            onClearMember={() => setMemberFilter(null)}
+          />
         )}
-        {!loadingTasks && !tasksError && tasks.length === 0 && (
-          <div className="ma-empty">No tasks here.</div>
-        )}
-        {!loadingTasks && !tasksError && tasks.length > 0 && (
-          viewMode === "list"
-            ? <TaskList tasks={tasks} users={users} onSelect={setSelectedTaskId} />
-            : <KanbanBoard tasks={tasks} users={users} onSelect={setSelectedTaskId} />
+
+        {nav === "team" && isHead && (
+          <TeamView
+            tasks={homeTasks}
+            users={users}
+            loading={homeLoading}
+            error={homeError}
+            onRetry={loadHome}
+            onSelectMember={selectMember}
+          />
         )}
       </main>
+
+      <BottomNav nav={nav} onChange={setNav} showTeam={isHead} />
 
       {selectedTaskId && (
         <TaskDetailPanel
@@ -427,7 +539,7 @@ export default function MiniApp() {
           currentUser={currentUser!}
           users={users}
           onClose={() => setSelectedTaskId(null)}
-          onRefresh={() => loadTasks(filter)}
+          onRefresh={refreshAll}
         />
       )}
 
@@ -444,7 +556,7 @@ export default function MiniApp() {
                   kind: "warning",
                   text: "Task created, but the private notification was not delivered. Ask the assignee to send /start to the bot.",
                 });
-            void loadTasks(filter);
+            refreshAll();
           }}
         />
       )}
@@ -455,6 +567,309 @@ export default function MiniApp() {
           onClose={() => setShowPendingUsers(false)}
           onActivated={loadUsers}
         />
+      )}
+    </div>
+  );
+}
+
+// ─── Bottom navigation ────────────────────────────────────────────────────────
+
+const NAV_ICONS: Record<Nav, string> = {
+  home: "⌂",
+  tasks: "≡",
+  team: "◉",
+};
+
+function BottomNav({
+  nav,
+  onChange,
+  showTeam,
+}: {
+  nav: Nav;
+  onChange: (n: Nav) => void;
+  showTeam: boolean;
+}) {
+  const items: { key: Nav; label: string }[] = [
+    { key: "home", label: "Home" },
+    { key: "tasks", label: "Tasks" },
+    ...(showTeam ? [{ key: "team" as Nav, label: "Team" }] : []),
+  ];
+  return (
+    <nav className="ma-bottom-nav" aria-label="Primary">
+      {items.map((item) => (
+        <button
+          key={item.key}
+          className={`ma-nav-btn${nav === item.key ? " active" : ""}`}
+          onClick={() => onChange(item.key)}
+          aria-current={nav === item.key ? "page" : undefined}
+        >
+          <span className="ma-nav-icon" aria-hidden="true">{NAV_ICONS[item.key]}</span>
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+// ─── Home ─────────────────────────────────────────────────────────────────────
+
+const STAT_TILES: { key: Filter; label: string; tone: string }[] = [
+  { key: "today", label: "Today", tone: "primary" },
+  { key: "overdue", label: "Overdue", tone: "danger" },
+  { key: "blocked", label: "Blocked", tone: "warning" },
+  { key: "review", label: "Review", tone: "violet" },
+];
+
+function HomeView({
+  isHead,
+  displayName,
+  tasks,
+  users,
+  loading,
+  error,
+  onRetry,
+  onSelectTask,
+  onGoToFilter,
+  onSelectMember,
+}: {
+  isHead: boolean;
+  displayName: string;
+  tasks: Task[];
+  users: User[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onSelectTask: (id: string) => void;
+  onGoToFilter: (f: Filter) => void;
+  onSelectMember: (userId: string) => void;
+}) {
+  if (loading && tasks.length === 0) {
+    return <div className="ma-center-inline"><div className="ma-spinner" aria-label="Loading" /></div>;
+  }
+  if (error) {
+    return <div className="ma-error" role="alert">{error} <button onClick={onRetry}>Retry</button></div>;
+  }
+
+  const counts = countsFor(tasks);
+  const priority = priorityTasks(tasks);
+  const firstName = displayName.split(" ")[0] || displayName;
+
+  return (
+    <div className="ma-home">
+      <div className="ma-greeting">
+        <h1>{tashkentGreeting()}, {firstName}</h1>
+        <p className="ma-muted">{isHead ? "Here's how the team is doing." : "Here's what's on your plate."}</p>
+      </div>
+
+      <div className="ma-stat-grid">
+        {STAT_TILES.map((tile) => (
+          <button key={tile.key} className={`ma-stat-tile tone-${tile.tone}`} onClick={() => onGoToFilter(tile.key)}>
+            <span className="ma-stat-value">{counts[tile.key as keyof typeof counts]}</span>
+            <span className="ma-stat-label">{tile.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {isHead && (
+        <section className="ma-section">
+          <div className="ma-section-head">
+            <h3>Team workload</h3>
+            <button className="ma-link-btn" onClick={() => onGoToFilter("team")}>View all</button>
+          </div>
+          <WorkloadList tasks={tasks} users={users} onSelectMember={onSelectMember} limit={4} />
+        </section>
+      )}
+
+      <section className="ma-section">
+        <h3>{isHead ? "Priority tasks" : "Your priority tasks"}</h3>
+        {priority.length === 0 ? (
+          <div className="ma-empty">{isHead ? "Nothing urgent right now." : "You're all caught up."}</div>
+        ) : (
+          <TaskList tasks={priority} users={users} onSelect={onSelectTask} />
+        )}
+      </section>
+    </div>
+  );
+}
+
+function WorkloadList({
+  tasks,
+  users,
+  onSelectMember,
+  limit,
+}: {
+  tasks: Task[];
+  users: User[];
+  onSelectMember: (userId: string) => void;
+  limit?: number;
+}) {
+  const rows = workloadFor(tasks, users).slice(0, limit ?? undefined);
+  if (rows.length === 0) {
+    return <div className="ma-empty">No active team members yet.</div>;
+  }
+  return (
+    <ul className="ma-workload-list">
+      {rows.map((row) => (
+        <li key={row.user.id}>
+          <button className="ma-workload-row" onClick={() => onSelectMember(row.user.id)}>
+            <span className="ma-workload-name">
+              {row.user.displayName}
+              <span className="ma-muted"> · {ROLE_LABELS[row.user.role]}</span>
+            </span>
+            <span className="ma-workload-counts">
+              <span className="ma-workload-count">{row.open} open</span>
+              <span className="ma-workload-count">{row.today} today</span>
+              <span className={`ma-workload-count${row.overdue > 0 ? " danger" : ""}`}>{row.overdue} overdue</span>
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// ─── Team ─────────────────────────────────────────────────────────────────────
+
+function TeamView({
+  tasks,
+  users,
+  loading,
+  error,
+  onRetry,
+  onSelectMember,
+}: {
+  tasks: Task[];
+  users: User[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onSelectMember: (userId: string) => void;
+}) {
+  if (loading && tasks.length === 0) {
+    return <div className="ma-center-inline"><div className="ma-spinner" aria-label="Loading" /></div>;
+  }
+  if (error) {
+    return <div className="ma-error" role="alert">{error} <button onClick={onRetry}>Retry</button></div>;
+  }
+  return (
+    <div className="ma-home">
+      <div className="ma-greeting">
+        <h1>Team workload</h1>
+        <p className="ma-muted">Tap a teammate to see their tasks.</p>
+      </div>
+      <WorkloadList tasks={tasks} users={users} onSelectMember={onSelectMember} />
+    </div>
+  );
+}
+
+// ─── Tasks tab ────────────────────────────────────────────────────────────────
+
+function TasksView({
+  isHead,
+  filter,
+  onFilterChange,
+  viewMode,
+  onViewModeChange,
+  tasks,
+  users,
+  loading,
+  error,
+  onRetry,
+  onSelect,
+  memberFilterUser,
+  onClearMember,
+}: {
+  isHead: boolean;
+  filter: Filter;
+  onFilterChange: (f: Filter) => void;
+  viewMode: ViewMode;
+  onViewModeChange: (v: ViewMode) => void;
+  tasks: Task[];
+  users: User[];
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+  onSelect: (id: string) => void;
+  memberFilterUser: User | null;
+  onClearMember: () => void;
+}) {
+  const [moreOpen, setMoreOpen] = useState(false);
+  const primaryFilters: Filter[] = isHead ? ["my", "today", "overdue", "team"] : ["my", "today", "overdue"];
+  const extraActive = filter === "review" || filter === "blocked" ? filter : null;
+
+  return (
+    <div className="ma-tasks-view">
+      <nav className="ma-filters" aria-label="Task filters">
+        {primaryFilters.map((f) => (
+          <button
+            key={f}
+            className={`ma-filter-btn${filter === f ? " active" : ""}`}
+            onClick={() => onFilterChange(f)}
+          >
+            {FILTER_LABELS[f]}
+          </button>
+        ))}
+        {extraActive && (
+          <button className="ma-filter-btn active" onClick={() => onFilterChange("my")}>
+            {FILTER_LABELS[extraActive]} ×
+          </button>
+        )}
+        <div className="ma-more-wrap">
+          <button className="ma-filter-btn ghost" onClick={() => setMoreOpen((v) => !v)} aria-expanded={moreOpen}>
+            Filters ▾
+          </button>
+          {moreOpen && (
+            <div className="ma-filter-sheet" role="menu">
+              <button role="menuitem" onClick={() => { onFilterChange("review"); setMoreOpen(false); }}>Review</button>
+              <button role="menuitem" onClick={() => { onFilterChange("blocked"); setMoreOpen(false); }}>Blocked</button>
+            </div>
+          )}
+        </div>
+        <div className="ma-view-toggle" role="group" aria-label="View mode">
+          <button
+            className={`ma-view-btn${viewMode === "list" ? " active" : ""}`}
+            onClick={() => onViewModeChange("list")}
+            aria-pressed={viewMode === "list"}
+            title="List view"
+          >
+            ☰
+          </button>
+          <button
+            className={`ma-view-btn${viewMode === "kanban" ? " active" : ""}`}
+            onClick={() => onViewModeChange("kanban")}
+            aria-pressed={viewMode === "kanban"}
+            title="Kanban view"
+          >
+            ⊞
+          </button>
+        </div>
+      </nav>
+
+      {memberFilterUser && (
+        <div className="ma-member-chip">
+          Showing <strong>{memberFilterUser.displayName}</strong>
+          <button onClick={onClearMember} aria-label="Clear teammate filter">×</button>
+        </div>
+      )}
+
+      {loading && (
+        <div className="ma-center-inline">
+          <div className="ma-spinner" aria-label="Loading tasks" />
+        </div>
+      )}
+      {!loading && error && (
+        <div className="ma-error" role="alert">
+          {error}
+          <button onClick={onRetry}>Retry</button>
+        </div>
+      )}
+      {!loading && !error && tasks.length === 0 && (
+        <div className="ma-empty">{EMPTY_COPY[filter]}</div>
+      )}
+      {!loading && !error && tasks.length > 0 && (
+        viewMode === "list"
+          ? <TaskList tasks={tasks} users={users} onSelect={onSelect} />
+          : <KanbanBoard tasks={tasks} users={users} onSelect={onSelect} />
       )}
     </div>
   );
@@ -536,7 +951,7 @@ function TaskCard({
   compact?: boolean;
 }) {
   const assignee = users.find((u) => u.id === task.assigneeId);
-  const overdue = isOverdue(task.deadline) && !["DONE", "CANCELLED"].includes(task.status);
+  const overdue = isOverdue(task.deadline) && !isTerminal(task.status);
   const today = isToday(task.deadline);
 
   return (
@@ -603,7 +1018,7 @@ function TaskDetailPanel({
     const { data, error: e } = await apiFetch<TaskDetail>(`/api/tasks/${taskId}`);
     setLoading(false);
     if (data) setDetail(data);
-    else setError(e ?? "Failed to load task");
+    else setError(friendlyError(e) ?? "Failed to load task");
   }, [taskId]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -626,7 +1041,7 @@ function TaskDetailPanel({
       }
     );
     setActionPending(false);
-    if (e) { setActionError(e); return false; }
+    if (e) { setActionError(friendlyError(e)); return false; }
     await load();
     onRefresh();
     return true;
@@ -648,7 +1063,7 @@ function TaskDetailPanel({
       }
     );
     setActionPending(false);
-    if (e) { setActionError(e); return; }
+    if (e) { setActionError(friendlyError(e)); return; }
     setShowDLRequest(false);
     setDlDate("");
     setDlReason("");
@@ -667,7 +1082,7 @@ function TaskDetailPanel({
       }
     );
     setActionPending(false);
-    if (e) { setActionError(e); return; }
+    if (e) { setActionError(friendlyError(e)); return; }
     await load();
     onRefresh();
   };
@@ -691,8 +1106,8 @@ function TaskDetailPanel({
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Approve", action: "APPROVE" });
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Request Revision", action: "_revision", variant: "warn" });
     if (task.status === "REVISION" && isAssignee) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
-    if (!["DONE", "CANCELLED"].includes(task.status) && (isCreator || isHead)) actions.push({ label: "Cancel", action: "CANCEL", variant: "danger" });
-    if ((task.status === "DONE" || task.status === "CANCELLED") && isHead) actions.push({ label: "Reopen", action: "REOPEN" });
+    if (!isTerminal(task.status) && (isCreator || isHead)) actions.push({ label: "Cancel", action: "CANCEL", variant: "danger" });
+    if (isTerminal(task.status) && isHead) actions.push({ label: "Reopen", action: "REOPEN" });
   }
 
   return (
@@ -834,7 +1249,7 @@ function TaskDetailPanel({
             )}
 
             {/* Request deadline change (assignee only, non-terminal) */}
-            {isAssignee && !["DONE", "CANCELLED"].includes(task.status) && (
+            {isAssignee && !isTerminal(task.status) && (
               <section className="ma-section">
                 <h3>Deadline Change</h3>
                 {showDLRequest ? (
@@ -903,7 +1318,7 @@ function QuickAddPanel({
   const activeUsers = users.filter((u) => u.isActive);
 
   const submit = async () => {
-    if (!title.trim() || !assigneeId || !deadline) return;
+    if (pending || !title.trim() || !assigneeId || !deadline) return;
     setPending(true);
     setError(null);
     const body: Record<string, unknown> = {
@@ -920,7 +1335,7 @@ function QuickAddPanel({
       body: JSON.stringify(body),
     });
     setPending(false);
-    if (e) { setError(e); return; }
+    if (e) { setError(friendlyError(e)); return; }
     if (!data) { setError("Task was not created."); return; }
     onCreated(data.notification);
   };
@@ -951,16 +1366,6 @@ function QuickAddPanel({
             />
           </div>
           <div className="ma-form-group">
-            <label htmlFor="qa-desc">Description</label>
-            <textarea
-              id="qa-desc"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              placeholder="Optional details…"
-            />
-          </div>
-          <div className="ma-form-group">
             <label htmlFor="qa-assignee">Assignee *</label>
             <select id="qa-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
               {activeUsers.map((u) => (
@@ -968,8 +1373,13 @@ function QuickAddPanel({
               ))}
             </select>
           </div>
-          <div className="ma-form-row">
-            <div className="ma-form-group flex-1">
+          <div className="ma-form-group">
+            <label htmlFor="qa-deadline">Deadline *</label>
+            <input id="qa-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+          </div>
+          <details className="ma-more-details">
+            <summary>Priority &amp; description</summary>
+            <div className="ma-form-group">
               <label htmlFor="qa-priority">Priority</label>
               <select id="qa-priority" value={priority} onChange={(e) => setPriority(e.target.value as Priority)}>
                 {(["low", "normal", "high"] as Priority[]).map((p) => (
@@ -977,11 +1387,17 @@ function QuickAddPanel({
                 ))}
               </select>
             </div>
-            <div className="ma-form-group flex-1">
-              <label htmlFor="qa-deadline">Deadline *</label>
-              <input id="qa-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+            <div className="ma-form-group">
+              <label htmlFor="qa-desc">Description</label>
+              <textarea
+                id="qa-desc"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                placeholder="Optional details…"
+              />
             </div>
-          </div>
+          </details>
           {error && <div className="ma-error-inline" role="alert">{error}</div>}
           <button className="ma-btn primary full" disabled={pending || !title.trim() || !deadline || !assigneeId} onClick={submit}>
             {pending ? "Creating…" : "Create Task"}
@@ -1018,7 +1434,7 @@ function PendingUsersPanel({
     });
     setPending((p) => ({ ...p, [userId]: false }));
     if (error) {
-      setErrors((e) => ({ ...e, [userId]: error }));
+      setErrors((e) => ({ ...e, [userId]: friendlyError(error) ?? error }));
       return;
     }
     onActivated();
