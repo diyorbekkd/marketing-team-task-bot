@@ -26,8 +26,9 @@
   - Telegram webhook diagnostics record safe update structure and group parse/create outcomes without message bodies, identities, or secrets
   - Telegram and Mini App task creation now share one post-persistence assignment-notification workflow with explicit sent/failed outcomes
   - Mini App Quick Add reports notification success/failure, and notification failure preserves the already-created task and immutable `TASK_CREATED` audit event
+  - Focused fix commit `63d12c6` is pushed and deployed to the stable production URL; health, webhook, menu, production environment names, and Supabase counts were reverified
+  - Production onboarding count remains exactly 3 persisted users with real Telegram IDs (all active); 2 of the expected 5 teammates are not yet onboarded and no placeholder identities were created
 - Remaining tasks:
-  - Deploy the focused production fix and verify the production health/webhook/menu configuration
   - Human: ensure the bot receives ordinary group text (group administrator while privacy mode stays enabled, or privacy mode disabled followed by remove/re-add)
   - Run the real human marketing-group shorthand test, inspect safe Vercel logs and Supabase persistence, and verify the private assignment notification
   - Run the real Mini App Quick Add test against the deployed backend and verify the private assignment notification
@@ -39,15 +40,16 @@
 - Unresolved findings: `FINAL_OPUS_SECURITY_REVIEW=PENDING`. The review script was attempted but the Claude account reported exhausted usage until 00:40 Asia/Tashkent. Telegram mutation idempotency uses the unique source update ID for group task creation; other mutation paths are user-initiated callbacks/commands.
 - Known blockers: Real human group and Mini App validation require the user to send the final test inputs. Telegram did not deliver the reported human group message to the webhook; official privacy-mode behavior means ordinary free text requires the bot to be a group administrator or privacy mode to be disabled and the bot re-added.
 - Latest commits:
+  - `63d12c6 fix: deliver task assignment notifications consistently`
   - `2f054f3 fix: close MVP identity and task-scope gaps`
   - `4f58c79 fix: secure fast-track onboarding and integration`
   - `89347da merge: integrate fast-track Mini App`
-- Remote state: `fast-track/mvp` is pushed to `origin`; the focused production-fix commit/deployment is pending.
+- Remote state: `fast-track/mvp` through `63d12c6` is pushed to `origin` and deployed to production; final human-originated group and Mini App verification is pending.
 
 ## Live release state
 
 - Production URL: `https://marketing-team-task-bot.vercel.app`
 - Supabase: READY — five migrations in parity; trusted server access succeeds; browser roles are denied.
 - Telegram: webhook and Mini App menu target production with no pending update or webhook error; human free-text delivery awaits group-role/privacy correction and a real retest.
-- Mini App: READY — production shell, signed init-data authentication, user/task/detail endpoints, task actions, and deadline request flow verified.
+- Mini App: focused notification fix is deployed; signed live Quick Add and its private notification await the final human test.
 - Smoke artifact: one self-assigned production smoke task retained as `DONE` with full audit history.
