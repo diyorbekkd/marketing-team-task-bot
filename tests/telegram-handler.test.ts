@@ -321,4 +321,28 @@ describe("Telegram MVP handler", () => {
 
     expect(service.performTaskAction).toHaveBeenCalledWith(actor, task.id, { action: "REQUEST_REVISION" });
   });
+
+  it("renders inline posting toggles and enables review only after completion", async () => {
+    const checklist = {
+      id: "40000000-0000-4000-8000-000000000001",
+      taskId: task.id,
+      kind: "POSTING" as const,
+      createdAt: "2026-09-07T00:00:00Z",
+      items: [
+        { id: "50000000-0000-4000-8000-000000000001", checklistId: "40000000-0000-4000-8000-000000000001", label: "Telegram", position: 0, isCompleted: true, completedBy: actor.id, completedAt: "2026-09-07T00:00:00Z" },
+      ],
+    };
+    const service = serviceMock({ togglePostingChecklistItem: vi.fn(async () => checklist) });
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 25,
+      callback_query: {
+        id: "callback-checklist", from: { id: 43, is_bot: false, first_name: "Editor" },
+        data: `check:${checklist.items[0].id}`,
+        message: { message_id: 8, chat: { id: 43, type: "private" } },
+      },
+    }));
+    expect(service.togglePostingChecklistItem).toHaveBeenCalledWith(actor, checklist.items[0].id);
+    expect(result.messages[0]?.replyMarkup?.inline_keyboard.flat().map((button) => button.text))
+      .toContain("✅ Reviewga yuborish");
+  });
 });

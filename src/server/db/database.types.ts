@@ -26,6 +26,8 @@ type TaskRow = {
   cancelled_at: string | null;
   created_at: string;
   updated_at: string;
+  recurring_definition_id: string | null;
+  scheduled_occurrence_at: string | null;
 }
 
 type TaskEventRow = {
@@ -78,6 +80,47 @@ type RevisionRow = {
   created_at: string;
 }
 
+type RecurringDefinitionRow = {
+  id: string;
+  source_task_id: string;
+  created_by: string;
+  title: string;
+  description: string | null;
+  priority: TaskRow["priority"];
+  assignee_id: string;
+  frequency: "WEEKDAYS" | "WEEKLY" | "MONTHLY";
+  weekday: number | null;
+  day_of_month: number | null;
+  local_time: string;
+  timezone: "Asia/Tashkent";
+  ends_on: string | null;
+  status: "ACTIVE" | "PAUSED" | "STOPPED";
+  next_occurrence_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type ChecklistRow = { id: string; task_id: string; kind: "POSTING"; created_at: string }
+type ChecklistItemRow = {
+  id: string;
+  checklist_id: string;
+  label: string;
+  position: number;
+  is_completed: boolean;
+  completed_by: string | null;
+  completed_at: string | null;
+}
+type ReportDeliveryRow = {
+  id: string;
+  report_type: "DAILY_MORNING" | "DAILY_EVENING" | "WEEKLY";
+  interval_key: string;
+  recipient_user_id: string;
+  status: "CLAIMED" | "SENT" | "FAILED" | "SKIPPED";
+  failure_reason: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
 type TableDefinition<Row> = {
   Row: Row;
   Insert: Partial<Row>;
@@ -94,6 +137,10 @@ export interface Database {
       deadline_change_requests: TableDefinition<DeadlineRequestRow>;
       reassign_requests: TableDefinition<ReassignRequestRow>;
       task_revisions: TableDefinition<RevisionRow>;
+      recurring_definitions: TableDefinition<RecurringDefinitionRow>;
+      task_checklists: TableDefinition<ChecklistRow>;
+      task_checklist_items: TableDefinition<ChecklistItemRow>;
+      report_deliveries: TableDefinition<ReportDeliveryRow>;
     };
     Views: Record<never, never>;
     Functions: {
@@ -116,6 +163,28 @@ export interface Database {
           p_deadline: string;
           p_source_telegram_update_id: number | null;
         };
+        Returns: TaskRow;
+      };
+      create_task_with_event_v2: {
+        Args: {
+          p_creator_id: string;
+          p_assignee_id: string;
+          p_title: string;
+          p_description: string;
+          p_priority: "high" | "normal" | "low";
+          p_deadline: string;
+          p_source_telegram_update_id: number | null;
+          p_recurring_definition_id: string | null;
+          p_scheduled_occurrence_at: string | null;
+        };
+        Returns: TaskRow;
+      };
+      toggle_posting_checklist_item: {
+        Args: { p_item_id: string; p_actor_id: string };
+        Returns: ChecklistItemRow;
+      };
+      generate_recurring_task: {
+        Args: { p_definition_id: string; p_scheduled_occurrence_at: string; p_next_occurrence_at: string | null };
         Returns: TaskRow;
       };
       transition_task_with_events: {

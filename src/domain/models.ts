@@ -16,6 +16,47 @@ export const UserSchema = z.object({
   updatedAt: z.string(),
 });
 
+export const PostingChecklistItemSchema = z.object({
+  id: z.string().uuid(),
+  checklistId: z.string().uuid(),
+  label: z.string(),
+  position: z.number().int().nonnegative(),
+  isCompleted: z.boolean(),
+  completedBy: z.string().uuid().nullable(),
+  completedAt: z.string().nullable(),
+});
+
+export const PostingChecklistSchema = z.object({
+  id: z.string().uuid(),
+  taskId: z.string().uuid(),
+  kind: z.literal("POSTING"),
+  createdAt: z.string(),
+  items: z.array(PostingChecklistItemSchema),
+});
+
+export const RecurrenceFrequencySchema = z.enum(["WEEKDAYS", "WEEKLY", "MONTHLY"]);
+export const RecurrenceStatusSchema = z.enum(["ACTIVE", "PAUSED", "STOPPED"]);
+
+export const RecurringDefinitionSchema = z.object({
+  id: z.string().uuid(),
+  sourceTaskId: z.string().uuid(),
+  createdBy: z.string().uuid(),
+  title: z.string(),
+  description: z.string().nullable(),
+  priority: TaskPrioritySchema,
+  assigneeId: z.string().uuid(),
+  frequency: RecurrenceFrequencySchema,
+  weekday: z.number().int().min(1).max(7).nullable(),
+  dayOfMonth: z.number().int().min(1).max(31).nullable(),
+  localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  timezone: z.literal("Asia/Tashkent"),
+  endsOn: z.string().nullable(),
+  status: RecurrenceStatusSchema,
+  nextOccurrenceAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
 export const TaskSchema = z.object({
   id: z.string().uuid(),
   title: z.string(),
@@ -30,6 +71,8 @@ export const TaskSchema = z.object({
   cancelledAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  recurringDefinitionId: z.string().uuid().nullable().optional(),
+  scheduledOccurrenceAt: z.string().nullable().optional(),
 });
 
 export const TaskEventSchema = z.object({
@@ -63,3 +106,8 @@ export type User = z.infer<typeof UserSchema>;
 export type Task = z.infer<typeof TaskSchema>;
 export type TaskEvent = z.infer<typeof TaskEventSchema>;
 export type DeadlineChangeRequest = z.infer<typeof DeadlineChangeRequestSchema>;
+export type PostingChecklist = z.infer<typeof PostingChecklistSchema>;
+export type PostingChecklistItem = z.infer<typeof PostingChecklistItemSchema>;
+export type RecurringDefinition = z.infer<typeof RecurringDefinitionSchema>;
+export type RecurrenceFrequency = z.infer<typeof RecurrenceFrequencySchema>;
+export type RecurrenceStatus = z.infer<typeof RecurrenceStatusSchema>;

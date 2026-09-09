@@ -88,6 +88,10 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     listTasks: vi.fn(async () => [task()]),
     transitionTask: vi.fn(async (input) => task({ status: input.newStatus })),
     listTaskEvents: vi.fn(async () => []),
+    listAllTaskEvents: vi.fn(async () => []),
+    getPostingChecklist: vi.fn(async () => null),
+    getPostingChecklistByItemId: vi.fn(async () => null),
+    togglePostingChecklistItem: vi.fn(),
     createDeadlineChangeRequest: vi.fn(async () => deadlineRequest()),
     getDeadlineChangeRequest: vi.fn(async () => deadlineRequest()),
     listDeadlineChangeRequests: vi.fn(async () => []),
@@ -96,6 +100,14 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
       resolvedBy: input.resolvedBy,
       resolvedAt: "2026-09-06T13:00:00.000Z",
     })),
+    getRecurringDefinitionForTask: vi.fn(async () => null),
+    getRecurringDefinition: vi.fn(async () => null),
+    listDueRecurringDefinitions: vi.fn(async () => []),
+    createRecurringDefinition: vi.fn(),
+    updateRecurringDefinition: vi.fn(),
+    generateRecurringOccurrence: vi.fn(async () => null),
+    claimReportDelivery: vi.fn(async () => true),
+    completeReportDelivery: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -527,6 +539,182 @@ describe("MarketingService MVP permissions", () => {
 
       await expect(service.updateUserRole(head, "10000000-0000-4000-8000-000000000099", "SMM_MANAGER"))
         .rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+  });
+
+  describe("posting checklist", () => {
+    const checklist = {
+      id: "40000000-0000-4000-8000-000000000001",
+      taskId: ids.task,
+      kind: "POSTING" as const,
+      createdAt: "2026-09-06T12:00:00.000Z",
+      items: [{
+        id: "50000000-0000-4000-8000-000000000001",
+        checklistId: "40000000-0000-4000-8000-000000000001",
+        label: "Telegram",
+        position: 0,
+        isCompleted: false,
+        completedBy: null,
+        completedAt: null,
+      }],
+    };
+
+    it("does not send a posting task to review while an item is incomplete", async () => {
+      const repo = repository({
+        getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })),
+        getPostingChecklist: vi.fn(async () => checklist),
+      });
+      await expect(new MarketingService(repo, notifier()).performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.transitionTask).not.toHaveBeenCalled();
+    });
+
+    it("lets only the assignee toggle a checklist item", async () => {
+      const repo = repository({
+        getPostingChecklistByItemId: vi.fn(async () => checklist),
+        getPostingChecklist: vi.fn(async () => ({ ...checklist, items: [{ ...checklist.items[0], isCompleted: true }] })),
+      });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.togglePostingChecklistItem(creator, checklist.items[0].id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await service.togglePostingChecklistItem(assignee, checklist.items[0].id);
+      expect(repo.togglePostingChecklistItem).toHaveBeenCalledWith({ itemId: checklist.items[0].id, actorId: assignee.id });
+    });
+
+    it("allows sending to review once every checklist item is complete", async () => {
+      const repo = repository({
+        getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })),
+        getPostingChecklist: vi.fn(async () => ({ ...checklist, items: [{ ...checklist.items[0], isCompleted: true }] })),
+      });
+      await expect(new MarketingService(repo, notifier()).performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }))
+        .resolves.toMatchObject({ status: "REVIEW" });
+      expect(repo.transitionTask).toHaveBeenCalledOnce();
+    });
+
+    it("leaves a task with no checklist unaffected by the posting gate", async () => {
+      const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })) });
+      await expect(new MarketingService(repo, notifier()).performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }))
+        .resolves.toMatchObject({ status: "REVIEW" });
+    });
+  });
+
+  describe("recurring tasks", () => {
+    const definition = {
+      id: "60000000-0000-4000-8000-000000000001",
+      sourceTaskId: ids.task,
+      createdBy: ids.creator,
+      title: "Weekly post #posting",
+      description: null,
+      priority: "normal" as const,
+      assigneeId: ids.assignee,
+      frequency: "WEEKLY" as const,
+      weekday: 3,
+      dayOfMonth: null,
+      localTime: "09:00",
+      timezone: "Asia/Tashkent" as const,
+      endsOn: null,
+      status: "ACTIVE" as const,
+      nextOccurrenceAt: "2026-09-09T04:00:00.000Z",
+      createdAt: "2026-09-08T00:00:00.000Z",
+      updatedAt: "2026-09-08T00:00:00.000Z",
+    };
+
+    it("atomically advances a due definition and notifies for the new normal task", async () => {
+      const generated = task({
+        creatorId: ids.creator, assigneeId: ids.assignee, deadline: definition.nextOccurrenceAt!,
+        recurringDefinitionId: definition.id, scheduledOccurrenceAt: definition.nextOccurrenceAt,
+      });
+      const repo = repository({
+        listDueRecurringDefinitions: vi.fn(async () => [definition]),
+        generateRecurringOccurrence: vi.fn(async () => generated),
+      });
+      const notifications = notifier();
+      const result = await new MarketingService(repo, notifications)
+        .generateDueRecurringTasks(new Date("2026-09-09T04:01:00.000Z"));
+
+      expect(result.generated).toBe(1);
+      expect(repo.generateRecurringOccurrence).toHaveBeenCalledWith({
+        definitionId: definition.id,
+        scheduledOccurrenceAt: definition.nextOccurrenceAt,
+        nextOccurrenceAt: "2026-09-16T04:00:00.000Z",
+      });
+      expect(notifications.notifyAssignment).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows only the source creator or Head to configure recurrence", async () => {
+      const repo = repository({
+        getTask: vi.fn(async () => task()),
+        createRecurringDefinition: vi.fn(async () => definition),
+      });
+      const service = new MarketingService(repo, notifier());
+      const input = { frequency: "WEEKDAYS", localTime: "09:00" };
+      await expect(service.createRecurrence(assignee, ids.task, input, new Date("2026-09-08T00:00:00Z")))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      await service.createRecurrence(creator, ids.task, input, new Date("2026-09-08T00:00:00Z"));
+      expect(repo.createRecurringDefinition).toHaveBeenCalledOnce();
+    });
+
+    it("does not generate a second task when a stale scheduler run repeats the same occurrence", async () => {
+      // The database only advances next_occurrence_at on the run that actually
+      // wins the row lock; a second, racing/retried invocation gets null back
+      // from generateRecurringOccurrence for that same scheduled instant.
+      const repo = repository({
+        listDueRecurringDefinitions: vi.fn(async () => [definition]),
+        generateRecurringOccurrence: vi.fn(async () => null),
+      });
+      const notifications = notifier();
+      const result = await new MarketingService(repo, notifications)
+        .generateDueRecurringTasks(new Date("2026-09-09T04:01:00.000Z"));
+
+      expect(result.generated).toBe(0);
+      expect(repo.generateRecurringOccurrence).toHaveBeenCalledTimes(1);
+      expect(notifications.notifyAssignment).not.toHaveBeenCalled();
+    });
+
+    it("denies a non-owning, non-Head assignee from pausing someone else's recurrence", async () => {
+      const repo = repository({ getRecurringDefinition: vi.fn(async () => definition) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.updateRecurrence(assignee, definition.id, { action: "PAUSE" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(repo.updateRecurringDefinition).not.toHaveBeenCalled();
+    });
+
+    it("pauses a recurrence, keeping its next occurrence pointer for a later resume", async () => {
+      const repo = repository({ getRecurringDefinition: vi.fn(async () => definition) });
+      const service = new MarketingService(repo, notifier());
+
+      await service.updateRecurrence(creator, definition.id, { action: "PAUSE" });
+      expect(repo.updateRecurringDefinition).toHaveBeenLastCalledWith(expect.objectContaining({
+        status: "PAUSED", nextOccurrenceAt: definition.nextOccurrenceAt,
+      }));
+    });
+
+    it("stops a recurrence and clears its schedule, which a further resume cannot revive", async () => {
+      const stopped = { ...definition, status: "STOPPED" as const, nextOccurrenceAt: null };
+      const repo = repository({ getRecurringDefinition: vi.fn(async () => definition) });
+      const service = new MarketingService(repo, notifier());
+
+      await service.updateRecurrence(head, definition.id, { action: "STOP" });
+      expect(repo.updateRecurringDefinition).toHaveBeenLastCalledWith(expect.objectContaining({
+        status: "STOPPED", nextOccurrenceAt: null,
+      }));
+
+      const stoppedRepo = repository({ getRecurringDefinition: vi.fn(async () => stopped) });
+      await expect(new MarketingService(stoppedRepo, notifier()).updateRecurrence(head, definition.id, { action: "RESUME" }))
+        .rejects.toMatchObject({ code: "CONFLICT" });
+    });
+  });
+
+  describe("analytics visibility", () => {
+    it("gives an employee only their own analytics and Head the whole team", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+
+      const employeeView = await service.getAnalytics(assignee, 30, new Date("2026-09-09T00:00:00Z"));
+      expect(employeeView.team).toEqual([]);
+
+      const headView = await service.getAnalytics(head, 30, new Date("2026-09-09T00:00:00Z"));
+      expect(headView.team.length).toBeGreaterThan(0);
+      expect(headView.team.every((row) => "workload" in row && "metrics" in row)).toBe(true);
     });
   });
 });

@@ -4,17 +4,34 @@ import { MarketingService } from "@/application/marketing-service";
 import { getAppConfig, getTelegramConfig } from "@/server/config";
 import { TelegramNotificationDispatcher } from "@/server/notifications/telegram-notification-dispatcher";
 import { SupabaseMarketingRepository } from "@/server/repositories/supabase-marketing-repository";
+import { ReportingService } from "@/application/reporting-service";
 
 let service: MarketingService | undefined;
+let reportingService: ReportingService | undefined;
+let dispatcher: TelegramNotificationDispatcher | undefined;
+
+function getDispatcher() {
+  if (!dispatcher) {
+    const appConfig = getAppConfig();
+    const telegramConfig = getTelegramConfig();
+    dispatcher = new TelegramNotificationDispatcher(telegramConfig.botToken, appConfig.appUrl);
+  }
+  return dispatcher;
+}
 
 export function getMarketingService(): MarketingService {
   if (!service) {
-    const appConfig = getAppConfig();
-    const telegramConfig = getTelegramConfig();
     service = new MarketingService(
       new SupabaseMarketingRepository(),
-      new TelegramNotificationDispatcher(telegramConfig.botToken, appConfig.appUrl),
+      getDispatcher(),
     );
   }
   return service;
+}
+
+export function getReportingService(): ReportingService {
+  if (!reportingService) {
+    reportingService = new ReportingService(new SupabaseMarketingRepository(), getDispatcher());
+  }
+  return reportingService;
 }

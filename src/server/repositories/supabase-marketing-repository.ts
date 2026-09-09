@@ -9,7 +9,15 @@ import type {
 import { ApplicationError } from "@/application/errors";
 import type { TeamRole } from "@/domain/permissions";
 import type { TaskStatus } from "@/domain/task";
-import type { DeadlineChangeRequest, Task, TaskEvent, User } from "@/domain/models";
+import type {
+  DeadlineChangeRequest,
+  PostingChecklist,
+  PostingChecklistItem,
+  RecurringDefinition,
+  Task,
+  TaskEvent,
+  User,
+} from "@/domain/models";
 import { getSupabaseAdminClient } from "@/server/db/supabase";
 
 const bigintValue = z.union([z.string(), z.number().int().safe()]).transform(String);
@@ -45,6 +53,8 @@ const TaskRowSchema = z.object({
   cancelled_at: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
+  recurring_definition_id: z.string().uuid().nullable().default(null),
+  scheduled_occurrence_at: z.string().nullable().default(null),
 });
 
 const EventRowSchema = z.object({
@@ -58,6 +68,7 @@ const EventRowSchema = z.object({
     "DEADLINE_CHANGE_REJECTED", "DEADLINE_CHANGED", "REASSIGN_REQUESTED", "REASSIGN_APPROVED",
     "REASSIGN_REJECTED", "ASSIGNEE_CHANGED", "TASK_BLOCKED", "TASK_UNBLOCKED", "REVIEW_REQUESTED",
     "REVISION_REQUESTED", "TASK_COMPLETED", "TASK_CANCELLED", "TASK_REOPENED",
+    "POSTING_CHECKLIST_CREATED", "POSTING_CHECKLIST_ITEM_TOGGLED", "RECURRING_TASK_GENERATED",
   ]),
   old_value: z.unknown(),
   new_value: z.unknown(),
@@ -80,6 +91,33 @@ const DeadlineRequestRowSchema = z.object({
   updated_at: z.string(),
 });
 
+const ChecklistRowSchema = z.object({
+  id: z.string().uuid(),
+  task_id: z.string().uuid(),
+  kind: z.literal("POSTING"),
+  created_at: z.string(),
+});
+
+const ChecklistItemRowSchema = z.object({
+  id: z.string().uuid(),
+  checklist_id: z.string().uuid(),
+  label: z.string(),
+  position: z.number().int(),
+  is_completed: z.boolean(),
+  completed_by: z.string().uuid().nullable(),
+  completed_at: z.string().nullable(),
+});
+
+const RecurringDefinitionRowSchema = z.object({
+  id: z.string().uuid(), source_task_id: z.string().uuid(), created_by: z.string().uuid(),
+  title: z.string(), description: z.string().nullable(), priority: z.enum(["high", "normal", "low"]),
+  assignee_id: z.string().uuid(), frequency: z.enum(["WEEKDAYS", "WEEKLY", "MONTHLY"]),
+  weekday: z.number().int().nullable(), day_of_month: z.number().int().nullable(), local_time: z.string(),
+  timezone: z.literal("Asia/Tashkent"), ends_on: z.string().nullable(),
+  status: z.enum(["ACTIVE", "PAUSED", "STOPPED"]), next_occurrence_at: z.string().nullable(),
+  created_at: z.string(), updated_at: z.string(),
+});
+
 function mapUser(input: unknown): User {
   const row = UserRowSchema.parse(input);
   return {
@@ -91,6 +129,26 @@ function mapUser(input: unknown): User {
     isActive: row.is_active,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapChecklistItem(input: unknown): PostingChecklistItem {
+  const row = ChecklistItemRowSchema.parse(input);
+  return {
+    id: row.id, checklistId: row.checklist_id, label: row.label, position: row.position,
+    isCompleted: row.is_completed, completedBy: row.completed_by, completedAt: row.completed_at,
+  };
+}
+
+function mapRecurringDefinition(input: unknown): RecurringDefinition {
+  const row = RecurringDefinitionRowSchema.parse(input);
+  return {
+    id: row.id, sourceTaskId: row.source_task_id, createdBy: row.created_by,
+    title: row.title, description: row.description, priority: row.priority, assigneeId: row.assignee_id,
+    frequency: row.frequency, weekday: row.weekday, dayOfMonth: row.day_of_month,
+    localTime: row.local_time.slice(0, 5), timezone: row.timezone, endsOn: row.ends_on,
+    status: row.status, nextOccurrenceAt: row.next_occurrence_at,
+    createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
 
@@ -110,6 +168,8 @@ function mapTask(input: unknown): Task {
     cancelledAt: row.cancelled_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    recurringDefinitionId: row.recurring_definition_id,
+    scheduledOccurrenceAt: row.scheduled_occurrence_at,
   };
 }
 
@@ -241,7 +301,7 @@ export class SupabaseMarketingRepository implements MarketingRepository {
   }
 
   async createTask(input: CreateTaskRecord): Promise<Task> {
-    const { data, error } = await this.client.rpc("create_task_with_event", {
+    const { data, error } = await this.client.rpc("create_task_with_event_v2", {
       p_creator_id: input.creatorId,
       p_assignee_id: input.assigneeId,
       p_title: input.title,
@@ -249,6 +309,8 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       p_priority: input.priority,
       p_deadline: input.deadline,
       p_source_telegram_update_id: input.sourceTelegramUpdateId ?? null,
+      p_recurring_definition_id: input.recurringDefinitionId ?? null,
+      p_scheduled_occurrence_at: input.scheduledOccurrenceAt ?? null,
     });
     if (error || !data) throwDataError(error, "Unable to create task.");
     return mapTask(rpcRecord(data));
@@ -290,6 +352,41 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       .order("created_at");
     if (error) throwDataError(error, "Unable to load task history.");
     return (data ?? []).map(mapEvent);
+  }
+
+  async listAllTaskEvents(): Promise<TaskEvent[]> {
+    const { data, error } = await this.client.from("task_events").select("*").order("created_at");
+    if (error) throwDataError(error, "Unable to load task history.");
+    return (data ?? []).map(mapEvent);
+  }
+
+  async getPostingChecklist(taskId: string): Promise<PostingChecklist | null> {
+    const { data, error } = await this.client.from("task_checklists").select("*").eq("task_id", taskId).maybeSingle();
+    if (error) throwDataError(error, "Unable to load posting checklist.");
+    if (!data) return null;
+    const row = ChecklistRowSchema.parse(data);
+    const { data: items, error: itemsError } = await this.client
+      .from("task_checklist_items").select("*").eq("checklist_id", row.id).order("position");
+    if (itemsError) throwDataError(itemsError, "Unable to load posting checklist items.");
+    return { id: row.id, taskId: row.task_id, kind: row.kind, createdAt: row.created_at, items: (items ?? []).map(mapChecklistItem) };
+  }
+
+  async getPostingChecklistByItemId(itemId: string): Promise<PostingChecklist | null> {
+    const { data, error } = await this.client.from("task_checklist_items").select("checklist_id").eq("id", itemId).maybeSingle();
+    if (error) throwDataError(error, "Unable to load posting checklist item.");
+    if (!data) return null;
+    const { data: checklist, error: checklistError } = await this.client
+      .from("task_checklists").select("task_id").eq("id", data.checklist_id).single();
+    if (checklistError || !checklist) throwDataError(checklistError, "Unable to load posting checklist.");
+    return this.getPostingChecklist(checklist.task_id);
+  }
+
+  async togglePostingChecklistItem(input: { itemId: string; actorId: string }): Promise<PostingChecklistItem> {
+    const { data, error } = await this.client.rpc("toggle_posting_checklist_item", {
+      p_item_id: input.itemId, p_actor_id: input.actorId,
+    });
+    if (error || !data) throwDataError(error, "Unable to update posting checklist.");
+    return mapChecklistItem(rpcRecord(data));
   }
 
   async createDeadlineChangeRequest(input: {
@@ -341,5 +438,91 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     });
     if (error || !data) throwDataError(error, "Unable to resolve deadline request.");
     return mapDeadlineRequest(rpcRecord(data));
+  }
+
+  async getRecurringDefinitionForTask(taskId: string): Promise<RecurringDefinition | null> {
+    const task = await this.getTask(taskId);
+    if (!task) return null;
+    const query = this.client.from("recurring_definitions").select("*");
+    const { data, error } = task.recurringDefinitionId
+      ? await query.eq("id", task.recurringDefinitionId).maybeSingle()
+      : await query.eq("source_task_id", taskId).maybeSingle();
+    if (error) throwDataError(error, "Unable to load recurring task.");
+    return data ? mapRecurringDefinition(data) : null;
+  }
+
+  async getRecurringDefinition(id: string): Promise<RecurringDefinition | null> {
+    const { data, error } = await this.client.from("recurring_definitions").select("*").eq("id", id).maybeSingle();
+    if (error) throwDataError(error, "Unable to load recurring task.");
+    return data ? mapRecurringDefinition(data) : null;
+  }
+
+  async listDueRecurringDefinitions(now: string): Promise<RecurringDefinition[]> {
+    const { data, error } = await this.client.from("recurring_definitions").select("*")
+      .eq("status", "ACTIVE").not("next_occurrence_at", "is", null).lte("next_occurrence_at", now)
+      .order("next_occurrence_at");
+    if (error) throwDataError(error, "Unable to list recurring tasks.");
+    return (data ?? []).map(mapRecurringDefinition);
+  }
+
+  async createRecurringDefinition(input: Parameters<MarketingRepository["createRecurringDefinition"]>[0]): Promise<RecurringDefinition> {
+    const { data, error } = await this.client.from("recurring_definitions").insert({
+      source_task_id: input.sourceTaskId, created_by: input.createdBy, title: input.title,
+      description: input.description, priority: input.priority, assignee_id: input.assigneeId,
+      frequency: input.frequency, weekday: input.weekday, day_of_month: input.dayOfMonth,
+      local_time: input.localTime, ends_on: input.endsOn, next_occurrence_at: input.nextOccurrenceAt,
+    }).select("*").single();
+    if (error || !data) throwDataError(error, "Unable to create recurring task.");
+    return mapRecurringDefinition(data);
+  }
+
+  async updateRecurringDefinition(input: Parameters<MarketingRepository["updateRecurringDefinition"]>[0]): Promise<RecurringDefinition> {
+    const changes: {
+      frequency?: "WEEKDAYS" | "WEEKLY" | "MONTHLY";
+      weekday?: number | null;
+      day_of_month?: number | null;
+      local_time?: string;
+      ends_on?: string | null;
+      status?: "ACTIVE" | "PAUSED" | "STOPPED";
+      next_occurrence_at?: string | null;
+    } = {};
+    if (input.frequency !== undefined) changes.frequency = input.frequency;
+    if (input.weekday !== undefined) changes.weekday = input.weekday;
+    if (input.dayOfMonth !== undefined) changes.day_of_month = input.dayOfMonth;
+    if (input.localTime !== undefined) changes.local_time = input.localTime;
+    if (input.endsOn !== undefined) changes.ends_on = input.endsOn;
+    if (input.status !== undefined) changes.status = input.status;
+    if (input.nextOccurrenceAt !== undefined) changes.next_occurrence_at = input.nextOccurrenceAt;
+    const { data, error } = await this.client.from("recurring_definitions").update(changes).eq("id", input.id).select("*").single();
+    if (error || !data) throwDataError(error, "Unable to update recurring task.");
+    return mapRecurringDefinition(data);
+  }
+
+  async generateRecurringOccurrence(input: Parameters<MarketingRepository["generateRecurringOccurrence"]>[0]): Promise<Task | null> {
+    const { data, error } = await this.client.rpc("generate_recurring_task", {
+      p_definition_id: input.definitionId,
+      p_scheduled_occurrence_at: input.scheduledOccurrenceAt,
+      p_next_occurrence_at: input.nextOccurrenceAt,
+    });
+    if (error) throwDataError(error, "Unable to generate recurring task.");
+    const record = data ? rpcRecord(data) : null;
+    return record ? mapTask(record) : null;
+  }
+
+  async claimReportDelivery(input: Parameters<MarketingRepository["claimReportDelivery"]>[0]): Promise<boolean> {
+    const { error } = await this.client.from("report_deliveries").insert({
+      report_type: input.reportType, interval_key: input.intervalKey, recipient_user_id: input.recipientUserId,
+    });
+    if (!error) return true;
+    if (error.code === "23505") return false;
+    throwDataError(error, "Unable to claim report delivery.");
+  }
+
+  async completeReportDelivery(input: Parameters<MarketingRepository["completeReportDelivery"]>[0]): Promise<void> {
+    const { error } = await this.client.from("report_deliveries").update({
+      status: input.status, failure_reason: input.failureReason ?? null, completed_at: new Date().toISOString(),
+    }).eq("report_type", input.reportType).eq("interval_key", input.intervalKey)
+      .eq("recipient_user_id", input.recipientUserId);
+    if (error) throwDataError(error, "Unable to complete report delivery.");
   }
 }

@@ -44,6 +44,8 @@ interface Task {
   blockedReason?: string | null;
   createdAt: string;
   updatedAt: string;
+  recurringDefinitionId?: string | null;
+  scheduledOccurrenceAt?: string | null;
 }
 
 interface TaskEvent {
@@ -74,6 +76,55 @@ interface TaskDetail {
   task: Task;
   events: TaskEvent[];
   deadlineRequests: DeadlineRequest[];
+  postingChecklist: PostingChecklist | null;
+  recurringDefinition: RecurringDefinition | null;
+}
+
+interface PostingChecklistItem {
+  id: string;
+  label: string;
+  position: number;
+  isCompleted: boolean;
+}
+
+interface PostingChecklist {
+  id: string;
+  taskId: string;
+  kind: "POSTING";
+  items: PostingChecklistItem[];
+}
+
+interface RecurringDefinition {
+  id: string;
+  sourceTaskId: string;
+  createdBy: string;
+  frequency: "WEEKDAYS" | "WEEKLY" | "MONTHLY";
+  weekday: number | null;
+  dayOfMonth: number | null;
+  localTime: string;
+  endsOn: string | null;
+  status: "ACTIVE" | "PAUSED" | "STOPPED";
+  nextOccurrenceAt: string | null;
+}
+
+interface WorkloadMetrics {
+  open: number; inProgress: number; highPriority: number; dueToday: number;
+  dueNext48h: number; overdue: number; blocked: number; review: number;
+}
+
+interface AnalyticsMetrics {
+  windowDays: number; created: number; completed: number; onTimeCompleted: number;
+  onTimeCompletionRate: number | null; carryOver: number; currentOverdue: number;
+  revisionCount: number; revisionRate: number | null; deadlineChangeRequests: number;
+  averageCycleHours: number | null; averageStatusHours: Partial<Record<TaskStatus, number>>;
+  averageBlockedHours: number | null; averageReviewHours: number | null; workload: WorkloadMetrics;
+  posting: { created: number; completed: number; currentOpen: number };
+}
+
+interface AnalyticsResponse {
+  generatedAt: string;
+  metrics: AnalyticsMetrics;
+  team: Array<{ user: User; metrics: AnalyticsMetrics; workload: WorkloadMetrics }>;
 }
 
 type AssignmentNotificationResult =
@@ -83,7 +134,7 @@ type AssignmentNotificationResult =
 type Filter = "my" | "today" | "overdue" | "team" | "review" | "blocked";
 type BackendScope = "my" | "today" | "overdue" | "team" | "review";
 type ViewMode = "list" | "kanban";
-type Nav = "home" | "tasks" | "team";
+type Nav = "home" | "tasks" | "team" | "reports";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -539,6 +590,8 @@ export default function MiniApp() {
             onEditRole={setRoleEditUser}
           />
         )}
+
+        {nav === "reports" && <ReportsView isHead={isHead} />}
       </main>
 
       <BottomNav nav={nav} onChange={setNav} showTeam={isHead} />
@@ -604,6 +657,7 @@ const NAV_ICONS: Record<Nav, string> = {
   home: "⌂",
   tasks: "≡",
   team: "◉",
+  reports: "▥",
 };
 
 function BottomNav({
@@ -619,6 +673,7 @@ function BottomNav({
     { key: "home", label: "Home" },
     { key: "tasks", label: "Tasks" },
     ...(showTeam ? [{ key: "team" as Nav, label: "Team" }] : []),
+    { key: "reports", label: "Reports" },
   ];
   return (
     <nav className="ma-bottom-nav" aria-label="Primary">
@@ -1023,6 +1078,130 @@ function TaskCard({
   );
 }
 
+// ─── Reports / analytics ─────────────────────────────────────────────────────
+
+function metricDuration(hours: number | null): string {
+  if (hours == null) return "—";
+  if (hours < 24) return `${hours.toFixed(1)}h`;
+  return `${(hours / 24).toFixed(1)}d`;
+}
+
+function metricPercent(value: number | null): string {
+  return value == null ? "—" : `${Math.round(value * 100)}%`;
+}
+
+function ReportsView({ isHead }: { isHead: boolean }) {
+  const [data, setData] = useState<AnalyticsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const result = await apiFetch<AnalyticsResponse>("/api/reports?days=30");
+    setLoading(false);
+    if (result.data) setData(result.data);
+    else setError(friendlyError(result.error) ?? "Failed to load reports");
+  }, []);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { void load(); }, [load]);
+
+  if (loading) return <div className="ma-center-inline"><div className="ma-spinner" /></div>;
+  if (error) return <div className="ma-error" role="alert">{error}<button onClick={load}>Retry</button></div>;
+  if (!data) return null;
+  const metric = data.metrics;
+  const maxThroughput = Math.max(metric.created, metric.completed, 1);
+
+  return (
+    <div className="ma-reports">
+      <div className="ma-section-head">
+        <div>
+          <span className="ma-eyebrow">Operational visibility</span>
+          <h1>{isHead ? "Team reports" : "My reports"}</h1>
+        </div>
+        <span className="ma-window-chip">Last 30 days</span>
+      </div>
+
+      <section className="ma-report-card">
+        <h3>Created vs completed</h3>
+        <div className="ma-comparison-row"><span>Created</span><strong>{metric.created}</strong></div>
+        <div className="ma-bar"><span style={{ width: `${metric.created / maxThroughput * 100}%` }} /></div>
+        <div className="ma-comparison-row"><span>Completed</span><strong>{metric.completed}</strong></div>
+        <div className="ma-bar success"><span style={{ width: `${metric.completed / maxThroughput * 100}%` }} /></div>
+      </section>
+
+      <div className="ma-report-grid">
+        <div className="ma-report-stat"><span>Carry-over</span><strong>{metric.carryOver}</strong></div>
+        <div className="ma-report-stat danger"><span>Current overdue</span><strong>{metric.currentOverdue}</strong></div>
+        <div className="ma-report-stat"><span>On-time</span><strong>{metricPercent(metric.onTimeCompletionRate)}</strong></div>
+        <div className="ma-report-stat"><span>Revision rate</span><strong>{metricPercent(metric.revisionRate)}</strong></div>
+        <div className="ma-report-stat"><span>Deadline requests</span><strong>{metric.deadlineChangeRequests}</strong></div>
+        <div className="ma-report-stat"><span>Avg cycle</span><strong>{metricDuration(metric.averageCycleHours)}</strong></div>
+      </div>
+
+      <section className="ma-report-card">
+        <h3>Current workload</h3>
+        <div className="ma-workload-metrics">
+          <span>Open <strong>{metric.workload.open}</strong></span>
+          <span>In progress <strong>{metric.workload.inProgress}</strong></span>
+          <span>Today <strong>{metric.workload.dueToday}</strong></span>
+          <span>Next 48h <strong>{metric.workload.dueNext48h}</strong></span>
+          <span>High <strong>{metric.workload.highPriority}</strong></span>
+          <span className="danger">Overdue <strong>{metric.workload.overdue}</strong></span>
+          <span>Blocked <strong>{metric.workload.blocked}</strong></span>
+          <span>Review <strong>{metric.workload.review}</strong></span>
+        </div>
+      </section>
+
+      {(metric.posting.created > 0 || metric.posting.currentOpen > 0) && (
+        <section className="ma-report-card">
+          <h3>#posting workflow</h3>
+          <div className="ma-workload-metrics">
+            <span>Created <strong>{metric.posting.created}</strong></span>
+            <span>Completed <strong>{metric.posting.completed}</strong></span>
+            <span>Current open <strong>{metric.posting.currentOpen}</strong></span>
+          </div>
+        </section>
+      )}
+
+      <section className="ma-report-card">
+        <h3>Average time in status</h3>
+        <div className="ma-status-times">
+          {(["ASSIGNED", "IN_PROGRESS", "BLOCKED", "REVIEW", "REVISION"] as TaskStatus[]).map((status) => (
+            <div key={status}>
+              <span><i className={`ma-status-dot s-${status.toLowerCase()}`} />{STATUS_LABELS[status]}</span>
+              <strong>{metricDuration(metric.averageStatusHours[status] ?? null)}</strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {isHead && data.team.length > 0 && (
+        <section className="ma-section">
+          <h3>Team breakdown</h3>
+          <div className="ma-analytics-team">
+            {data.team.map((row) => (
+              <article className="ma-employee-analytics" key={row.user.id}>
+                <div className="ma-section-head"><strong>{row.user.displayName}</strong><span className="ma-muted">{ROLE_LABELS[row.user.role]}</span></div>
+                <div className="ma-employee-numbers">
+                  <span>Done <b>{row.metrics.completed}</b></span>
+                  <span>On time <b>{row.metrics.onTimeCompleted}</b></span>
+                  <span>Open <b>{row.workload.open}</b></span>
+                  <span className={row.workload.overdue ? "danger" : ""}>Overdue <b>{row.workload.overdue}</b></span>
+                  <span>Revisions <b>{row.metrics.revisionCount}</b></span>
+                  <span>DL changes <b>{row.metrics.deadlineChangeRequests}</b></span>
+                  <span>Avg cycle <b>{metricDuration(row.metrics.averageCycleHours)}</b></span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
 // ─── Task Detail Panel ────────────────────────────────────────────────────────
 
 function TaskDetailPanel({
@@ -1050,6 +1229,13 @@ function TaskDetailPanel({
   const [showDLRequest, setShowDLRequest] = useState(false);
   const [dlDate, setDlDate] = useState("");
   const [dlReason, setDlReason] = useState("");
+  const [checklistPendingId, setChecklistPendingId] = useState<string | null>(null);
+  const [showRecurrenceForm, setShowRecurrenceForm] = useState(false);
+  const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurringDefinition["frequency"]>("WEEKDAYS");
+  const [recurrenceWeekday, setRecurrenceWeekday] = useState(1);
+  const [recurrenceDay, setRecurrenceDay] = useState(1);
+  const [recurrenceTime, setRecurrenceTime] = useState("09:00");
+  const [recurrenceEnd, setRecurrenceEnd] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -1127,6 +1313,75 @@ function TaskDetailPanel({
     onRefresh();
   };
 
+  const toggleChecklist = async (itemId: string) => {
+    setChecklistPendingId(itemId);
+    setActionError(null);
+    const { data, error: e } = await apiFetch<{ postingChecklist: PostingChecklist }>(
+      `/api/checklist-items/${itemId}/toggle`, { method: "POST" }
+    );
+    setChecklistPendingId(null);
+    if (e) { setActionError(friendlyError(e)); return; }
+    if (data?.postingChecklist) {
+      setDetail((previous) => previous ? { ...previous, postingChecklist: data.postingChecklist } : previous);
+    }
+  };
+
+  const openRecurrenceForm = () => {
+    const recurrence = detail?.recurringDefinition;
+    if (recurrence) {
+      setRecurrenceFrequency(recurrence.frequency);
+      setRecurrenceWeekday(recurrence.weekday ?? 1);
+      setRecurrenceDay(recurrence.dayOfMonth ?? 1);
+      setRecurrenceTime(recurrence.localTime);
+      setRecurrenceEnd(recurrence.endsOn ?? "");
+    }
+    setShowRecurrenceForm(true);
+  };
+
+  const saveRecurrence = async () => {
+    if (!task || !recurrenceTime) return;
+    setActionPending(true);
+    setActionError(null);
+    const existing = detail?.recurringDefinition;
+    const payload = {
+      frequency: recurrenceFrequency,
+      weekday: recurrenceFrequency === "WEEKLY" ? recurrenceWeekday : null,
+      dayOfMonth: recurrenceFrequency === "MONTHLY" ? recurrenceDay : null,
+      localTime: recurrenceTime,
+      endsOn: recurrenceEnd || null,
+    };
+    const { data, error: e } = await apiFetch<{ recurringDefinition: RecurringDefinition }>(
+      `/api/tasks/${existing?.id ?? task.id}/recurrence`, {
+        method: existing ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }
+    );
+    setActionPending(false);
+    if (e) { setActionError(friendlyError(e)); return; }
+    if (data?.recurringDefinition) {
+      setDetail((previous) => previous ? { ...previous, recurringDefinition: data.recurringDefinition } : previous);
+      setShowRecurrenceForm(false);
+    }
+  };
+
+  const recurrenceAction = async (action: "PAUSE" | "RESUME" | "STOP") => {
+    const recurrence = detail?.recurringDefinition;
+    if (!recurrence) return;
+    setActionPending(true);
+    setActionError(null);
+    const { data, error: e } = await apiFetch<{ recurringDefinition: RecurringDefinition }>(
+      `/api/tasks/${recurrence.id}/recurrence`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action }),
+      }
+    );
+    setActionPending(false);
+    if (e) { setActionError(friendlyError(e)); return; }
+    if (data?.recurringDefinition) {
+      setDetail((previous) => previous ? { ...previous, recurringDefinition: data.recurringDefinition } : previous);
+    }
+  };
+
   const task = detail?.task;
   const events = detail?.events ?? [];
   const dlRequests = detail?.deadlineRequests ?? [];
@@ -1136,16 +1391,20 @@ function TaskDetailPanel({
   const isCreator = task?.creatorId === currentUser.id;
   const isHead = currentUser.role === "HEAD_OF_MARKETING";
   const pendingDL = dlRequests.filter((r) => r.status === "PENDING");
+  const postingChecklist = detail?.postingChecklist;
+  const postingComplete = !postingChecklist || postingChecklist.items.every((item) => item.isCompleted);
+  const recurringDefinition = detail?.recurringDefinition;
+  const canManageRecurrence = Boolean(task && (isHead || task.creatorId === currentUser.id || recurringDefinition?.createdBy === currentUser.id));
 
   const actions: { label: string; action: string; variant?: string }[] = [];
   if (task) {
     if (task.status === "ASSIGNED" && isAssignee) actions.push({ label: "Accept", action: "ACCEPT" });
-    if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
+    if (task.status === "IN_PROGRESS" && isAssignee && postingComplete) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
     if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Block", action: "_block", variant: "warn" });
     if (task.status === "BLOCKED" && isAssignee) actions.push({ label: "Resume", action: "RESUME" });
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Approve", action: "APPROVE" });
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Request Revision", action: "_revision", variant: "warn" });
-    if (task.status === "REVISION" && isAssignee) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
+    if (task.status === "REVISION" && isAssignee && postingComplete) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
     if (!isTerminal(task.status) && (isCreator || isHead)) actions.push({ label: "Cancel", action: "CANCEL", variant: "danger" });
     if (isTerminal(task.status) && isHead) actions.push({ label: "Reopen", action: "REOPEN" });
   }
@@ -1183,6 +1442,33 @@ function TaskDetailPanel({
               <dt>Deadline</dt><dd>{fmtDateTime(task.deadline)}</dd>
               {task.blockedReason && <><dt>Blocked reason</dt><dd className="ma-overdue-text">{task.blockedReason}</dd></>}
             </dl>
+
+            {postingChecklist && (
+              <section className="ma-checklist-card" aria-labelledby="posting-checklist-title">
+                <div className="ma-section-head">
+                  <div>
+                    <h3 id="posting-checklist-title">Posting checklist</h3>
+                    <span className="ma-muted">{postingChecklist.items.filter((item) => item.isCompleted).length} / {postingChecklist.items.length} complete</span>
+                  </div>
+                  {postingComplete && <span className="ma-complete-chip">Complete</span>}
+                </div>
+                <div className="ma-checklist-items">
+                  {postingChecklist.items.map((item) => (
+                    <button
+                      key={item.id}
+                      className={item.isCompleted ? "complete" : ""}
+                      disabled={!isAssignee || !["IN_PROGRESS", "REVISION"].includes(task.status) || checklistPendingId !== null}
+                      onClick={() => toggleChecklist(item.id)}
+                    >
+                      <span aria-hidden="true">{item.isCompleted ? "✓" : "○"}</span>{item.label}
+                    </button>
+                  ))}
+                </div>
+                {!postingComplete && isAssignee && (
+                  <p className="ma-muted">Complete all platforms to enable Send to Review.</p>
+                )}
+              </section>
+            )}
 
             {/* Deadline requests */}
             {pendingDL.length > 0 && (
@@ -1307,6 +1593,55 @@ function TaskDetailPanel({
                 ) : (
                   <button className="ma-btn secondary" onClick={() => setShowDLRequest(true)}>Request deadline change</button>
                 )}
+              </section>
+            )}
+
+            {canManageRecurrence && (
+              <section className="ma-section">
+                <h3>Recurring task</h3>
+                {showRecurrenceForm ? (
+                  <div className="ma-block-form">
+                    <label htmlFor="recurrence-frequency">Schedule</label>
+                    <select id="recurrence-frequency" value={recurrenceFrequency} onChange={(event) => setRecurrenceFrequency(event.target.value as RecurringDefinition["frequency"])}>
+                      <option value="WEEKDAYS">Daily — Mon–Fri</option>
+                      <option value="WEEKLY">Weekly</option>
+                      <option value="MONTHLY">Monthly</option>
+                    </select>
+                    {recurrenceFrequency === "WEEKLY" && <>
+                      <label htmlFor="recurrence-weekday">Weekday</label>
+                      <select id="recurrence-weekday" value={recurrenceWeekday} onChange={(event) => setRecurrenceWeekday(Number(event.target.value))}>
+                        {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((label, index) => <option key={label} value={index + 1}>{label}</option>)}
+                      </select>
+                    </>}
+                    {recurrenceFrequency === "MONTHLY" && <>
+                      <label htmlFor="recurrence-day">Day of month</label>
+                      <input id="recurrence-day" type="number" min="1" max="31" value={recurrenceDay} onChange={(event) => setRecurrenceDay(Number(event.target.value))} />
+                      <span className="ma-muted">Shorter months use their last day.</span>
+                    </>}
+                    <label htmlFor="recurrence-time">Time</label>
+                    <input id="recurrence-time" type="time" value={recurrenceTime} onChange={(event) => setRecurrenceTime(event.target.value)} />
+                    <label htmlFor="recurrence-end">End date (optional)</label>
+                    <input id="recurrence-end" type="date" value={recurrenceEnd} onChange={(event) => setRecurrenceEnd(event.target.value)} />
+                    <div className="ma-form-row">
+                      <button className="ma-btn primary" disabled={actionPending || !recurrenceTime} onClick={saveRecurrence}>Save future schedule</button>
+                      <button className="ma-btn secondary" onClick={() => setShowRecurrenceForm(false)}>Cancel</button>
+                    </div>
+                  </div>
+                ) : recurringDefinition ? (
+                  <div className="ma-recurrence-card">
+                    <div><strong>{recurringDefinition.frequency === "WEEKDAYS" ? "Every weekday" : recurringDefinition.frequency === "WEEKLY" ? `Every ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][(recurringDefinition.weekday ?? 1) - 1]}` : `Every month on day ${recurringDefinition.dayOfMonth}`}</strong><span> at {recurringDefinition.localTime}</span></div>
+                    <span className={`ma-recurrence-status ${recurringDefinition.status.toLowerCase()}`}>{recurringDefinition.status}</span>
+                    {recurringDefinition.nextOccurrenceAt && <span className="ma-muted">Next: {fmtDateTime(recurringDefinition.nextOccurrenceAt)}</span>}
+                    {recurringDefinition.status !== "STOPPED" && <div className="ma-action-row">
+                      <button className="ma-btn secondary" disabled={actionPending} onClick={openRecurrenceForm}>Edit future</button>
+                      <button className="ma-btn secondary" disabled={actionPending} onClick={() => recurrenceAction(recurringDefinition.status === "PAUSED" ? "RESUME" : "PAUSE")}>{recurringDefinition.status === "PAUSED" ? "Resume" : "Pause"}</button>
+                      <button className="ma-btn danger" disabled={actionPending} onClick={() => recurrenceAction("STOP")}>Stop</button>
+                    </div>}
+                  </div>
+                ) : (
+                  <button className="ma-btn secondary" onClick={openRecurrenceForm}>Make recurring</button>
+                )}
+                {actionError && <div className="ma-error-inline" role="alert">{actionError}</div>}
               </section>
             )}
 

@@ -54,12 +54,16 @@ Secrets and environment-specific identifiers come from environment variables. Se
 
 ## Notifications and scheduling
 
-Future scheduled handlers query PostgreSQL for due work and record delivery/idempotency markers before sending. The architecture can use Vercel Cron or Supabase Cron later; the product does not need Redis or a queue for its volume. All schedule calculations use `Asia/Tashkent`, while database timestamps remain `timestamptz`/UTC.
+Protected Vercel Cron handlers run daily summaries at 03:00/14:00 UTC, the Sunday report at 05:00 UTC, and recurrence generation every five minutes. Vercel sends `CRON_SECRET` in the Authorization header; handlers compare it in constant time and expose no secret values. The product needs no Redis or queue at this volume.
+
+Report deliveries use a unique `(report_type, interval_key, recipient_user_id)` database ledger. Only active rows created by real Telegram `/start` onboarding are eligible. One recipient failure does not abort other recipients. Recurring generation locks and advances each definition in the same transaction that creates its occurrence, with a second unique constraint on `(recurring_definition_id, scheduled_occurrence_at)`.
+
+All schedule calculations use `Asia/Tashkent` (fixed UTC+05:00), while database timestamps remain `timestamptz`/UTC.
 
 ## Deployment
 
 The expected production layout is a single Next.js deployment (for example, Vercel) plus one managed Supabase project and a Telegram HTTPS webhook pointed at the deployment. Migrations are applied in order during a controlled release. No production resources are created during Sprint 0.
 
-## Deferred data structures
+## Extended data structures
 
-Subtasks, checklist/templates, notification delivery markers, and Telegram message links are deferred until their sprints. The task/event design allows them to reference task/user IDs without altering transport or permission boundaries.
+`task_checklists` and `task_checklist_items` persist the deterministic Posting workflow. `recurring_definitions` stores future schedule/template state while generated tasks remain ordinary `tasks` rows. `report_deliveries` is the report idempotency ledger. All new public tables are RLS-enabled, browser roles are revoked, and only the trusted `service_role` receives the minimum required grants.

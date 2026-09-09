@@ -72,3 +72,12 @@ Each sprint is intentionally bounded. Later-sprint work should not leak into an 
 
 - Complete security and RLS review, rate limits, webhook operational controls, monitoring, backups, restore drills, and failure handling.
 - Add end-to-end tests, accessibility checks, deployment runbooks, and production readiness documentation.
+
+## Fast-track next product phase — authorized 2026-09-09
+
+The user explicitly reordered and activated this scope after the production MVP: daily summaries, weekly summary, `#posting` checklist, recurring tasks, then workload/bottleneck analytics. It is delivered as one compatible increment on `fast-track/mvp`; Telegram's positional task format remains unchanged.
+
+- Daily/weekly: protected Vercel Cron, per-recipient delivery idempotency, employee isolation, Head team rollups.
+- Posting: deterministic creation-time tag detection, persistent four-item checklist, audited toggles, transactional REVIEW gate, Telegram inline controls, Mini App card.
+- Recurring: Mini App schedule controls, immutable generated occurrences, atomic deduplication, pause/resume/edit/stop.
+- Analytics: 30-day factual counts and event-derived durations, personal/team authorization, compact mobile Reports tab, no workload/KPI score.

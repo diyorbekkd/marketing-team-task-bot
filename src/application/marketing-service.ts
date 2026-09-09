@@ -11,6 +11,8 @@ import type {
 } from "./ports/notification-dispatcher";
 import { ApplicationError } from "./errors";
 import { z } from "zod";
+import { nextOccurrence, RecurrenceInputSchema, RecurrenceUpdateSchema } from "@/domain/recurrence";
+import { calculateAnalytics, workloadMetrics } from "@/domain/reporting";
 
 const DeadlineRequestInputSchema = z.object({
   requestedDeadline: z.string().datetime({ offset: true }),
@@ -205,9 +207,19 @@ export class MarketingService {
 
   async getTaskDetails(actor: User, taskId: string) {
     const task = await this.requireVisibleTask(actor, taskId);
-    const events = await this.repository.listTaskEvents(taskId);
-    const requests = (await this.repository.listDeadlineChangeRequests()).filter((request) => request.taskId === taskId);
-    return { task, events, deadlineRequests: requests };
+    const [events, requests, postingChecklist, recurringDefinition] = await Promise.all([
+      this.repository.listTaskEvents(taskId),
+      this.repository.listDeadlineChangeRequests(),
+      this.repository.getPostingChecklist(taskId),
+      this.repository.getRecurringDefinitionForTask(taskId),
+    ]);
+    return {
+      task,
+      events,
+      deadlineRequests: requests.filter((request) => request.taskId === taskId),
+      postingChecklist,
+      recurringDefinition,
+    };
   }
 
   async performTaskAction(actor: User, taskId: string, input: unknown): Promise<Task> {
@@ -227,6 +239,13 @@ export class MarketingService {
     }
     if (reviewerAction && !isHead(actorContext) && !isCreator(actorContext, access)) {
       throw new ApplicationError("FORBIDDEN", "Only the creator or Head may review this task.");
+    }
+
+    if (action.action === "SUBMIT_REVIEW") {
+      const checklist = await this.repository.getPostingChecklist(taskId);
+      if (checklist && checklist.items.some((item) => !item.isCompleted)) {
+        throw new ApplicationError("INVALID_INPUT", "Complete every posting checklist item before sending to review.");
+      }
     }
     if (action.action === "CANCEL" && !isHead(actorContext) && !isCreator(actorContext, access)) {
       throw new ApplicationError("FORBIDDEN", "Only the creator or Head may cancel this task.");
@@ -278,6 +297,162 @@ export class MarketingService {
     }
 
     return transitionedTask;
+  }
+
+  async togglePostingChecklistItem(actor: User, itemId: string) {
+    const checklist = await this.repository.getPostingChecklistByItemId(itemId);
+    if (!checklist) throw new ApplicationError("NOT_FOUND", "Posting checklist item not found.");
+    const task = await this.requireVisibleTask(actor, checklist.taskId);
+    if (task.assigneeId !== actor.id) {
+      throw new ApplicationError("FORBIDDEN", "Only the assignee may update the posting checklist.");
+    }
+    await this.repository.togglePostingChecklistItem({ itemId, actorId: actor.id });
+    return this.repository.getPostingChecklist(checklist.taskId);
+  }
+
+  async createRecurrence(actor: User, taskId: string, input: unknown, now = new Date()) {
+    const parsed = RecurrenceInputSchema.parse(input);
+    const task = await this.requireVisibleTask(actor, taskId);
+    if (!isHead(actorFromUser(actor)) && task.creatorId !== actor.id) {
+      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may make it recurring.");
+    }
+    if (await this.repository.getRecurringDefinitionForTask(taskId)) {
+      throw new ApplicationError("CONFLICT", "This task already has a recurring definition.");
+    }
+    const next = nextOccurrence(parsed, now);
+    if (!next) throw new ApplicationError("INVALID_INPUT", "The recurrence end date leaves no future occurrence.");
+    return this.repository.createRecurringDefinition({
+      sourceTaskId: task.id,
+      createdBy: actor.id,
+      title: task.title,
+      description: task.description,
+      priority: task.priority,
+      assigneeId: task.assigneeId,
+      frequency: parsed.frequency,
+      weekday: parsed.frequency === "WEEKLY" ? parsed.weekday ?? null : null,
+      dayOfMonth: parsed.frequency === "MONTHLY" ? parsed.dayOfMonth ?? null : null,
+      localTime: parsed.localTime,
+      endsOn: parsed.endsOn ?? null,
+      nextOccurrenceAt: next,
+    });
+  }
+
+  async updateRecurrence(actor: User, definitionId: string, input: unknown, now = new Date()) {
+    const parsed = RecurrenceUpdateSchema.parse(input);
+    const definition = await this.repository.getRecurringDefinition(definitionId);
+    if (!definition) throw new ApplicationError("NOT_FOUND", "Recurring definition not found.");
+    if (!isHead(actorFromUser(actor)) && definition.createdBy !== actor.id) {
+      throw new ApplicationError("FORBIDDEN", "Only the recurrence creator or Head may manage it.");
+    }
+    if (definition.status === "STOPPED") {
+      throw new ApplicationError("CONFLICT", "A stopped recurrence cannot be changed or resumed.");
+    }
+
+    const frequency = parsed.frequency ?? definition.frequency;
+    const weekday = frequency === "WEEKLY" ? parsed.weekday ?? definition.weekday : null;
+    const dayOfMonth = frequency === "MONTHLY" ? parsed.dayOfMonth ?? definition.dayOfMonth : null;
+    const localTime = parsed.localTime ?? definition.localTime;
+    const endsOn = parsed.endsOn !== undefined ? parsed.endsOn : definition.endsOn;
+    if (frequency === "WEEKLY" && weekday == null) {
+      throw new ApplicationError("INVALID_INPUT", "Weekday is required for weekly recurrence.");
+    }
+    if (frequency === "MONTHLY" && dayOfMonth == null) {
+      throw new ApplicationError("INVALID_INPUT", "Day of month is required for monthly recurrence.");
+    }
+
+    const status = parsed.action === "PAUSE" ? "PAUSED"
+      : parsed.action === "STOP" ? "STOPPED"
+      : parsed.action === "RESUME" ? "ACTIVE"
+      : definition.status;
+    const scheduleChanged = parsed.frequency !== undefined || parsed.weekday !== undefined
+      || parsed.dayOfMonth !== undefined || parsed.localTime !== undefined || parsed.endsOn !== undefined;
+    const next = status === "STOPPED" ? null
+      : status === "PAUSED" ? definition.nextOccurrenceAt
+      : (scheduleChanged || parsed.action === "RESUME")
+          ? nextOccurrence({ frequency, weekday, dayOfMonth, localTime, endsOn }, now)
+          : definition.nextOccurrenceAt;
+
+    return this.repository.updateRecurringDefinition({
+      id: definition.id, frequency, weekday, dayOfMonth, localTime, endsOn, status, nextOccurrenceAt: next,
+    });
+  }
+
+  async generateDueRecurringTasks(now = new Date()) {
+    const definitions = await this.repository.listDueRecurringDefinitions(now.toISOString());
+    let generated = 0;
+    for (const definition of definitions) {
+      let scheduled = definition.nextOccurrenceAt;
+      let iterations = 0;
+      while (scheduled && new Date(scheduled).getTime() <= now.getTime() && iterations < 100) {
+        const next = nextOccurrence(definition, new Date(scheduled));
+        const task = await this.repository.generateRecurringOccurrence({
+          definitionId: definition.id,
+          scheduledOccurrenceAt: scheduled,
+          nextOccurrenceAt: next,
+        });
+        if (!task) break;
+        generated += 1;
+        const [creator, assignee] = await Promise.all([
+          this.repository.getUserById(task.creatorId),
+          this.repository.getUserById(task.assigneeId),
+        ]);
+        if (creator && assignee?.isActive) {
+          try {
+            const notification = await this.notificationDispatcher.notifyAssignment({ task, creator, assignee });
+            const log = {
+              event: notification.status === "SENT"
+                ? "recurring_assignment_notification_sent"
+                : "recurring_assignment_notification_failed",
+              taskId: task.id,
+              definitionId: definition.id,
+              ...(notification.status === "FAILED" ? { reason: notification.reason } : {}),
+            };
+            if (notification.status === "SENT") console.info(JSON.stringify(log));
+            else console.warn(JSON.stringify(log));
+          } catch {
+            console.warn(JSON.stringify({
+              event: "recurring_assignment_notification_failed",
+              taskId: task.id,
+              definitionId: definition.id,
+              reason: "DISPATCH_THREW",
+            }));
+          }
+        } else {
+          console.warn(JSON.stringify({
+            event: "recurring_assignment_notification_skipped",
+            taskId: task.id,
+            definitionId: definition.id,
+            reason: "ASSIGNEE_INACTIVE_OR_MISSING",
+          }));
+        }
+        scheduled = next;
+        iterations += 1;
+      }
+    }
+    return { definitions: definitions.length, generated };
+  }
+
+  async getAnalytics(actor: User, windowDays = 30, now = new Date()) {
+    const days = z.number().int().min(1).max(365).parse(windowDays);
+    const [tasks, events, requests, users] = await Promise.all([
+      this.repository.listTasks(), this.repository.listAllTaskEvents(),
+      this.repository.listDeadlineChangeRequests(), this.repository.listUsers(),
+    ]);
+    const isTeamView = isHead(actorFromUser(actor));
+    const metrics = calculateAnalytics({
+      tasks, events, deadlineRequests: requests, now, windowDays: days,
+      userId: isTeamView ? undefined : actor.id,
+    });
+    const team = isTeamView
+      ? users.filter((user) => user.isActive).map((user) => ({
+          user,
+          metrics: calculateAnalytics({
+            tasks, events, deadlineRequests: requests, now, windowDays: days, userId: user.id,
+          }),
+          workload: workloadMetrics(tasks, now, user.id),
+        }))
+      : [];
+    return { generatedAt: now.toISOString(), metrics, team };
   }
 
   async requestDeadlineChange(actor: User, taskId: string, input: unknown): Promise<DeadlineChangeRequest> {

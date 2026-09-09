@@ -51,6 +51,7 @@ const TeamBootstrapConfigSchema = z.object({
   TELEGRAM_GROUP_ID: negativeTelegramInteger,
   HEAD_TELEGRAM_USER_ID: positiveTelegramInteger,
 });
+const CronConfigSchema = z.object({ CRON_SECRET: z.string().min(16).max(512) });
 
 export class ConfigurationError extends Error {
   readonly code = "INVALID_CONFIGURATION";
@@ -105,4 +106,9 @@ export function getTeamBootstrapConfig(env: Environment = process.env) {
     groupId: parsed.TELEGRAM_GROUP_ID,
     headTelegramUserId: parsed.HEAD_TELEGRAM_USER_ID,
   } as const;
+}
+
+export function getCronConfig(env: Environment = process.env) {
+  const parsed = parseConfig("scheduled jobs", CronConfigSchema, env);
+  return { secret: parsed.CRON_SECRET } as const;
 }

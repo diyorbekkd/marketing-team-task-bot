@@ -142,14 +142,40 @@ Scheduled reports use `Asia/Tashkent`:
 
 Head receives team-wide reports; other employees receive only their own. Head can inspect all activity but should not receive a push for every small edit. Important pushes include overdue, blocked, deadline/reassignment requests, review, revision, and significant high-priority issues.
 
+Scheduled report metrics are deterministic:
+
+- `created`: task `created_at` is inside the reporting interval;
+- `completed`: task `completed_at` is inside the interval;
+- `on-time completed`: `completed_at <= deadline`, using the final approved deadline;
+- `overdue during period`: deadline is inside the interval and completion was late or has not happened;
+- `current overdue`: deadline is before report generation and status is not `DONE` or `CANCELLED`;
+- `carry-over`: task was created before the period end and remains open at that end;
+- `revision`: `REVISION_REQUESTED` events inside the interval;
+- `blocked`: `TASK_BLOCKED` events inside a weekly interval; daily summaries show current blocked work;
+- `deadline changes`: approved requests resolved inside the weekly interval. Analytics counts all requests created inside its window.
+
+The weekly interval starts Monday 00:00 Asia/Tashkent and ends when the Sunday report runs. Morning summaries are delivered even when empty because they explicitly confirm no deadline today. Empty evening and weekly reports are skipped. A database ledger deduplicates every recipient and interval.
+
+## Posting checklist
+
+An exact, case-insensitive `#posting` token anywhere in a new task title or description attaches a persistent checklist: Telegram, Instagram, YouTube, and X / Twitter. Longer tags such as `#postings` do not match. Checklist state and every toggle are persisted and audited.
+
+The assignee may toggle items while a task is `IN_PROGRESS` or `REVISION`. Creator and Head may inspect but cannot silently complete the assignee's checklist. Application logic and the database transition both reject REVIEW until every item is complete. Once attached, a checklist remains attached even if later text edits remove `#posting`.
+
+## Recurring tasks
+
+Creator or Head can turn a task into a future recurrence from Task Detail without adding lines to Telegram shorthand. Supported schedules are Monday–Friday, weekly on an ISO weekday, and monthly on days 1–31, with a local time and optional inclusive end date. Asia/Tashkent remains fixed at UTC+05:00. If a requested monthly day does not exist, that month's final day is used.
+
+Every occurrence creates a new ordinary task with copied title, description, assignee, priority, and Posting behavior. It has its own history and references the recurring definition. `(recurring_definition_id, scheduled_occurrence_at)` is unique, and generation advances the definition in the same transaction, so overlapping scheduler runs cannot create duplicates. Pause, resume, schedule edits, and stop affect only future occurrences. Stop is final; existing tasks never change.
+
 ## Workload and analytics
 
 Workload uses factual counts rather than effort points or invented utilization percentages: open, in progress, high priority, due today, due within 48 hours, overdue, blocked, and in review.
 
-The event model must later support created versus completed work, carry-over, on-time completion, overdue rate/current overdue, blocked duration, time in status, cycle time, deadline extension requests, revisions, completions by employee, open workload, and repeated status bottlenecks.
+The Reports view uses a 30-day window by default. Employee data is attributed by assignee. Cycle time is `created_at` to `completed_at`. Status averages clamp history-derived status segments to the selected interval and average those segments. Revision rate is the share of tasks completed in the window that had at least one revision event. Review waiting and blocked duration are the corresponding status-segment averages. These are operational facts, not performance, salary, utilization, or KPI scores.
 
 ## Deferred features and exclusions
 
-Subtasks, simple checklist templates, and lightweight Telegram message relay are planned but not implemented in Sprint 0. Relay should use Telegram copy/forward semantics and should not require permanent application storage of the message body or file.
+Subtasks and lightweight Telegram message relay remain planned. Relay should use Telegram copy/forward semantics and should not require permanent application storage of the message body or file.
 
-MVP explicitly excludes AI features and summaries, recurring tasks, categories, advanced project management, effort points, time tracking, internal task chat, Google Calendar, Notion, Bitrix, Gantt charts, salary/KPI features, gamification, and a generalized workflow engine.
+MVP explicitly excludes AI features, categories, advanced project management, effort points, time tracking, internal task chat, Google Calendar, Notion, Bitrix, Gantt charts, salary/KPI features, gamification, and a generalized workflow engine.

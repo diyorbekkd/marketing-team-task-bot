@@ -8,6 +8,85 @@
   margin: 0 auto;
 }
 
+/* ── Posting checklist, recurring tasks, and reports ─────────────────────── */
+
+.ma-checklist-card,
+.ma-report-card,
+.ma-employee-analytics,
+.ma-recurrence-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+}
+
+.ma-checklist-card h3,
+.ma-report-card h3 { margin: 0 0 4px; font-size: 0.82rem; color: var(--ink); }
+.ma-complete-chip,
+.ma-window-chip,
+.ma-recurrence-status {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: #15803d;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+.ma-checklist-items { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.ma-checklist-items button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.86rem;
+  text-align: left;
+  cursor: pointer;
+}
+.ma-checklist-items button.complete { color: #15803d; background: var(--success-soft); }
+.ma-checklist-items button:disabled { cursor: default; opacity: 0.72; }
+.ma-checklist-card p { margin: 10px 0 0; }
+
+.ma-recurrence-card { display: flex; flex-direction: column; gap: 9px; }
+.ma-recurrence-status { width: fit-content; }
+.ma-recurrence-status.paused { background: var(--warning-soft); color: #92400e; }
+.ma-recurrence-status.stopped { background: var(--danger-soft); color: #b91c1c; }
+
+.ma-reports { display: flex; flex-direction: column; gap: 14px; }
+.ma-reports h1 { margin: 2px 0 0; font-size: 1.4rem; color: var(--ink); }
+.ma-window-chip { background: var(--primary-soft); color: var(--primary-dark); white-space: nowrap; }
+.ma-comparison-row { display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.82rem; }
+.ma-bar { height: 7px; margin-top: 5px; overflow: hidden; border-radius: 999px; background: var(--paper); }
+.ma-bar span { display: block; height: 100%; border-radius: inherit; background: var(--primary); }
+.ma-bar.success span { background: var(--success); }
+.ma-report-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ma-report-stat { display: flex; flex-direction: column; gap: 5px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--card); }
+.ma-report-stat span { font-size: 0.72rem; color: var(--muted); }
+.ma-report-stat strong { font-size: 1.2rem; color: var(--ink); }
+.ma-report-stat.danger strong, .danger { color: var(--danger) !important; }
+.ma-workload-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.ma-workload-metrics span { display: flex; justify-content: space-between; padding: 8px 9px; border-radius: 9px; background: var(--paper); font-size: 0.76rem; color: var(--muted); }
+.ma-workload-metrics strong { color: var(--ink); }
+.ma-status-times { display: flex; flex-direction: column; margin-top: 8px; }
+.ma-status-times > div { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-top: 1px solid var(--line); font-size: 0.8rem; }
+.ma-status-times > div:first-child { border-top: 0; }
+.ma-status-times span { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.ma-analytics-team { display: flex; flex-direction: column; gap: 8px; }
+.ma-employee-analytics { display: flex; flex-direction: column; gap: 10px; }
+.ma-employee-numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.ma-employee-numbers span { display: flex; justify-content: space-between; padding: 7px 8px; border-radius: 8px; background: var(--paper); color: var(--muted); font-size: 0.72rem; }
+.ma-employee-numbers b { color: var(--ink); }
+
+@media (min-width: 520px) {
+  .ma-report-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ma-workload-metrics, .ma-employee-numbers { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
 /* ── Topbar ────────────────────────────────────────────────────────────────── */
 
 .ma-topbar {

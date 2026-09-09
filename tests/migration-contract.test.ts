@@ -13,6 +13,10 @@ const usernameIntegrityMigration = readFileSync(
   new URL("../supabase/migrations/20260906163500_telegram_username_integrity.sql", import.meta.url),
   "utf8",
 );
+const nextPhaseMigration = readFileSync(
+  new URL("../supabase/migrations/20260909090000_next_product_phase.sql", import.meta.url),
+  "utf8",
+);
 
 describe("fast-track database workflow contract", () => {
   it("locks workflow rows and revalidates lifecycle transitions in the transaction", () => {
@@ -66,5 +70,23 @@ describe("Telegram username integrity contract", () => {
     expect(usernameIntegrityMigration).toContain("before insert or update of telegram_username");
     expect(usernameIntegrityMigration).toContain("set telegram_username = null");
     expect(usernameIntegrityMigration).toContain("old.telegram_username is distinct from new.telegram_username");
+  });
+});
+
+describe("next product phase database contract", () => {
+  it("locks down every new table and keeps report and occurrence delivery idempotent", () => {
+    for (const table of ["recurring_definitions", "task_checklists", "task_checklist_items", "report_deliveries"]) {
+      expect(nextPhaseMigration).toContain(`alter table public.${table} enable row level security`);
+      expect(nextPhaseMigration).toContain(`revoke all on table public.${table} from public, anon, authenticated`);
+    }
+    expect(nextPhaseMigration).toContain("unique (report_type, interval_key, recipient_user_id)");
+    expect(nextPhaseMigration).toContain("tasks_recurring_occurrence_unique_idx");
+  });
+
+  it("enforces posting completion and atomic recurring generation in PostgreSQL", () => {
+    expect(nextPhaseMigration).toContain("posting checklist is incomplete");
+    expect(nextPhaseMigration).toContain("create function public.toggle_posting_checklist_item");
+    expect(nextPhaseMigration).toContain("create function public.generate_recurring_task");
+    expect(nextPhaseMigration).toContain("for update;");
   });
 });

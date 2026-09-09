@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ConfigurationError,
   getAppConfig,
+  getCronConfig,
   getSupabaseConfig,
   getTeamBootstrapConfig,
   getTelegramConfig,
@@ -19,6 +20,7 @@ describe("configuration validation", () => {
       TELEGRAM_WEBHOOK_SECRET: "webhook-placeholder",
       TELEGRAM_GROUP_ID: "-1001234567890",
       HEAD_TELEGRAM_USER_ID: "123456789",
+      CRON_SECRET: "cron-secret-placeholder",
     };
 
     expect(getAppConfig(env).timezone).toBe("Asia/Tashkent");
@@ -28,6 +30,7 @@ describe("configuration validation", () => {
       groupId: "-1001234567890",
       headTelegramUserId: "123456789",
     });
+    expect(getCronConfig(env).secret).toBe("cron-secret-placeholder");
   });
 
   it("fails with the missing variable name but not secret values", () => {

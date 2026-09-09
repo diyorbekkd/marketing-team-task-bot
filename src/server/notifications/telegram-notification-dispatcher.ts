@@ -10,6 +10,7 @@ import type {
 } from "@/application/ports/notification-dispatcher";
 import type { User } from "@/domain/models";
 import { sendTelegramMessage } from "@/telegram/client";
+import type { ReportDispatcher } from "@/application/ports/report-dispatcher";
 
 interface TelegramNotificationMessage {
   readonly text: string;
@@ -151,7 +152,7 @@ function workflowMessage(input: WorkflowNotificationInput, appUrl: string): Tele
   }
 }
 
-export class TelegramNotificationDispatcher implements NotificationDispatcher {
+export class TelegramNotificationDispatcher implements NotificationDispatcher, ReportDispatcher {
   constructor(
     private readonly botToken: string,
     private readonly appUrl: string,
@@ -227,5 +228,12 @@ export class TelegramNotificationDispatcher implements NotificationDispatcher {
     }));
 
     return { deliveries };
+  }
+
+  async sendReport(recipient: User, text: string): Promise<void> {
+    if (!recipient.isActive || !/^\d+$/.test(recipient.telegramUserId)) {
+      throw new Error("Recipient is not actively Telegram-onboarded.");
+    }
+    await sendTelegramMessage(this.botToken, { chatId: recipient.telegramUserId, text });
   }
 }

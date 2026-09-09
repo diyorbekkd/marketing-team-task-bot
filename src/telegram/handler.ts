@@ -1,6 +1,7 @@
 import { ApplicationError } from "@/application/errors";
 import type { MarketingService } from "@/application/marketing-service";
 import type { Task, User } from "@/domain/models";
+import type { PostingChecklist } from "@/domain/models";
 import type { TaskAction } from "@/domain/workflow";
 import {
   TaskShorthandError,
@@ -70,22 +71,62 @@ function notificationWarning(): string {
   return "⚠️ Task saqlandi, lekin assignee'ga private xabar yuborilmadi. Assignee botga private chatda /start yuborsin.";
 }
 
+function postingChecklistMessage(taskId: string, checklist: PostingChecklist): {
+  text: string;
+  replyMarkup: TelegramOutgoingMessage["replyMarkup"];
+} {
+  const complete = checklist.items.every((item) => item.isCompleted);
+  return {
+    text: ["📤 Posting checklist", "", ...checklist.items.map((item) => `${item.isCompleted ? "✅" : "⬜"} ${item.label}`)].join("\n"),
+    replyMarkup: {
+      inline_keyboard: [
+        ...checklist.items.map((item) => [{
+          text: `${item.isCompleted ? "✅" : "⬜"} ${item.label}`,
+          callback_data: `check:${item.id}`,
+        }]),
+        ...(complete ? [[{ text: "✅ Reviewga yuborish", callback_data: `task:${taskId}:SUBMIT_REVIEW` }]] : []),
+      ],
+    },
+  };
+}
+
 export function createTelegramUpdateHandler(service: MarketingService, config: TelegramHandlerConfig) {
   return async function handle(update: TelegramUpdate): Promise<TelegramHandlerResult> {
     try {
       if (update.callback_query?.data) {
+        const checklistMatch = update.callback_query.data.match(/^check:([0-9a-f-]{36})$/i);
         const taskMatch = update.callback_query.data.match(
           /^task:([0-9a-f-]{36}):(ACCEPT|SUBMIT_REVIEW|APPROVE|REQUEST_REVISION|RESUME)$/i,
         );
         const deadlineMatch = update.callback_query.data.match(
           /^deadline:([0-9a-f-]{36}):(APPROVE|REJECT)$/i,
         );
-        if (!taskMatch && !deadlineMatch) {
+        if (!taskMatch && !deadlineMatch && !checklistMatch) {
           return { messages: [], callbackQueryId: update.callback_query.id };
         }
 
         const actor = await service.requireActorByTelegramId(String(update.callback_query.from.id));
+        if (checklistMatch) {
+          const checklist = await service.togglePostingChecklistItem(actor, checklistMatch[1]);
+          return {
+            callbackQueryId: update.callback_query.id,
+            messages: update.callback_query.message && checklist
+              ? [{ chatId: update.callback_query.message.chat.id, ...postingChecklistMessage(checklist.taskId, checklist) }]
+              : [],
+          };
+        }
         if (taskMatch) {
+          if (taskMatch[2].toUpperCase() === "SUBMIT_REVIEW") {
+            const detail = await service.getTaskDetails(actor, taskMatch[1]);
+            if (detail.postingChecklist?.items.some((item) => !item.isCompleted)) {
+              return {
+                callbackQueryId: update.callback_query.id,
+                messages: update.callback_query.message
+                  ? [{ chatId: update.callback_query.message.chat.id, ...postingChecklistMessage(taskMatch[1], detail.postingChecklist) }]
+                  : [],
+              };
+            }
+          }
           const task = await service.performTaskAction(actor, taskMatch[1], { action: taskMatch[2].toUpperCase() });
           return {
             callbackQueryId: update.callback_query.id,
@@ -200,6 +241,12 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
       if (action) {
         const taskId = text.split(/\s+/)[1];
         if (!taskId) throw new TaskShorthandError("A full task ID is required.");
+        if (action === "SUBMIT_REVIEW") {
+          const detail = await service.getTaskDetails(actor, taskId);
+          if (detail.postingChecklist?.items.some((item) => !item.isCompleted)) {
+            return { messages: [{ chatId: message.chat.id, ...postingChecklistMessage(taskId, detail.postingChecklist) }] };
+          }
+        }
         const task = await service.performTaskAction(actor, taskId, { action });
         return { messages: [{ chatId: message.chat.id, text: `Task is now ${task.status}.` }] };
       }
