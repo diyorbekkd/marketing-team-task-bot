@@ -1,5 +1,6 @@
 import type { TeamRole } from "@/domain/permissions";
 import type { TaskPriority, TaskStatus } from "@/domain/task";
+import type { ReminderType } from "@/domain/reminders";
 import type {
   DeadlineChangeRequest,
   PostingChecklist,
@@ -36,8 +37,10 @@ export interface MarketingRepository {
   getUserByTelegramId(telegramUserId: string): Promise<User | null>;
   findActiveUserByUsername(username: string): Promise<User | null>;
   listUsers(): Promise<User[]>;
-  activateUser(userId: string, role: TeamRole): Promise<User>;
-  updateUserRole(userId: string, role: TeamRole): Promise<User>;
+  activateUser(input: { userId: string; actorId: string; role: TeamRole }): Promise<User>;
+  updateUserRole(input: { userId: string; actorId: string; role: TeamRole }): Promise<User>;
+  deactivateUser(input: { userId: string; actorId: string }): Promise<User>;
+  reactivateUser(input: { userId: string; actorId: string }): Promise<User>;
 
   createTask(input: CreateTaskRecord): Promise<Task>;
   getTask(taskId: string): Promise<Task | null>;
@@ -48,6 +51,7 @@ export interface MarketingRepository {
     newStatus: TaskStatus;
     reason?: string;
   }): Promise<Task>;
+  reassignTask(input: { taskId: string; newAssigneeId: string; actorId: string }): Promise<Task>;
   listTaskEvents(taskId: string): Promise<TaskEvent[]>;
   listAllTaskEvents(): Promise<TaskEvent[]>;
   getPostingChecklist(taskId: string): Promise<PostingChecklist | null>;
@@ -72,6 +76,7 @@ export interface MarketingRepository {
   getRecurringDefinitionForTask(taskId: string): Promise<RecurringDefinition | null>;
   getRecurringDefinition(id: string): Promise<RecurringDefinition | null>;
   listDueRecurringDefinitions(now: string): Promise<RecurringDefinition[]>;
+  listRecurringDefinitionsByAssignee(assigneeId: string): Promise<RecurringDefinition[]>;
   createRecurringDefinition(input: {
     sourceTaskId: string;
     createdBy: string;
@@ -95,6 +100,8 @@ export interface MarketingRepository {
     endsOn?: string | null;
     status?: RecurrenceStatus;
     nextOccurrenceAt?: string | null;
+    pauseReason?: string | null;
+    assigneeId?: string;
   }): Promise<RecurringDefinition>;
   generateRecurringOccurrence(input: {
     definitionId: string;
@@ -113,5 +120,19 @@ export interface MarketingRepository {
     recipientUserId: string;
     status: "SENT" | "FAILED" | "SKIPPED";
     failureReason?: string;
+  }): Promise<void>;
+
+  claimReminderDelivery(input: {
+    taskId: string;
+    deadline: string;
+    reminderType: ReminderType;
+  }): Promise<boolean>;
+  completeReminderDelivery(input: {
+    taskId: string;
+    deadline: string;
+    reminderType: ReminderType;
+    status: "SENT" | "FAILED";
+    failureReason?: string;
+    metadata?: Record<string, unknown>;
   }): Promise<void>;
 }

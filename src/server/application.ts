@@ -5,9 +5,11 @@ import { getAppConfig, getTelegramConfig } from "@/server/config";
 import { TelegramNotificationDispatcher } from "@/server/notifications/telegram-notification-dispatcher";
 import { SupabaseMarketingRepository } from "@/server/repositories/supabase-marketing-repository";
 import { ReportingService } from "@/application/reporting-service";
+import { ReminderService } from "@/application/reminder-service";
 
 let service: MarketingService | undefined;
 let reportingService: ReportingService | undefined;
+let reminderService: ReminderService | undefined;
 let dispatcher: TelegramNotificationDispatcher | undefined;
 
 function getDispatcher() {
@@ -34,4 +36,11 @@ export function getReportingService(): ReportingService {
     reportingService = new ReportingService(new SupabaseMarketingRepository(), getDispatcher());
   }
   return reportingService;
+}
+
+export function getReminderService(): ReminderService {
+  if (!reminderService) {
+    reminderService = new ReminderService(new SupabaseMarketingRepository(), getDispatcher());
+  }
+  return reminderService;
 }

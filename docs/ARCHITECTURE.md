@@ -54,9 +54,11 @@ Secrets and environment-specific identifiers come from environment variables. Se
 
 ## Notifications and scheduling
 
-Protected Vercel Cron handlers run daily summaries at 03:00/14:00 UTC, the Sunday report at 05:00 UTC, and recurrence generation every five minutes. Vercel sends `CRON_SECRET` in the Authorization header; handlers compare it in constant time and expose no secret values. The product needs no Redis or queue at this volume.
+Protected Vercel Cron handlers run daily summaries at 03:00/14:00 UTC, the Sunday report at 05:00 UTC, recurrence generation every five minutes, and the deadline-reminder sweep every ten minutes. Vercel sends `CRON_SECRET` in the Authorization header; handlers compare it in constant time and expose no secret values. The product needs no Redis or queue at this volume.
 
-Report deliveries use a unique `(report_type, interval_key, recipient_user_id)` database ledger. Only active rows created by real Telegram `/start` onboarding are eligible. One recipient failure does not abort other recipients. Recurring generation locks and advances each definition in the same transaction that creates its occurrence, with a second unique constraint on `(recurring_definition_id, scheduled_occurrence_at)`.
+Report deliveries use a unique `(report_type, interval_key, recipient_user_id)` database ledger. Deadline reminders use an analogous `(task_id, deadline, reminder_type)` ledger in `task_reminder_deliveries`, so a deadline change naturally starts a fresh delivery cycle without needing to touch history for the old deadline. Only active rows created by real Telegram `/start` onboarding are eligible for either ledger. One recipient failure does not abort other recipients or other tasks. Recurring generation locks and advances each definition in the same transaction that creates its occurrence, with a second unique constraint on `(recurring_definition_id, scheduled_occurrence_at)`. The recurring sweep also treats an inactive assignee as a hard stop: it auto-pauses that definition instead of generating a task for someone no longer on the team, mirroring the auto-pause already applied at deactivation time.
+
+User activation, role changes, deactivation, and reactivation are each a single-transaction Postgres function (`*_with_event`) that updates `public.users` and appends a `user_events` row atomically, the same pattern already used for task mutations and their `task_events` — so a membership state change can never commit without its audit record, or vice versa.
 
 All schedule calculations use `Asia/Tashkent` (fixed UTC+05:00), while database timestamps remain `timestamptz`/UTC.
 
@@ -66,4 +68,4 @@ The expected production layout is a single Next.js deployment (for example, Verc
 
 ## Extended data structures
 
-`task_checklists` and `task_checklist_items` persist the deterministic Posting workflow. `recurring_definitions` stores future schedule/template state while generated tasks remain ordinary `tasks` rows. `report_deliveries` is the report idempotency ledger. All new public tables are RLS-enabled, browser roles are revoked, and only the trusted `service_role` receives the minimum required grants.
+`task_checklists` and `task_checklist_items` persist the deterministic Posting workflow. `recurring_definitions` stores future schedule/template state while generated tasks remain ordinary `tasks` rows. `report_deliveries` and `task_reminder_deliveries` are the report and reminder idempotency ledgers. `user_events` is the membership audit trail, parallel to `task_events`. `users.deactivated_at`/`deactivated_by` distinguish a deactivated former member from a still-pending one, both of which have `is_active = false`. All new public tables are RLS-enabled, browser roles are revoked, and only the trusted `service_role` receives the minimum required grants.

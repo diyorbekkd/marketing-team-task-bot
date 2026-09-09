@@ -2,10 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { MarketingService } from "../src/application/marketing-service";
 import type {
   NotificationDispatcher,
+  ReminderNotificationInput,
   WorkflowNotificationInput,
 } from "../src/application/ports/notification-dispatcher";
 import type { MarketingRepository } from "../src/application/ports/marketing-repository";
-import type { DeadlineChangeRequest, Task, User } from "../src/domain/models";
+import type { DeadlineChangeRequest, RecurringDefinition, Task, User } from "../src/domain/models";
 
 const ids = {
   head: "10000000-0000-4000-8000-000000000001",
@@ -16,7 +17,7 @@ const ids = {
   request: "30000000-0000-4000-8000-000000000001",
 } as const;
 
-function user(id: string, role: User["role"]): User {
+function user(id: string, role: User["role"], overrides: Partial<User> = {}): User {
   return {
     id,
     telegramUserId: id === ids.head ? "1001" : id === ids.creator ? "1002" : id === ids.assignee ? "1003" : "1004",
@@ -24,8 +25,10 @@ function user(id: string, role: User["role"]): User {
     displayName: role,
     role,
     isActive: true,
+    deactivatedAt: null,
     createdAt: "2026-09-06T12:00:00.000Z",
     updatedAt: "2026-09-06T12:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -71,6 +74,30 @@ function deadlineRequest(overrides: Partial<DeadlineChangeRequest> = {}): Deadli
   };
 }
 
+function recurringDefinitionFixture(overrides: Partial<RecurringDefinition> = {}): RecurringDefinition {
+  return {
+    id: "60000000-0000-4000-8000-000000000099",
+    sourceTaskId: ids.task,
+    createdBy: ids.creator,
+    title: "Weekly post",
+    description: null,
+    priority: "normal",
+    assigneeId: ids.assignee,
+    frequency: "WEEKLY",
+    weekday: 1,
+    dayOfMonth: null,
+    localTime: "09:00",
+    timezone: "Asia/Tashkent",
+    endsOn: null,
+    status: "ACTIVE",
+    nextOccurrenceAt: "2026-09-14T04:00:00.000Z",
+    pauseReason: null,
+    createdAt: "2026-09-06T00:00:00.000Z",
+    updatedAt: "2026-09-06T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
 function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepository {
   return {
     registerTelegramUser: vi.fn(),
@@ -78,11 +105,23 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     getUserByTelegramId: vi.fn(),
     findActiveUserByUsername: vi.fn(),
     listUsers: vi.fn(async () => [head, creator, assignee, unrelated]),
-    activateUser: vi.fn(),
-    updateUserRole: vi.fn(async (userId, role) => {
+    activateUser: vi.fn(async ({ userId, role }) => {
+      const found = [head, creator, assignee, unrelated].find((candidate) => candidate.id === userId);
+      return { ...(found ?? assignee), role, isActive: true, deactivatedAt: null };
+    }),
+    updateUserRole: vi.fn(async ({ userId, role }) => {
       const found = [head, creator, assignee, unrelated].find((candidate) => candidate.id === userId);
       return { ...(found ?? assignee), role };
     }),
+    deactivateUser: vi.fn(async ({ userId }) => {
+      const found = [head, creator, assignee, unrelated].find((candidate) => candidate.id === userId);
+      return { ...(found ?? assignee), isActive: false, deactivatedAt: "2026-09-09T12:00:00.000Z" };
+    }),
+    reactivateUser: vi.fn(async ({ userId }) => {
+      const found = [head, creator, assignee, unrelated].find((candidate) => candidate.id === userId);
+      return { ...(found ?? assignee), isActive: true, deactivatedAt: null };
+    }),
+    reassignTask: vi.fn(async ({ taskId, newAssigneeId }) => task({ id: taskId, assigneeId: newAssigneeId })),
     createTask: vi.fn(),
     getTask: vi.fn(async () => task()),
     listTasks: vi.fn(async () => [task()]),
@@ -103,11 +142,14 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     getRecurringDefinitionForTask: vi.fn(async () => null),
     getRecurringDefinition: vi.fn(async () => null),
     listDueRecurringDefinitions: vi.fn(async () => []),
+    listRecurringDefinitionsByAssignee: vi.fn(async () => []),
     createRecurringDefinition: vi.fn(),
     updateRecurringDefinition: vi.fn(),
     generateRecurringOccurrence: vi.fn(async () => null),
     claimReportDelivery: vi.fn(async () => true),
     completeReportDelivery: vi.fn(async () => undefined),
+    claimReminderDelivery: vi.fn(async () => true),
+    completeReminderDelivery: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -116,6 +158,12 @@ function notifier(overrides: Partial<NotificationDispatcher> = {}): Notification
   return {
     notifyAssignment: vi.fn(async () => ({ status: "SENT" as const })),
     notifyWorkflow: vi.fn(async ({ recipients }: WorkflowNotificationInput) => ({
+      deliveries: recipients.map((recipient) => ({
+        recipientUserId: recipient.id,
+        status: "SENT" as const,
+      })),
+    })),
+    notifyReminder: vi.fn(async ({ recipients }: ReminderNotificationInput) => ({
       deliveries: recipients.map((recipient) => ({
         recipientUserId: recipient.id,
         status: "SENT" as const,
@@ -198,7 +246,15 @@ describe("MarketingService MVP permissions", () => {
     await expect(service.activateUser(assignee, pending.id, "DIGITAL_MARKETER")).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(service.activateUser(head, pending.id, "HEAD_OF_MARKETING")).rejects.toMatchObject({ code: "INVALID_INPUT" });
     await service.activateUser(head, pending.id, "DIGITAL_MARKETER");
-    expect(repo.activateUser).toHaveBeenCalledWith(pending.id, "DIGITAL_MARKETER");
+    expect(repo.activateUser).toHaveBeenCalledWith({ userId: pending.id, actorId: head.id, role: "DIGITAL_MARKETER" });
+  });
+
+  it("directs Head to reactivate rather than activate a previously-removed member", async () => {
+    const removed = { ...unrelated, isActive: false, deactivatedAt: "2026-09-01T00:00:00.000Z" };
+    const repo = repository({ getUserById: vi.fn(async () => removed) });
+    await expect(new MarketingService(repo, notifier()).activateUser(head, removed.id, "DIGITAL_MARKETER"))
+      .rejects.toMatchObject({ code: "CONFLICT" });
+    expect(repo.activateUser).not.toHaveBeenCalled();
   });
 
   it("derives Today and Overdue views in Asia/Tashkent without an OVERDUE status", async () => {
@@ -491,7 +547,7 @@ describe("MarketingService MVP permissions", () => {
 
       const updated = await service.updateUserRole(head, ids.assignee, "DIGITAL_MARKETER");
 
-      expect(repo.updateUserRole).toHaveBeenCalledWith(ids.assignee, "DIGITAL_MARKETER");
+      expect(repo.updateUserRole).toHaveBeenCalledWith({ userId: ids.assignee, actorId: head.id, role: "DIGITAL_MARKETER" });
       expect(updated.role).toBe("DIGITAL_MARKETER");
     });
 
@@ -501,7 +557,7 @@ describe("MarketingService MVP permissions", () => {
 
       await service.updateUserRole(assignee, ids.assignee, "CONTENT_MARKETER");
 
-      expect(repo.updateUserRole).toHaveBeenCalledWith(ids.assignee, "CONTENT_MARKETER");
+      expect(repo.updateUserRole).toHaveBeenCalledWith({ userId: ids.assignee, actorId: assignee.id, role: "CONTENT_MARKETER" });
     });
 
     it("does not let an ordinary user change someone else's role", async () => {
@@ -614,6 +670,7 @@ describe("MarketingService MVP permissions", () => {
       endsOn: null,
       status: "ACTIVE" as const,
       nextOccurrenceAt: "2026-09-09T04:00:00.000Z",
+      pauseReason: null,
       createdAt: "2026-09-08T00:00:00.000Z",
       updatedAt: "2026-09-08T00:00:00.000Z",
     };
@@ -715,6 +772,153 @@ describe("MarketingService MVP permissions", () => {
       const headView = await service.getAnalytics(head, 30, new Date("2026-09-09T00:00:00Z"));
       expect(headView.team.length).toBeGreaterThan(0);
       expect(headView.team.every((row) => "workload" in row && "metrics" in row)).toBe(true);
+    });
+
+    it("excludes a deactivated member from the current team breakdown", async () => {
+      const deactivated = { ...unrelated, isActive: false, deactivatedAt: "2026-09-08T00:00:00.000Z" };
+      const repo = repository({ listUsers: vi.fn(async () => [head, creator, assignee, deactivated]) });
+      const headView = await new MarketingService(repo, notifier()).getAnalytics(head, 30, new Date("2026-09-09T00:00:00Z"));
+      expect(headView.team.some((row) => row.user.id === deactivated.id)).toBe(false);
+    });
+  });
+
+  describe("actor session boundary", () => {
+    it("rejects a deactivated user's Telegram identity", async () => {
+      const deactivated = { ...assignee, isActive: false, deactivatedAt: "2026-09-08T00:00:00.000Z" };
+      const repo = repository({ getUserByTelegramId: vi.fn(async () => deactivated) });
+      await expect(new MarketingService(repo, notifier()).requireActorByTelegramId(deactivated.telegramUserId))
+        .rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+    });
+
+    it("rejects a deactivated user's Mini App session, so protected actions cannot run", async () => {
+      const deactivated = { ...assignee, isActive: false, deactivatedAt: "2026-09-08T00:00:00.000Z" };
+      const repo = repository({ getUserById: vi.fn(async () => deactivated) });
+      await expect(new MarketingService(repo, notifier()).requireActorById(deactivated.id))
+        .rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+    });
+  });
+
+  describe("team member deactivation", () => {
+    it("lets Head remove an employee with no open tasks", async () => {
+      const repo = repository({ listTasks: vi.fn(async () => []) });
+      const service = new MarketingService(repo, notifier());
+      const result = await service.deactivateUser(head, unrelated.id, {});
+      expect(repo.deactivateUser).toHaveBeenCalledWith({ userId: unrelated.id, actorId: head.id });
+      expect(result.user.isActive).toBe(false);
+    });
+
+    it("does not let an ordinary employee deactivate anyone", async () => {
+      const repo = repository();
+      await expect(new MarketingService(repo, notifier()).deactivateUser(creator, unrelated.id, {}))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(repo.deactivateUser).not.toHaveBeenCalled();
+    });
+
+    it("never lets Head deactivate themselves", async () => {
+      const repo = repository();
+      await expect(new MarketingService(repo, notifier()).deactivateUser(head, head.id, {}))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(repo.deactivateUser).not.toHaveBeenCalled();
+    });
+
+    it("reports open/historical task and active-recurrence counts before removal", async () => {
+      const openTask = task({ id: "20000000-0000-4000-8000-000000000010", assigneeId: unrelated.id, status: "IN_PROGRESS" });
+      const doneTask = task({ id: "20000000-0000-4000-8000-000000000011", assigneeId: unrelated.id, status: "DONE", completedAt: "2026-09-05T00:00:00.000Z" });
+      const repo = repository({
+        listTasks: vi.fn(async () => [openTask, doneTask]),
+        listRecurringDefinitionsByAssignee: vi.fn(async () => [
+          { ...recurringDefinitionFixture(), assigneeId: unrelated.id, status: "ACTIVE" as const },
+        ]),
+      });
+      const preview = await new MarketingService(repo, notifier()).getDeactivationPreview(head, unrelated.id);
+      expect(preview.openTasks.map((t) => t.id)).toEqual([openTask.id]);
+      expect(preview.historicalTaskCount).toBe(1);
+      expect(preview.activeRecurringCount).toBe(1);
+    });
+
+    it("reassigns open tasks to an explicitly chosen active teammate and notifies them", async () => {
+      const openTask = task({ id: "20000000-0000-4000-8000-000000000010", assigneeId: unrelated.id, status: "IN_PROGRESS" });
+      const repo = repository({ listTasks: vi.fn(async () => [openTask]) });
+      const notifications = notifier();
+      await new MarketingService(repo, notifications).deactivateUser(head, unrelated.id, {
+        openTasksAction: "REASSIGN", reassignToUserId: assignee.id,
+      });
+      expect(repo.reassignTask).toHaveBeenCalledWith({ taskId: openTask.id, newAssigneeId: assignee.id, actorId: head.id });
+      expect(notifications.notifyAssignment).toHaveBeenCalledWith(expect.objectContaining({ assignee }));
+      expect(repo.transitionTask).not.toHaveBeenCalled();
+    });
+
+    it("requires an explicit reassignment target and rejects an inactive one", async () => {
+      const openTask = task({ id: "20000000-0000-4000-8000-000000000010", assigneeId: unrelated.id, status: "IN_PROGRESS" });
+      const repo = repository({ listTasks: vi.fn(async () => [openTask]) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.deactivateUser(head, unrelated.id, { openTasksAction: "REASSIGN" }))
+        .rejects.toThrow(); // zod rejects a REASSIGN choice with no target before the service layer even runs
+      const inactiveTargetId = "10000000-0000-4000-8000-000000000099";
+      const inactiveTarget = { ...assignee, id: inactiveTargetId, isActive: false, deactivatedAt: "2026-09-01T00:00:00.000Z" };
+      const repoWithInactiveTarget = repository({
+        listTasks: vi.fn(async () => [openTask]),
+        getUserById: vi.fn(async (id) => [head, creator, assignee, unrelated, inactiveTarget].find((c) => c.id === id) ?? null),
+      });
+      await expect(new MarketingService(repoWithInactiveTarget, notifier())
+        .deactivateUser(head, unrelated.id, { openTasksAction: "REASSIGN", reassignToUserId: inactiveTargetId }))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.reassignTask).not.toHaveBeenCalled();
+    });
+
+    it("cancels open tasks when Head chooses to cancel rather than reassign", async () => {
+      const openTask = task({ id: "20000000-0000-4000-8000-000000000010", assigneeId: unrelated.id, status: "IN_PROGRESS" });
+      const repo = repository({ listTasks: vi.fn(async () => [openTask]) });
+      await new MarketingService(repo, notifier()).deactivateUser(head, unrelated.id, { openTasksAction: "CANCEL" });
+      expect(repo.transitionTask).toHaveBeenCalledWith(expect.objectContaining({ taskId: openTask.id, newStatus: "CANCELLED" }));
+      expect(repo.reassignTask).not.toHaveBeenCalled();
+    });
+
+    it("leaves open tasks assigned as-is when Head explicitly keeps them, and never touches historical tasks", async () => {
+      const openTask = task({ id: "20000000-0000-4000-8000-000000000010", assigneeId: unrelated.id, status: "IN_PROGRESS" });
+      const doneTask = task({ id: "20000000-0000-4000-8000-000000000011", assigneeId: unrelated.id, status: "DONE", completedAt: "2026-09-05T00:00:00.000Z" });
+      const repo = repository({ listTasks: vi.fn(async () => [openTask, doneTask]) });
+      await new MarketingService(repo, notifier()).deactivateUser(head, unrelated.id, { openTasksAction: "KEEP" });
+      expect(repo.transitionTask).not.toHaveBeenCalled();
+      expect(repo.reassignTask).not.toHaveBeenCalled();
+      expect(repo.deactivateUser).toHaveBeenCalledWith({ userId: unrelated.id, actorId: head.id });
+    });
+
+    it("auto-pauses only the removed assignee's active recurring definitions", async () => {
+      const activeDef = { ...recurringDefinitionFixture(), id: "60000000-0000-4000-8000-000000000010", assigneeId: unrelated.id, status: "ACTIVE" as const };
+      const pausedDef = { ...recurringDefinitionFixture(), id: "60000000-0000-4000-8000-000000000011", assigneeId: unrelated.id, status: "PAUSED" as const };
+      const repo = repository({
+        listTasks: vi.fn(async () => []),
+        listRecurringDefinitionsByAssignee: vi.fn(async () => [activeDef, pausedDef]),
+      });
+      await new MarketingService(repo, notifier()).deactivateUser(head, unrelated.id, {});
+      expect(repo.updateRecurringDefinition).toHaveBeenCalledTimes(1);
+      expect(repo.updateRecurringDefinition).toHaveBeenCalledWith(expect.objectContaining({
+        id: activeDef.id, status: "PAUSED", pauseReason: "ASSIGNEE_DEACTIVATED",
+      }));
+    });
+  });
+
+  describe("team member reactivation", () => {
+    it("restores active access without creating a duplicate account", async () => {
+      const deactivated = { ...unrelated, isActive: false, deactivatedAt: "2026-09-01T00:00:00.000Z" };
+      const repo = repository({ getUserById: vi.fn(async () => deactivated) });
+      const result = await new MarketingService(repo, notifier()).reactivateUser(head, unrelated.id);
+      expect(repo.reactivateUser).toHaveBeenCalledWith({ userId: unrelated.id, actorId: head.id });
+      expect(result.id).toBe(unrelated.id);
+    });
+
+    it("only Head may reactivate", async () => {
+      const repo = repository();
+      await expect(new MarketingService(repo, notifier()).reactivateUser(creator, unrelated.id))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("refuses to reactivate a user who was never an active member", async () => {
+      const neverActivated = { ...unrelated, isActive: false, deactivatedAt: null };
+      const repo = repository({ getUserById: vi.fn(async () => neverActivated) });
+      await expect(new MarketingService(repo, notifier()).reactivateUser(head, neverActivated.id))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
     });
   });
 });

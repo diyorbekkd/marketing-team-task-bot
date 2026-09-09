@@ -28,6 +28,7 @@ interface User {
   displayName: string;
   role: Role;
   isActive: boolean;
+  deactivatedAt?: string | null;
   telegramUserId?: string | null;
   telegramUsername?: string | null;
 }
@@ -105,6 +106,8 @@ interface RecurringDefinition {
   endsOn: string | null;
   status: "ACTIVE" | "PAUSED" | "STOPPED";
   nextOccurrenceAt: string | null;
+  pauseReason?: string | null;
+  assigneeId?: string;
 }
 
 interface WorkloadMetrics {
@@ -366,6 +369,8 @@ export default function MiniApp() {
   const [showPendingUsers, setShowPendingUsers] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [roleEditUser, setRoleEditUser] = useState<User | null>(null);
+  const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [taskNotice, setTaskNotice] = useState<{ kind: "success" | "warning"; text: string } | null>(null);
 
   const isHead = currentUser?.role === "HEAD_OF_MARKETING";
@@ -392,6 +397,7 @@ export default function MiniApp() {
           return;
         }
         if (error) {
+          setAuthError(error);
           setAuthState("no-telegram");
           return;
         }
@@ -490,21 +496,22 @@ export default function MiniApp() {
   }
 
   if (authState === "no-telegram") {
+    const inactiveMessage = authError && /aktiv|no longer active/i.test(authError) ? authError : null;
     return (
       <div className="ma-center">
         <div className="ma-no-tg">
           <div className="ma-no-tg-icon" aria-hidden="true">M</div>
-          <p>Open this app from Telegram.</p>
+          <p>{inactiveMessage ? "You're not on the active team." : "Open this app from Telegram."}</p>
           <span className="ma-muted">
-            This workspace is only accessible through the Telegram Mini App or a
-            signed-in browser session.
+            {inactiveMessage ?? "This workspace is only accessible through the Telegram Mini App or a signed-in browser session."}
           </span>
         </div>
       </div>
     );
   }
 
-  const pendingUsers = users.filter((u) => !u.isActive);
+  const pendingUsers = users.filter((u) => !u.isActive && !u.deactivatedAt);
+  const inactiveMembers = users.filter((u) => !u.isActive && u.deactivatedAt);
   const visibleTasks = memberFilter && filter === "team"
     ? tasks.filter((t) => t.assigneeId === memberFilter)
     : tasks;
@@ -583,11 +590,17 @@ export default function MiniApp() {
           <TeamView
             tasks={homeTasks}
             users={users}
+            inactiveMembers={inactiveMembers}
             loading={homeLoading}
             error={homeError}
             onRetry={loadHome}
             onSelectMember={selectMember}
             onEditRole={setRoleEditUser}
+            onDeactivate={setDeactivateTarget}
+            onReactivated={(updated) => {
+              setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+              setTaskNotice({ kind: "success", text: `${updated.displayName} is active again.` });
+            }}
           />
         )}
 
@@ -645,6 +658,20 @@ export default function MiniApp() {
           user={roleEditUser}
           onClose={() => setRoleEditUser(null)}
           onSaved={handleRoleSaved}
+        />
+      )}
+
+      {deactivateTarget && (
+        <DeactivateMemberSheet
+          user={deactivateTarget}
+          users={users}
+          onClose={() => setDeactivateTarget(null)}
+          onDeactivated={(updated) => {
+            setDeactivateTarget(null);
+            setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+            setTaskNotice({ kind: "success", text: `${updated.displayName} was removed from the active team.` });
+            refreshAll();
+          }}
         />
       )}
     </div>
@@ -778,12 +805,14 @@ function WorkloadList({
   users,
   onSelectMember,
   onEditRole,
+  onDeactivate,
   limit,
 }: {
   tasks: Task[];
   users: User[];
   onSelectMember: (userId: string) => void;
   onEditRole?: (user: User) => void;
+  onDeactivate?: (user: User) => void;
   limit?: number;
 }) {
   const rows = workloadFor(tasks, users).slice(0, limit ?? undefined);
@@ -805,15 +834,29 @@ function WorkloadList({
               <span className={`ma-workload-count${row.overdue > 0 ? " danger" : ""}`}>{row.overdue} overdue</span>
             </span>
           </button>
-          {onEditRole && row.user.role !== "HEAD_OF_MARKETING" && (
-            <button
-              className="ma-workload-edit"
-              onClick={() => onEditRole(row.user)}
-              aria-label={`Edit role for ${row.user.displayName}`}
-              title="Edit role"
-            >
-              ✎
-            </button>
+          {row.user.role !== "HEAD_OF_MARKETING" && (onEditRole || onDeactivate) && (
+            <span className="ma-workload-actions">
+              {onEditRole && (
+                <button
+                  className="ma-workload-edit"
+                  onClick={() => onEditRole(row.user)}
+                  aria-label={`Edit role for ${row.user.displayName}`}
+                  title="Edit role"
+                >
+                  ✎
+                </button>
+              )}
+              {onDeactivate && (
+                <button
+                  className="ma-workload-edit danger"
+                  onClick={() => onDeactivate(row.user)}
+                  aria-label={`Remove ${row.user.displayName} from team`}
+                  title="Remove from team"
+                >
+                  ⛔
+                </button>
+              )}
+            </span>
           )}
         </li>
       ))}
@@ -826,33 +869,84 @@ function WorkloadList({
 function TeamView({
   tasks,
   users,
+  inactiveMembers,
   loading,
   error,
   onRetry,
   onSelectMember,
   onEditRole,
+  onDeactivate,
+  onReactivated,
 }: {
   tasks: Task[];
   users: User[];
+  inactiveMembers: User[];
   loading: boolean;
   error: string | null;
   onRetry: () => void;
   onSelectMember: (userId: string) => void;
   onEditRole: (user: User) => void;
+  onDeactivate: (user: User) => void;
+  onReactivated: (user: User) => void;
 }) {
+  const [showInactive, setShowInactive] = useState(false);
+  const [reactivating, setReactivating] = useState<string | null>(null);
+  const [reactivateError, setReactivateError] = useState<string | null>(null);
+
   if (loading && tasks.length === 0) {
     return <div className="ma-center-inline"><div className="ma-spinner" aria-label="Loading" /></div>;
   }
   if (error) {
     return <div className="ma-error" role="alert">{error} <button onClick={onRetry}>Retry</button></div>;
   }
+
+  const reactivate = async (user: User) => {
+    setReactivating(user.id);
+    setReactivateError(null);
+    const { data, error: e } = await apiFetch<{ user: User }>(`/api/users/${user.id}/reactivate`, { method: "POST" });
+    setReactivating(null);
+    if (e) { setReactivateError(friendlyError(e)); return; }
+    if (data?.user) onReactivated(data.user);
+  };
+
   return (
     <div className="ma-home">
       <div className="ma-greeting">
         <h1>Team workload</h1>
-        <p className="ma-muted">Tap a teammate to see their tasks, or ✎ to fix their role.</p>
+        <p className="ma-muted">Tap a teammate to see their tasks, ✎ to fix their role, or ⛔ to remove them.</p>
       </div>
-      <WorkloadList tasks={tasks} users={users} onSelectMember={onSelectMember} onEditRole={onEditRole} />
+      <WorkloadList tasks={tasks} users={users} onSelectMember={onSelectMember} onEditRole={onEditRole} onDeactivate={onDeactivate} />
+
+      {inactiveMembers.length > 0 && (
+        <section className="ma-section">
+          <button className="ma-section-head ma-collapse-toggle" onClick={() => setShowInactive((value) => !value)} aria-expanded={showInactive}>
+            <h3>Inactive members ({inactiveMembers.length})</h3>
+            <span aria-hidden="true">{showInactive ? "▾" : "▸"}</span>
+          </button>
+          {showInactive && (
+            <ul className="ma-workload-list">
+              {inactiveMembers.map((member) => (
+                <li key={member.id} className="ma-workload-item">
+                  <div className="ma-workload-row inactive">
+                    <span className="ma-workload-name">
+                      {member.displayName}
+                      <span className="ma-muted"> · {ROLE_LABELS[member.role]}</span>
+                    </span>
+                  </div>
+                  <button
+                    className="ma-btn secondary"
+                    disabled={reactivating === member.id}
+                    onClick={() => reactivate(member)}
+                  >
+                    {reactivating === member.id ? "…" : "Reactivate"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {reactivateError && <div className="ma-error-inline" role="alert">{reactivateError}</div>}
+        </section>
+      )}
     </div>
   );
 }
@@ -1236,6 +1330,7 @@ function TaskDetailPanel({
   const [recurrenceDay, setRecurrenceDay] = useState(1);
   const [recurrenceTime, setRecurrenceTime] = useState("09:00");
   const [recurrenceEnd, setRecurrenceEnd] = useState("");
+  const [recurrenceAssigneeId, setRecurrenceAssigneeId] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -1334,6 +1429,9 @@ function TaskDetailPanel({
       setRecurrenceDay(recurrence.dayOfMonth ?? 1);
       setRecurrenceTime(recurrence.localTime);
       setRecurrenceEnd(recurrence.endsOn ?? "");
+      setRecurrenceAssigneeId(recurrence.assigneeId ?? detail?.task.assigneeId ?? "");
+    } else {
+      setRecurrenceAssigneeId(detail?.task.assigneeId ?? "");
     }
     setShowRecurrenceForm(true);
   };
@@ -1349,6 +1447,9 @@ function TaskDetailPanel({
       dayOfMonth: recurrenceFrequency === "MONTHLY" ? recurrenceDay : null,
       localTime: recurrenceTime,
       endsOn: recurrenceEnd || null,
+      ...(existing && recurrenceAssigneeId && recurrenceAssigneeId !== existing.assigneeId
+        ? { assigneeId: recurrenceAssigneeId }
+        : {}),
     };
     const { data, error: e } = await apiFetch<{ recurringDefinition: RecurringDefinition }>(
       `/api/tasks/${existing?.id ?? task.id}/recurrence`, {
@@ -1622,6 +1723,16 @@ function TaskDetailPanel({
                     <input id="recurrence-time" type="time" value={recurrenceTime} onChange={(event) => setRecurrenceTime(event.target.value)} />
                     <label htmlFor="recurrence-end">End date (optional)</label>
                     <input id="recurrence-end" type="date" value={recurrenceEnd} onChange={(event) => setRecurrenceEnd(event.target.value)} />
+                    {detail?.recurringDefinition && (
+                      <>
+                        <label htmlFor="recurrence-assignee">Assignee</label>
+                        <select id="recurrence-assignee" value={recurrenceAssigneeId} onChange={(event) => setRecurrenceAssigneeId(event.target.value)}>
+                          {users.filter((u) => u.isActive).map((u) => (
+                            <option key={u.id} value={u.id}>{u.displayName}</option>
+                          ))}
+                        </select>
+                      </>
+                    )}
                     <div className="ma-form-row">
                       <button className="ma-btn primary" disabled={actionPending || !recurrenceTime} onClick={saveRecurrence}>Save future schedule</button>
                       <button className="ma-btn secondary" onClick={() => setShowRecurrenceForm(false)}>Cancel</button>
@@ -1631,6 +1742,9 @@ function TaskDetailPanel({
                   <div className="ma-recurrence-card">
                     <div><strong>{recurringDefinition.frequency === "WEEKDAYS" ? "Every weekday" : recurringDefinition.frequency === "WEEKLY" ? `Every ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][(recurringDefinition.weekday ?? 1) - 1]}` : `Every month on day ${recurringDefinition.dayOfMonth}`}</strong><span> at {recurringDefinition.localTime}</span></div>
                     <span className={`ma-recurrence-status ${recurringDefinition.status.toLowerCase()}`}>{recurringDefinition.status}</span>
+                    {recurringDefinition.status === "PAUSED" && recurringDefinition.pauseReason === "ASSIGNEE_DEACTIVATED" && (
+                      <span className="ma-muted">Paused automatically — the assignee was removed from the team. Change the assignee, then Resume.</span>
+                    )}
                     {recurringDefinition.nextOccurrenceAt && <span className="ma-muted">Next: {fmtDateTime(recurringDefinition.nextOccurrenceAt)}</span>}
                     {recurringDefinition.status !== "STOPPED" && <div className="ma-action-row">
                       <button className="ma-btn secondary" disabled={actionPending} onClick={openRecurrenceForm}>Edit future</button>
@@ -1972,6 +2086,156 @@ function RoleEditSheet({
             </button>
             <button className="ma-btn secondary" onClick={onClose} disabled={pending}>Cancel</button>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Deactivate Member Sheet ──────────────────────────────────────────────────
+
+interface DeactivationPreview {
+  user: User;
+  openTasks: { id: string; title: string; status: TaskStatus; deadline: string }[];
+  historicalTaskCount: number;
+  activeRecurringCount: number;
+}
+
+type OpenTasksAction = "REASSIGN" | "CANCEL" | "KEEP";
+
+function DeactivateMemberSheet({
+  user,
+  users,
+  onClose,
+  onDeactivated,
+}: {
+  user: User;
+  users: User[];
+  onClose: () => void;
+  onDeactivated: (user: User) => void;
+}) {
+  const [preview, setPreview] = useState<DeactivationPreview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [action, setAction] = useState<OpenTasksAction>("REASSIGN");
+  const [reassignTo, setReassignTo] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      const { data, error: e } = await apiFetch<DeactivationPreview>(`/api/users/${user.id}/deactivation-preview`);
+      setLoading(false);
+      if (data) {
+        setPreview(data);
+        if (data.openTasks.length === 0) setAction("KEEP");
+      } else {
+        setLoadError(friendlyError(e) ?? "Failed to load this teammate's task summary.");
+      }
+    })();
+  }, [user.id]);
+
+  const reassignCandidates = users.filter((candidate) => candidate.isActive && candidate.id !== user.id);
+  const openCount = preview?.openTasks.length ?? 0;
+
+  const confirm = async () => {
+    if (pending || (action === "REASSIGN" && !reassignTo)) return;
+    setPending(true);
+    setError(null);
+    const { data, error: e } = await apiFetch<{ user: User }>(`/api/users/${user.id}/deactivate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        openTasksAction: action,
+        ...(action === "REASSIGN" ? { reassignToUserId: reassignTo } : {}),
+      }),
+    });
+    setPending(false);
+    if (e) { setError(friendlyError(e)); return; }
+    if (data?.user) onDeactivated(data.user);
+  };
+
+  return (
+    <div
+      className="ma-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Remove from team"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="ma-panel">
+        <div className="ma-panel-header">
+          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
+          <span className="ma-panel-title">Remove from Team</span>
+        </div>
+        <div className="ma-panel-body">
+          {loading && <div className="ma-center-inline"><div className="ma-spinner" /></div>}
+          {loadError && <div className="ma-error" role="alert">{loadError}</div>}
+          {preview && (
+            <>
+              <p className="ma-detail-desc">Remove <strong>{user.displayName}</strong> from active team?</p>
+              <ul className="ma-fact-list">
+                <li>{openCount} active task{openCount === 1 ? "" : "s"}</li>
+                <li>{preview.historicalTaskCount} historical task{preview.historicalTaskCount === 1 ? "" : "s"}</li>
+                {preview.activeRecurringCount > 0 && (
+                  <li>{preview.activeRecurringCount} recurring definition{preview.activeRecurringCount === 1 ? "" : "s"} will pause</li>
+                )}
+              </ul>
+              <p className="ma-muted">They will:</p>
+              <ul className="ma-fact-list muted">
+                <li>stop receiving new tasks and bot notifications</li>
+                <li>lose active Mini App access</li>
+                <li>remain in historical task records</li>
+              </ul>
+
+              {openCount > 0 && (
+                <>
+                  <h3>What happens to their {openCount} open task{openCount === 1 ? "" : "s"}?</h3>
+                  <div className="ma-role-options" role="radiogroup" aria-label="Open task handling">
+                    <button type="button" role="radio" aria-checked={action === "REASSIGN"}
+                      className={`ma-role-option${action === "REASSIGN" ? " active" : ""}`}
+                      onClick={() => setAction("REASSIGN")}>
+                      Reassign to another teammate
+                    </button>
+                    <button type="button" role="radio" aria-checked={action === "CANCEL"}
+                      className={`ma-role-option${action === "CANCEL" ? " active" : ""}`}
+                      onClick={() => setAction("CANCEL")}>
+                      Cancel these tasks
+                    </button>
+                    <button type="button" role="radio" aria-checked={action === "KEEP"}
+                      className={`ma-role-option${action === "KEEP" ? " active" : ""}`}
+                      onClick={() => setAction("KEEP")}>
+                      Keep as-is for now
+                    </button>
+                  </div>
+                  {action === "REASSIGN" && (
+                    <div className="ma-form-group">
+                      <label htmlFor="reassign-to">Reassign to</label>
+                      <select id="reassign-to" value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
+                        <option value="">Choose a teammate…</option>
+                        {reassignCandidates.map((candidate) => (
+                          <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {error && <div className="ma-error-inline" role="alert">{error}</div>}
+              <div className="ma-form-row">
+                <button
+                  className="ma-btn danger full"
+                  disabled={pending || (action === "REASSIGN" && !reassignTo)}
+                  onClick={confirm}
+                >
+                  {pending ? "Removing…" : "Remove from team"}
+                </button>
+                <button className="ma-btn secondary" onClick={onClose} disabled={pending}>Cancel</button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

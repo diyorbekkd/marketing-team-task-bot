@@ -23,6 +23,7 @@ export const RecurrenceUpdateSchema = z.object({
   dayOfMonth: z.number().int().min(1).max(31).nullable().optional(),
   localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).optional(),
   endsOn: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  assigneeId: z.string().uuid().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0, "At least one recurrence change is required.");
 
 const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000;

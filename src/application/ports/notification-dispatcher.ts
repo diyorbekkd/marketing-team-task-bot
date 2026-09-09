@@ -1,4 +1,5 @@
 import type { DeadlineChangeRequest, Task, User } from "@/domain/models";
+import type { ReminderType } from "@/domain/reminders";
 
 export type NotificationFailureReason = "RECIPIENT_NOT_ONBOARDED" | "DELIVERY_FAILED";
 
@@ -49,7 +50,20 @@ export interface WorkflowNotificationResult {
   readonly deliveries: readonly WorkflowNotificationDelivery[];
 }
 
+export interface ReminderNotificationInput {
+  readonly task: Task;
+  readonly reminderType: ReminderType;
+  readonly recipients: readonly User[];
+}
+
+export type ReminderNotificationDelivery = WorkflowNotificationDelivery;
+
+export interface ReminderNotificationResult {
+  readonly deliveries: readonly ReminderNotificationDelivery[];
+}
+
 export interface NotificationDispatcher {
   notifyAssignment(input: AssignmentNotificationInput): Promise<AssignmentNotificationResult>;
   notifyWorkflow(input: WorkflowNotificationInput): Promise<WorkflowNotificationResult>;
+  notifyReminder(input: ReminderNotificationInput): Promise<ReminderNotificationResult>;
 }

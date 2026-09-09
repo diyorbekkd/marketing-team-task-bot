@@ -12,7 +12,16 @@ import type {
 import { ApplicationError } from "./errors";
 import { z } from "zod";
 import { nextOccurrence, RecurrenceInputSchema, RecurrenceUpdateSchema } from "@/domain/recurrence";
-import { calculateAnalytics, workloadMetrics } from "@/domain/reporting";
+import { calculateAnalytics, isOpenTask, workloadMetrics } from "@/domain/reporting";
+
+const DeactivationInputSchema = z.object({
+  openTasksAction: z.enum(["REASSIGN", "CANCEL", "KEEP"]).default("KEEP"),
+  reassignToUserId: z.string().uuid().optional(),
+}).strict().superRefine((value, context) => {
+  if (value.openTasksAction === "REASSIGN" && !value.reassignToUserId) {
+    context.addIssue({ code: "custom", path: ["reassignToUserId"], message: "Choose who the open tasks go to." });
+  }
+});
 
 const DeadlineRequestInputSchema = z.object({
   requestedDeadline: z.string().datetime({ offset: true }),
@@ -48,7 +57,7 @@ export class MarketingService {
   async requireActorByTelegramId(telegramUserId: string): Promise<User> {
     const user = await this.repository.getUserByTelegramId(telegramUserId);
     if (!user?.isActive) {
-      throw new ApplicationError("UNAUTHENTICATED", "This Telegram account is not an active team member.");
+      throw new ApplicationError("UNAUTHENTICATED", "Siz hozir aktiv marketing jamoasida emassiz. Head of Marketing bilan bog‘laning.");
     }
     return user;
   }
@@ -80,7 +89,10 @@ export class MarketingService {
     if (target.isActive) {
       throw new ApplicationError("CONFLICT", "This team member is already active.");
     }
-    return this.repository.activateUser(userId, role);
+    if (target.deactivatedAt) {
+      throw new ApplicationError("CONFLICT", "This person was previously on the team — reactivate them instead of activating.");
+    }
+    return this.repository.activateUser({ userId, actorId: actor.id, role });
   }
 
   /**
@@ -111,7 +123,135 @@ export class MarketingService {
     if (target.role === role) {
       return target;
     }
-    return this.repository.updateUserRole(userId, role);
+    return this.repository.updateUserRole({ userId, actorId: actor.id, role });
+  }
+
+  /**
+   * Facts a Head needs before removing someone from the active team: how many
+   * open tasks would otherwise be left pointing at a soon-to-be-inactive
+   * assignee, and how many recurring definitions would auto-pause.
+   */
+  async getDeactivationPreview(actor: User, userId: string) {
+    if (!isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Only Head may manage team membership.");
+    }
+    const target = await this.repository.getUserById(userId);
+    if (!target) {
+      throw new ApplicationError("NOT_FOUND", "User not found.");
+    }
+    const [tasks, recurringDefinitions] = await Promise.all([
+      this.repository.listTasks(),
+      this.repository.listRecurringDefinitionsByAssignee(userId),
+    ]);
+    const openTasks = tasks.filter((task) => task.assigneeId === userId && isOpenTask(task));
+    const historicalTaskCount = tasks.filter(
+      (task) => (task.assigneeId === userId || task.creatorId === userId) && !isOpenTask(task),
+    ).length;
+    return {
+      user: target,
+      openTasks,
+      historicalTaskCount,
+      activeRecurringCount: recurringDefinitions.filter((definition) => definition.status === "ACTIVE").length,
+    };
+  }
+
+  /**
+   * Removes a team member from active duty without deleting them: historical
+   * task ownership, audit events, and report history all remain valid because
+   * nothing is deleted, only `isActive`/`deactivatedAt` flip. Open tasks are
+   * handled first (reassign/cancel/keep, per the Head's explicit choice) and
+   * only committed once that succeeds, so a failure partway through never
+   * leaves the account already-deactivated with unresolved tasks. Active
+   * recurring definitions for this assignee are auto-paused so the cron sweep
+   * cannot keep generating tasks for someone no longer on the team.
+   */
+  async deactivateUser(actor: User, userId: string, input: unknown) {
+    if (!isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Only Head may manage team membership.");
+    }
+    if (actor.id === userId) {
+      throw new ApplicationError("FORBIDDEN", "You cannot remove yourself from the team.");
+    }
+    const target = await this.repository.getUserById(userId);
+    if (!target) {
+      throw new ApplicationError("NOT_FOUND", "User not found.");
+    }
+    if (!target.isActive) {
+      throw new ApplicationError("CONFLICT", "This team member is already inactive.");
+    }
+    if (target.role === "HEAD_OF_MARKETING") {
+      throw new ApplicationError("FORBIDDEN", "Head cannot be removed through this flow.");
+    }
+    const parsed = DeactivationInputSchema.parse(input);
+
+    const tasks = await this.repository.listTasks();
+    const openTasks = tasks.filter((task) => task.assigneeId === userId && isOpenTask(task));
+
+    if (openTasks.length > 0 && parsed.openTasksAction === "REASSIGN") {
+      const newAssignee = await this.repository.getUserById(parsed.reassignToUserId!);
+      if (!newAssignee?.isActive) {
+        throw new ApplicationError("INVALID_INPUT", "Reassignment target must be an active team member.");
+      }
+      if (newAssignee.id === userId) {
+        throw new ApplicationError("INVALID_INPUT", "Choose a different teammate to reassign to.");
+      }
+      for (const task of openTasks) {
+        const reassigned = await this.repository.reassignTask({ taskId: task.id, newAssigneeId: newAssignee.id, actorId: actor.id });
+        try {
+          await this.notificationDispatcher.notifyAssignment({ task: reassigned, creator: actor, assignee: newAssignee });
+        } catch {
+          console.warn(JSON.stringify({ event: "reassignment_notification_failed", taskId: task.id }));
+        }
+      }
+    } else if (openTasks.length > 0 && parsed.openTasksAction === "CANCEL") {
+      for (const task of openTasks) {
+        await this.repository.transitionTask({
+          taskId: task.id,
+          actorId: actor.id,
+          newStatus: "CANCELLED",
+          reason: "Assignee removed from the team",
+        });
+      }
+    }
+    // "KEEP" (or no open tasks): nothing to do — the Head explicitly chose to
+    // leave the historical assignment as-is.
+
+    const definitions = await this.repository.listRecurringDefinitionsByAssignee(userId);
+    for (const definition of definitions.filter((d) => d.status === "ACTIVE")) {
+      await this.repository.updateRecurringDefinition({
+        id: definition.id,
+        status: "PAUSED",
+        nextOccurrenceAt: definition.nextOccurrenceAt,
+        pauseReason: "ASSIGNEE_DEACTIVATED",
+      });
+    }
+
+    const updated = await this.repository.deactivateUser({ userId, actorId: actor.id });
+    return { user: updated, openTasksHandled: openTasks.length, recurringPaused: definitions.filter((d) => d.status === "ACTIVE").length };
+  }
+
+  /**
+   * Restores active access for a previously-deactivated member. Never creates
+   * a new row — it flips the same account back on — so there is no duplicate
+   * account risk. Does not touch recurring definitions that were auto-paused;
+   * Head resumes those separately once they've confirmed the assignee (or a
+   * replacement) is right.
+   */
+  async reactivateUser(actor: User, userId: string): Promise<User> {
+    if (!isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Only Head may manage team membership.");
+    }
+    const target = await this.repository.getUserById(userId);
+    if (!target) {
+      throw new ApplicationError("NOT_FOUND", "User not found.");
+    }
+    if (target.isActive) {
+      throw new ApplicationError("CONFLICT", "This team member is already active.");
+    }
+    if (!target.deactivatedAt) {
+      throw new ApplicationError("INVALID_INPUT", "This user was never an active member; activate them instead.");
+    }
+    return this.repository.reactivateUser({ userId, actorId: actor.id });
   }
 
   async createTask(
@@ -319,6 +459,10 @@ export class MarketingService {
     if (await this.repository.getRecurringDefinitionForTask(taskId)) {
       throw new ApplicationError("CONFLICT", "This task already has a recurring definition.");
     }
+    const assignee = await this.repository.getUserById(task.assigneeId);
+    if (!assignee?.isActive) {
+      throw new ApplicationError("INVALID_INPUT", "The current assignee is not an active team member; reassign the task first.");
+    }
     const next = nextOccurrence(parsed, now);
     if (!next) throw new ApplicationError("INVALID_INPUT", "The recurrence end date leaves no future occurrence.");
     return this.repository.createRecurringDefinition({
@@ -360,10 +504,23 @@ export class MarketingService {
       throw new ApplicationError("INVALID_INPUT", "Day of month is required for monthly recurrence.");
     }
 
+    let assigneeId = definition.assigneeId;
+    if (parsed.assigneeId !== undefined && parsed.assigneeId !== definition.assigneeId) {
+      const newAssignee = await this.repository.getUserById(parsed.assigneeId);
+      if (!newAssignee?.isActive) {
+        throw new ApplicationError("INVALID_INPUT", "The new assignee must be an active team member.");
+      }
+      assigneeId = newAssignee.id;
+    }
+
     const status = parsed.action === "PAUSE" ? "PAUSED"
       : parsed.action === "STOP" ? "STOPPED"
       : parsed.action === "RESUME" ? "ACTIVE"
       : definition.status;
+    // A manual pause/resume/stop, or fixing the assignee that caused an
+    // automatic pause, both clear the "why paused" marker — it only describes
+    // an automatic pause that is still in effect.
+    const pauseReason = (parsed.action || assigneeId !== definition.assigneeId) ? null : definition.pauseReason;
     const scheduleChanged = parsed.frequency !== undefined || parsed.weekday !== undefined
       || parsed.dayOfMonth !== undefined || parsed.localTime !== undefined || parsed.endsOn !== undefined;
     const next = status === "STOPPED" ? null
@@ -374,13 +531,29 @@ export class MarketingService {
 
     return this.repository.updateRecurringDefinition({
       id: definition.id, frequency, weekday, dayOfMonth, localTime, endsOn, status, nextOccurrenceAt: next,
+      pauseReason, assigneeId,
     });
   }
 
   async generateDueRecurringTasks(now = new Date()) {
     const definitions = await this.repository.listDueRecurringDefinitions(now.toISOString());
     let generated = 0;
+    let paused = 0;
     for (const definition of definitions) {
+      // Defense in depth: deactivateUser() already auto-pauses a definition
+      // the moment its assignee is removed, but this check means an inactive
+      // assignee can never cause a new task to be generated even if that hook
+      // was ever bypassed (a direct DB edit, a future code path, etc.).
+      const assignee = await this.repository.getUserById(definition.assigneeId);
+      if (!assignee?.isActive) {
+        await this.repository.updateRecurringDefinition({
+          id: definition.id, status: "PAUSED", nextOccurrenceAt: definition.nextOccurrenceAt, pauseReason: "ASSIGNEE_DEACTIVATED",
+        });
+        console.warn(JSON.stringify({ event: "recurring_definition_paused_inactive_assignee", definitionId: definition.id }));
+        paused += 1;
+        continue;
+      }
+
       let scheduled = definition.nextOccurrenceAt;
       let iterations = 0;
       while (scheduled && new Date(scheduled).getTime() <= now.getTime() && iterations < 100) {
@@ -392,11 +565,8 @@ export class MarketingService {
         });
         if (!task) break;
         generated += 1;
-        const [creator, assignee] = await Promise.all([
-          this.repository.getUserById(task.creatorId),
-          this.repository.getUserById(task.assigneeId),
-        ]);
-        if (creator && assignee?.isActive) {
+        const creator = await this.repository.getUserById(task.creatorId);
+        if (creator) {
           try {
             const notification = await this.notificationDispatcher.notifyAssignment({ task, creator, assignee });
             const log = {
@@ -422,14 +592,14 @@ export class MarketingService {
             event: "recurring_assignment_notification_skipped",
             taskId: task.id,
             definitionId: definition.id,
-            reason: "ASSIGNEE_INACTIVE_OR_MISSING",
+            reason: "CREATOR_MISSING",
           }));
         }
         scheduled = next;
         iterations += 1;
       }
     }
-    return { definitions: definitions.length, generated };
+    return { definitions: definitions.length, generated, paused };
   }
 
   async getAnalytics(actor: User, windowDays = 30, now = new Date()) {

@@ -6,7 +6,7 @@ import type { Task, User } from "../src/domain/models";
 
 const head: User = {
   id: "10000000-0000-4000-8000-000000000001", telegramUserId: "1001", telegramUsername: "head",
-  displayName: "Head", role: "HEAD_OF_MARKETING", isActive: true,
+  displayName: "Head", role: "HEAD_OF_MARKETING", isActive: true, deactivatedAt: null,
   createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-01T00:00:00Z",
 };
 const employee: User = { ...head, id: "10000000-0000-4000-8000-000000000002", telegramUserId: "1002", displayName: "Diyorbek", role: "SMM_MANAGER" };

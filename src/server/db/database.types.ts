@@ -7,8 +7,21 @@ type UserRow = {
   display_name: string;
   role: "OPERATOR_VIDEO_EDITOR" | "CONTENT_MARKETER" | "DIGITAL_MARKETER" | "SMM_MANAGER" | "HEAD_OF_MARKETING";
   is_active: boolean;
+  deactivated_at: string | null;
+  deactivated_by: string | null;
   created_at: string;
   updated_at: string;
+}
+
+type UserEventRow = {
+  id: string;
+  user_id: string;
+  actor_id: string | null;
+  event_type: "USER_ACTIVATED" | "USER_DEACTIVATED" | "USER_REACTIVATED" | "USER_ROLE_CHANGED";
+  old_value: Json | null;
+  new_value: Json | null;
+  metadata: Json;
+  created_at: string;
 }
 
 type TaskRow = {
@@ -96,6 +109,7 @@ type RecurringDefinitionRow = {
   ends_on: string | null;
   status: "ACTIVE" | "PAUSED" | "STOPPED";
   next_occurrence_at: string | null;
+  pause_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -121,6 +135,18 @@ type ReportDeliveryRow = {
   completed_at: string | null;
 }
 
+type ReminderDeliveryRow = {
+  id: string;
+  task_id: string;
+  deadline: string;
+  reminder_type: "H24_BEFORE" | "H3_BEFORE" | "AT_DEADLINE" | "H1_OVERDUE" | "H24_OVERDUE";
+  status: "CLAIMED" | "SENT" | "FAILED";
+  failure_reason: string | null;
+  metadata: Json;
+  created_at: string;
+  completed_at: string | null;
+}
+
 type TableDefinition<Row> = {
   Row: Row;
   Insert: Partial<Row>;
@@ -141,6 +167,8 @@ export interface Database {
       task_checklists: TableDefinition<ChecklistRow>;
       task_checklist_items: TableDefinition<ChecklistItemRow>;
       report_deliveries: TableDefinition<ReportDeliveryRow>;
+      user_events: TableDefinition<UserEventRow>;
+      task_reminder_deliveries: TableDefinition<ReminderDeliveryRow>;
     };
     Views: Record<never, never>;
     Functions: {
@@ -203,6 +231,26 @@ export interface Database {
           p_resolution_note: string | null;
         };
         Returns: DeadlineRequestRow;
+      };
+      activate_user_with_event: {
+        Args: { p_user_id: string; p_actor_id: string; p_role: UserRow["role"] };
+        Returns: UserRow;
+      };
+      update_user_role_with_event: {
+        Args: { p_user_id: string; p_actor_id: string; p_role: UserRow["role"] };
+        Returns: UserRow;
+      };
+      deactivate_user_with_event: {
+        Args: { p_user_id: string; p_actor_id: string };
+        Returns: UserRow;
+      };
+      reactivate_user_with_event: {
+        Args: { p_user_id: string; p_actor_id: string };
+        Returns: UserRow;
+      };
+      reassign_task_with_event: {
+        Args: { p_task_id: string; p_new_assignee_id: string; p_actor_id: string };
+        Returns: TaskRow;
       };
     };
     Enums: Record<never, never>;

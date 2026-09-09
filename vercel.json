@@ -4,6 +4,7 @@
     { "path": "/api/cron/daily-morning", "schedule": "0 3 * * *" },
     { "path": "/api/cron/daily-evening", "schedule": "0 14 * * *" },
     { "path": "/api/cron/weekly", "schedule": "0 5 * * 0" },
-    { "path": "/api/cron/recurring", "schedule": "*/5 * * * *" }
+    { "path": "/api/cron/recurring", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/reminders", "schedule": "*/10 * * * *" }
   ]
 }

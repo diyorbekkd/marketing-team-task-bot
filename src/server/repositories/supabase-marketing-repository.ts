@@ -9,6 +9,7 @@ import type {
 import { ApplicationError } from "@/application/errors";
 import type { TeamRole } from "@/domain/permissions";
 import type { TaskStatus } from "@/domain/task";
+import type { ReminderType } from "@/domain/reminders";
 import type {
   DeadlineChangeRequest,
   PostingChecklist,
@@ -35,6 +36,7 @@ const UserRowSchema = z.object({
     "HEAD_OF_MARKETING",
   ]),
   is_active: z.boolean(),
+  deactivated_at: z.string().nullable().default(null),
   created_at: z.string(),
   updated_at: z.string(),
 });
@@ -115,6 +117,7 @@ const RecurringDefinitionRowSchema = z.object({
   weekday: z.number().int().nullable(), day_of_month: z.number().int().nullable(), local_time: z.string(),
   timezone: z.literal("Asia/Tashkent"), ends_on: z.string().nullable(),
   status: z.enum(["ACTIVE", "PAUSED", "STOPPED"]), next_occurrence_at: z.string().nullable(),
+  pause_reason: z.string().nullable().default(null),
   created_at: z.string(), updated_at: z.string(),
 });
 
@@ -127,6 +130,7 @@ function mapUser(input: unknown): User {
     displayName: row.display_name,
     role: row.role,
     isActive: row.is_active,
+    deactivatedAt: row.deactivated_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -147,7 +151,7 @@ function mapRecurringDefinition(input: unknown): RecurringDefinition {
     title: row.title, description: row.description, priority: row.priority, assigneeId: row.assignee_id,
     frequency: row.frequency, weekday: row.weekday, dayOfMonth: row.day_of_month,
     localTime: row.local_time.slice(0, 5), timezone: row.timezone, endsOn: row.ends_on,
-    status: row.status, nextOccurrenceAt: row.next_occurrence_at,
+    status: row.status, nextOccurrenceAt: row.next_occurrence_at, pauseReason: row.pause_reason,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
 }
@@ -275,29 +279,36 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return (data ?? []).map(mapUser);
   }
 
-  async activateUser(userId: string, role: TeamRole): Promise<User> {
-    const { data, error } = await this.client
-      .from("users")
-      .update({ role, is_active: true })
-      .eq("id", userId)
-      .eq("is_active", false)
-      .select("*")
-      .single();
+  async activateUser(input: { userId: string; actorId: string; role: TeamRole }): Promise<User> {
+    const { data, error } = await this.client.rpc("activate_user_with_event", {
+      p_user_id: input.userId, p_actor_id: input.actorId, p_role: input.role,
+    });
     if (error || !data) throwDataError(error, "Unable to activate user.");
-    return mapUser(data);
+    return mapUser(rpcRecord(data));
   }
 
-  async updateUserRole(userId: string, role: TeamRole): Promise<User> {
-    const { data, error } = await this.client
-      .from("users")
-      .update({ role })
-      .eq("id", userId)
-      .eq("is_active", true)
-      .neq("role", "HEAD_OF_MARKETING")
-      .select("*")
-      .single();
+  async updateUserRole(input: { userId: string; actorId: string; role: TeamRole }): Promise<User> {
+    const { data, error } = await this.client.rpc("update_user_role_with_event", {
+      p_user_id: input.userId, p_actor_id: input.actorId, p_role: input.role,
+    });
     if (error || !data) throwDataError(error, "Unable to update role.");
-    return mapUser(data);
+    return mapUser(rpcRecord(data));
+  }
+
+  async deactivateUser(input: { userId: string; actorId: string }): Promise<User> {
+    const { data, error } = await this.client.rpc("deactivate_user_with_event", {
+      p_user_id: input.userId, p_actor_id: input.actorId,
+    });
+    if (error || !data) throwDataError(error, "Unable to remove team member.");
+    return mapUser(rpcRecord(data));
+  }
+
+  async reactivateUser(input: { userId: string; actorId: string }): Promise<User> {
+    const { data, error } = await this.client.rpc("reactivate_user_with_event", {
+      p_user_id: input.userId, p_actor_id: input.actorId,
+    });
+    if (error || !data) throwDataError(error, "Unable to reactivate team member.");
+    return mapUser(rpcRecord(data));
   }
 
   async createTask(input: CreateTaskRecord): Promise<Task> {
@@ -341,6 +352,14 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       p_reason: input.reason ?? null,
     });
     if (error || !data) throwDataError(error, "Unable to update task.");
+    return mapTask(rpcRecord(data));
+  }
+
+  async reassignTask(input: { taskId: string; newAssigneeId: string; actorId: string }): Promise<Task> {
+    const { data, error } = await this.client.rpc("reassign_task_with_event", {
+      p_task_id: input.taskId, p_new_assignee_id: input.newAssigneeId, p_actor_id: input.actorId,
+    });
+    if (error || !data) throwDataError(error, "Unable to reassign task.");
     return mapTask(rpcRecord(data));
   }
 
@@ -465,6 +484,12 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return (data ?? []).map(mapRecurringDefinition);
   }
 
+  async listRecurringDefinitionsByAssignee(assigneeId: string): Promise<RecurringDefinition[]> {
+    const { data, error } = await this.client.from("recurring_definitions").select("*").eq("assignee_id", assigneeId);
+    if (error) throwDataError(error, "Unable to list recurring tasks.");
+    return (data ?? []).map(mapRecurringDefinition);
+  }
+
   async createRecurringDefinition(input: Parameters<MarketingRepository["createRecurringDefinition"]>[0]): Promise<RecurringDefinition> {
     const { data, error } = await this.client.from("recurring_definitions").insert({
       source_task_id: input.sourceTaskId, created_by: input.createdBy, title: input.title,
@@ -485,6 +510,8 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       ends_on?: string | null;
       status?: "ACTIVE" | "PAUSED" | "STOPPED";
       next_occurrence_at?: string | null;
+      pause_reason?: string | null;
+      assignee_id?: string;
     } = {};
     if (input.frequency !== undefined) changes.frequency = input.frequency;
     if (input.weekday !== undefined) changes.weekday = input.weekday;
@@ -493,6 +520,8 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     if (input.endsOn !== undefined) changes.ends_on = input.endsOn;
     if (input.status !== undefined) changes.status = input.status;
     if (input.nextOccurrenceAt !== undefined) changes.next_occurrence_at = input.nextOccurrenceAt;
+    if (input.pauseReason !== undefined) changes.pause_reason = input.pauseReason;
+    if (input.assigneeId !== undefined) changes.assignee_id = input.assigneeId;
     const { data, error } = await this.client.from("recurring_definitions").update(changes).eq("id", input.id).select("*").single();
     if (error || !data) throwDataError(error, "Unable to update recurring task.");
     return mapRecurringDefinition(data);
@@ -524,5 +553,31 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     }).eq("report_type", input.reportType).eq("interval_key", input.intervalKey)
       .eq("recipient_user_id", input.recipientUserId);
     if (error) throwDataError(error, "Unable to complete report delivery.");
+  }
+
+  async claimReminderDelivery(input: { taskId: string; deadline: string; reminderType: ReminderType }): Promise<boolean> {
+    const { error } = await this.client.from("task_reminder_deliveries").insert({
+      task_id: input.taskId, deadline: input.deadline, reminder_type: input.reminderType,
+    });
+    if (!error) return true;
+    if (error.code === "23505") return false;
+    throwDataError(error, "Unable to claim reminder delivery.");
+  }
+
+  async completeReminderDelivery(input: {
+    taskId: string;
+    deadline: string;
+    reminderType: ReminderType;
+    status: "SENT" | "FAILED";
+    failureReason?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    const { error } = await this.client.from("task_reminder_deliveries").update({
+      status: input.status,
+      failure_reason: input.failureReason ?? null,
+      metadata: (input.metadata ?? {}) as Record<string, string>,
+      completed_at: new Date().toISOString(),
+    }).eq("task_id", input.taskId).eq("deadline", input.deadline).eq("reminder_type", input.reminderType);
+    if (error) throwDataError(error, "Unable to complete reminder delivery.");
   }
 }

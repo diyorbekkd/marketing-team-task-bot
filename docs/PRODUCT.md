@@ -26,6 +26,16 @@ The Head of Marketing is the `SUPER_ADMIN`, while remaining a normal participant
 
 Telegram onboarding will associate an internal user with a signed 64-bit `telegram_user_id`, an optional username, and a display name. Usernames are conveniences, not permanent identity keys.
 
+### Team membership
+
+A user is either **pending** (never activated — `is_active = false`, no `deactivated_at`), **active** (`is_active = true`), or **deactivated** (a former active member — `is_active = false`, `deactivated_at` set). Pending and deactivated are deliberately distinct states: a pending user is onboarded through the existing Activate-with-role flow; a deactivated user is restored through Reactivate, which keeps their prior role rather than asking Head to choose one again.
+
+Only Head may activate, deactivate, or reactivate a team member, and Head can never deactivate themself or any other Head account — the only path to removing a Head from the team is a direct database operation outside this product, which matches the existing constraint that at most one user may hold the `HEAD_OF_MARKETING` role and be active at a time.
+
+An active user can use the bot and Mini App, be assigned new tasks, and appears in assignee pickers, current team lists, and workload/analytics. A deactivated user cannot perform bot actions or authenticated Mini App requests (their session and every future Telegram command are rejected before reaching any business logic), cannot be assigned new tasks by any creation path (group shorthand, private bot, Mini App Quick Add, or recurring task configuration/generation), does not receive workflow notifications, deadline reminders, or scheduled reports, and is excluded from current team/workload views. Their historical tasks, audit events, and past report/analytics activity are never rewritten or hidden — only their current membership state changes.
+
+Deactivating a member with open (non-terminal) tasks requires Head to explicitly choose what happens to those tasks: reassign them all to a named active teammate (this also sends that teammate the normal task-assignment notification), cancel them, or keep the historical assignment as-is. There is no silent default that reassigns or orphans work. Any of that member's `ACTIVE` recurring definitions are automatically paused (recorded as `pauseReason: "ASSIGNEE_DEACTIVATED"`) so the scheduler cannot keep generating tasks for someone no longer on the team; Head can later change the recurrence's assignee and resume it. Deactivation never deletes a row — user, task, and recurrence history all remain queryable — so reactivation cannot create a duplicate account.
+
 ## Interfaces
 
 All interfaces use the same backend, database, application services, and authorization rules.
@@ -130,9 +140,11 @@ Important mutations append an immutable task event containing task, actor, event
 
 Analytics must use history where historical state matters rather than attempting to infer everything from the current `tasks` row.
 
+Membership changes append a separate, equally immutable `user_events` record (actor, target user, event type, old/new value, timestamp) for `USER_ACTIVATED`, `USER_DEACTIVATED`, `USER_REACTIVATED`, and `USER_ROLE_CHANGED`. Routine UI interactions are not logged this way — only state changes that affect who is on the active team or what they're allowed to do.
+
 ## Notifications and reports
 
-Future deadline notifications occur 24 hours before, 3 hours before, at the deadline, 1 hour overdue, and 24 hours overdue.
+Deadline reminders fire for every active (non-`DONE`/`CANCELLED`) task at five thresholds relative to its deadline: 24 hours before, 3 hours before, at the deadline, 1 hour overdue, and 24 hours overdue. Before/at-deadline reminders go to the assignee only; the two overdue reminders escalate to the assignee, creator, and Head (deduplicated, so a creator who is also Head or the assignee receives one message, not two). Delivery is idempotent per `(task_id, deadline, reminder_type)` — a cron sweep that runs every few minutes, or runs twice, never resends a reminder that already went out for that exact deadline value. Changing a task's deadline starts a fresh reminder cycle for the new value; delivery history for the old deadline is untouched and does not block the new one. A threshold that passed more than a few hours before the sweep first sees it is treated as missed rather than fired retroactively, so deploying this feature (or recovering from a scheduler gap) does not burst-notify on old deadlines.
 
 Scheduled reports use `Asia/Tashkent`:
 

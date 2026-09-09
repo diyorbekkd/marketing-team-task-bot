@@ -4,6 +4,8 @@ import type {
   AssignmentNotificationInput,
   AssignmentNotificationResult,
   NotificationDispatcher,
+  ReminderNotificationInput,
+  ReminderNotificationResult,
   WorkflowNotificationDelivery,
   WorkflowNotificationInput,
   WorkflowNotificationResult,
@@ -30,6 +32,15 @@ function formatDeadline(deadline: string): string {
   const value = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
   return `${value("day")}.${value("month")}.${value("year")} ${value("hour")}:${value("minute")}`;
+}
+
+function formatDeadlineTime(deadline: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tashkent",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(deadline));
 }
 
 function userLabel(user: User): string {
@@ -152,6 +163,81 @@ function workflowMessage(input: WorkflowNotificationInput, appUrl: string): Tele
   }
 }
 
+function reminderMessage(input: ReminderNotificationInput, appUrl: string): TelegramNotificationMessage {
+  const { task, reminderType } = input;
+  const replyMarkup = { inline_keyboard: [openTaskButton(appUrl)] };
+
+  switch (reminderType) {
+    case "H24_BEFORE":
+      return {
+        text: ["⏰ Deadline yaqinlashmoqda", "", `Task: ${task.title}`, `Deadline: ${formatDeadline(task.deadline)}`, "Qoldi: 24 soat"].join("\n"),
+        replyMarkup,
+      };
+    case "H3_BEFORE":
+      return {
+        text: ["⚠️ Deadline yaqin", "", `Task: ${task.title}`, `Deadline: ${formatDeadlineTime(task.deadline)}`, "Qoldi: 3 soat"].join("\n"),
+        replyMarkup,
+      };
+    case "AT_DEADLINE":
+      return {
+        text: ["🔴 Deadline keldi", "", `Task: ${task.title}`, `Deadline: ${formatDeadlineTime(task.deadline)}`].join("\n"),
+        replyMarkup,
+      };
+    case "H1_OVERDUE":
+      return {
+        text: ["🔴 Task kechikdi", "", `Task: ${task.title}`, `Deadline: ${formatDeadlineTime(task.deadline)}`, "Kechikish: 1 soat"].join("\n"),
+        replyMarkup,
+      };
+    case "H24_OVERDUE":
+      return {
+        text: ["🚨 Task 24 soatdan beri overdue", "", `Task: ${task.title}`].join("\n"),
+        replyMarkup,
+      };
+  }
+}
+
+async function sendToUniqueRecipients(
+  botToken: string,
+  recipients: readonly User[],
+  message: TelegramNotificationMessage,
+): Promise<readonly WorkflowNotificationDelivery[]> {
+  const uniqueRecipients = new Map<string, User>();
+  for (const recipient of recipients) {
+    const key = recipientKey(recipient);
+    if (!uniqueRecipients.has(key)) {
+      uniqueRecipients.set(key, recipient);
+    }
+  }
+
+  return Promise.all([...uniqueRecipients.values()].map(async (recipient) => {
+    if (!/^\d+$/.test(recipient.telegramUserId)) {
+      return {
+        recipientUserId: recipient.id,
+        status: "FAILED",
+        reason: "RECIPIENT_NOT_ONBOARDED",
+      } satisfies WorkflowNotificationDelivery;
+    }
+
+    try {
+      await sendTelegramMessage(botToken, {
+        chatId: recipient.telegramUserId,
+        text: message.text,
+        replyMarkup: message.replyMarkup,
+      });
+      return {
+        recipientUserId: recipient.id,
+        status: "SENT",
+      } satisfies WorkflowNotificationDelivery;
+    } catch {
+      return {
+        recipientUserId: recipient.id,
+        status: "FAILED",
+        reason: "DELIVERY_FAILED",
+      } satisfies WorkflowNotificationDelivery;
+    }
+  }));
+}
+
 export class TelegramNotificationDispatcher implements NotificationDispatcher, ReportDispatcher {
   constructor(
     private readonly botToken: string,
@@ -191,42 +277,13 @@ export class TelegramNotificationDispatcher implements NotificationDispatcher, R
 
   async notifyWorkflow(input: WorkflowNotificationInput): Promise<WorkflowNotificationResult> {
     const message = workflowMessage(input, this.appUrl);
-    const uniqueRecipients = new Map<string, User>();
-    for (const recipient of input.recipients) {
-      const key = recipientKey(recipient);
-      if (!uniqueRecipients.has(key)) {
-        uniqueRecipients.set(key, recipient);
-      }
-    }
+    const deliveries = await sendToUniqueRecipients(this.botToken, input.recipients, message);
+    return { deliveries };
+  }
 
-    const deliveries = await Promise.all([...uniqueRecipients.values()].map(async (recipient) => {
-      if (!/^\d+$/.test(recipient.telegramUserId)) {
-        return {
-          recipientUserId: recipient.id,
-          status: "FAILED",
-          reason: "RECIPIENT_NOT_ONBOARDED",
-        } satisfies WorkflowNotificationDelivery;
-      }
-
-      try {
-        await sendTelegramMessage(this.botToken, {
-          chatId: recipient.telegramUserId,
-          text: message.text,
-          replyMarkup: message.replyMarkup,
-        });
-        return {
-          recipientUserId: recipient.id,
-          status: "SENT",
-        } satisfies WorkflowNotificationDelivery;
-      } catch {
-        return {
-          recipientUserId: recipient.id,
-          status: "FAILED",
-          reason: "DELIVERY_FAILED",
-        } satisfies WorkflowNotificationDelivery;
-      }
-    }));
-
+  async notifyReminder(input: ReminderNotificationInput): Promise<ReminderNotificationResult> {
+    const message = reminderMessage(input, this.appUrl);
+    const deliveries = await sendToUniqueRecipients(this.botToken, input.recipients, message);
     return { deliveries };
   }
 

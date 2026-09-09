@@ -11,6 +11,7 @@ export async function GET() {
       displayName: user.displayName,
       role: user.role,
       isActive: user.isActive,
+      deactivatedAt: user.deactivatedAt,
     }));
     return Response.json({ users });
   } catch (error) {

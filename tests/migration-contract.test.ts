@@ -17,6 +17,10 @@ const nextPhaseMigration = readFileSync(
   new URL("../supabase/migrations/20260909090000_next_product_phase.sql", import.meta.url),
   "utf8",
 );
+const remindersMembershipMigration = readFileSync(
+  new URL("../supabase/migrations/20260909200000_reminders_and_membership.sql", import.meta.url),
+  "utf8",
+);
 
 describe("fast-track database workflow contract", () => {
   it("locks workflow rows and revalidates lifecycle transitions in the transaction", () => {
@@ -88,5 +92,36 @@ describe("next product phase database contract", () => {
     expect(nextPhaseMigration).toContain("create function public.toggle_posting_checklist_item");
     expect(nextPhaseMigration).toContain("create function public.generate_recurring_task");
     expect(nextPhaseMigration).toContain("for update;");
+  });
+});
+
+describe("deadline reminders and team-membership database contract", () => {
+  it("keeps membership state changes and their audit events atomic, and protects Head from self/other removal", () => {
+    for (const fn of [
+      "activate_user_with_event", "update_user_role_with_event", "deactivate_user_with_event",
+      "reactivate_user_with_event", "reassign_task_with_event",
+    ]) {
+      expect(remindersMembershipMigration).toContain(`create function public.${fn}(`);
+      expect(remindersMembershipMigration).toContain(`grant execute on function public.${fn}`);
+    }
+    expect(remindersMembershipMigration).toContain("cannot deactivate yourself");
+    expect(remindersMembershipMigration).toContain("head cannot be deactivated through this flow");
+    expect(remindersMembershipMigration).toContain("head role transfer is outside this flow");
+  });
+
+  it("distinguishes a never-activated pending user from a deactivated former member", () => {
+    expect(remindersMembershipMigration).toContain("users_deactivated_at_matches_state");
+    expect(remindersMembershipMigration).toContain("user was never an active member; use activation instead");
+  });
+
+  it("locks down the reminder ledger and keys idempotency by task, deadline, and reminder type", () => {
+    expect(remindersMembershipMigration).toContain("alter table public.task_reminder_deliveries enable row level security");
+    expect(remindersMembershipMigration).toContain("revoke all on table public.task_reminder_deliveries from public, anon, authenticated");
+    expect(remindersMembershipMigration).toContain("unique (task_id, deadline, reminder_type)");
+  });
+
+  it("locks down the new user_events audit table", () => {
+    expect(remindersMembershipMigration).toContain("alter table public.user_events enable row level security");
+    expect(remindersMembershipMigration).toContain("revoke all on table public.user_events from public, anon, authenticated");
   });
 });

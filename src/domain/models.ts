@@ -12,8 +12,32 @@ export const UserSchema = z.object({
   displayName: z.string(),
   role: TeamRoleSchema,
   isActive: z.boolean(),
+  /** Set when this user was a previously-active member who was removed from the
+   * team. Distinguishes "deactivated" from "never activated" — both have
+   * isActive === false, but only a deactivated user has this set, and only a
+   * deactivated user can be Reactivated (a never-activated user goes through
+   * the ordinary Activate-with-role flow instead). */
+  deactivatedAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+});
+
+export const UserEventTypeSchema = z.enum([
+  "USER_ACTIVATED",
+  "USER_DEACTIVATED",
+  "USER_REACTIVATED",
+  "USER_ROLE_CHANGED",
+]);
+
+export const UserEventSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  actorId: z.string().uuid().nullable(),
+  eventType: UserEventTypeSchema,
+  oldValue: z.unknown(),
+  newValue: z.unknown(),
+  metadata: z.record(z.string(), z.unknown()),
+  createdAt: z.string(),
 });
 
 export const PostingChecklistItemSchema = z.object({
@@ -53,6 +77,10 @@ export const RecurringDefinitionSchema = z.object({
   endsOn: z.string().nullable(),
   status: RecurrenceStatusSchema,
   nextOccurrenceAt: z.string().nullable(),
+  /** Set when the current PAUSED status was applied automatically (for example,
+   * because the assignee was removed from the team) rather than by a Head
+   * choosing to pause it. Cleared on resume/stop or a manual pause. */
+  pauseReason: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -111,3 +139,5 @@ export type PostingChecklistItem = z.infer<typeof PostingChecklistItemSchema>;
 export type RecurringDefinition = z.infer<typeof RecurringDefinitionSchema>;
 export type RecurrenceFrequency = z.infer<typeof RecurrenceFrequencySchema>;
 export type RecurrenceStatus = z.infer<typeof RecurrenceStatusSchema>;
+export type UserEvent = z.infer<typeof UserEventSchema>;
+export type UserEventType = z.infer<typeof UserEventTypeSchema>;

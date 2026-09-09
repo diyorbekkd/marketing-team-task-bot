@@ -175,7 +175,9 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
             chatId: message.chat.id,
             text: user.isActive
               ? `Welcome, ${user.displayName}. Your role is ${user.role}. Open the Mini App to manage tasks.`
-              : `Thanks, ${user.displayName}. Your account is pending activation by Head of Marketing.`,
+              : user.deactivatedAt
+                ? "Siz hozir aktiv marketing jamoasida emassiz. Head of Marketing bilan bog‘laning."
+                : `Thanks, ${user.displayName}. Your account is pending activation by Head of Marketing.`,
           }],
         };
       }

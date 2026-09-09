@@ -12,6 +12,7 @@ const actor: User = {
   displayName: "Team Lead",
   role: "HEAD_OF_MARKETING",
   isActive: true,
+  deactivatedAt: null,
   createdAt: "2026-09-06T12:00:00.000Z",
   updatedAt: "2026-09-06T12:00:00.000Z",
 };

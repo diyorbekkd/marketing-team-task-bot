@@ -520,6 +520,48 @@
   border-color: var(--primary);
 }
 
+.ma-workload-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.ma-workload-edit.danger:hover,
+.ma-workload-edit.danger:focus-visible {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.ma-workload-row.inactive {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.ma-collapse-toggle {
+  width: 100%;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.ma-fact-list {
+  margin: 8px 0 14px;
+  padding-left: 18px;
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+
+.ma-fact-list.muted {
+  color: var(--muted);
+}
+
+.ma-fact-list li {
+  margin-bottom: 4px;
+}
+
 .ma-workload-edit:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;

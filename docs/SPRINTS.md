@@ -81,3 +81,10 @@ The user explicitly reordered and activated this scope after the production MVP:
 - Posting: deterministic creation-time tag detection, persistent four-item checklist, audited toggles, transactional REVIEW gate, Telegram inline controls, Mini App card.
 - Recurring: Mini App schedule controls, immutable generated occurrences, atomic deduplication, pause/resume/edit/stop.
 - Analytics: 30-day factual counts and event-derived durations, personal/team authorization, compact mobile Reports tab, no workload/KPI score.
+
+## Deadline reminders and team-member management — authorized 2026-09-09
+
+Second same-day increment on `fast-track/mvp`, again without touching the Telegram positional task format.
+
+- Reminders: five deterministic thresholds (24h/3h/at-deadline/1h-overdue/24h-overdue) per active task, `(task_id, deadline, reminder_type)` idempotency ledger, assignee-only before/at-deadline and assignee+creator+Head overdue escalation, protected Vercel Cron every 10 minutes, a bounded catch-up window so a scheduler gap or first deploy doesn't burst-notify on old deadlines.
+- Team membership: explicit deactivated-vs-pending distinction (`deactivated_at`), Head-only deactivate/reactivate with self/Head protection, mandatory open-task disposition (reassign/cancel/keep) before removal, automatic pause of the removed member's active recurring definitions, atomic `*_with_event` state-change functions with a new `user_events` audit trail, and every task-creation/recurrence path already rejecting inactive assignees was audited and closed where it wasn't (recurring configuration and generation).
