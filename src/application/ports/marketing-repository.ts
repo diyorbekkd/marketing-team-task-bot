@@ -25,6 +25,7 @@ export interface MarketingRepository {
   findActiveUserByUsername(username: string): Promise<User | null>;
   listUsers(): Promise<User[]>;
   activateUser(userId: string, role: TeamRole): Promise<User>;
+  updateUserRole(userId: string, role: TeamRole): Promise<User>;
 
   createTask(input: CreateTaskRecord): Promise<Task>;
   getTask(taskId: string): Promise<Task | null>;

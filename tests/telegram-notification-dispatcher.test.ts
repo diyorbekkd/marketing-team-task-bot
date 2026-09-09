@@ -157,6 +157,15 @@ describe("Telegram notification dispatcher", () => {
       },
       {
         input: {
+          event: "TASK_ACCEPTED",
+          task: { ...task, status: "IN_PROGRESS" },
+          actor: assignee,
+          recipients: [creator],
+        },
+        expectedText: "✅ Task qabul qilindi\n\nTask: Publish launch reel\nAssignee: @editor\nDeadline:",
+      },
+      {
+        input: {
           event: "TASK_COMPLETED",
           task: { ...task, status: "DONE" },
           actor: creator,
@@ -215,6 +224,30 @@ describe("Telegram notification dispatcher", () => {
           [{ text: "📋 Open Task", web_app: { url: "https://tasks.example.com" } }],
         ],
       },
+    }));
+  });
+
+  it("sends the creator a full accept notification when their task is accepted", async () => {
+    sendTelegramMessage.mockResolvedValue(undefined);
+    const notifier = new TelegramNotificationDispatcher("test-token", "https://tasks.example.com");
+
+    await notifier.notifyWorkflow({
+      event: "TASK_ACCEPTED",
+      task: { ...task, status: "IN_PROGRESS" },
+      actor: assignee,
+      recipients: [creator],
+    });
+
+    expect(sendTelegramMessage).toHaveBeenCalledWith("test-token", expect.objectContaining({
+      chatId: creator.telegramUserId,
+      text: [
+        "✅ Task qabul qilindi",
+        "",
+        "Task: Publish launch reel",
+        "Assignee: @editor",
+        "Deadline: 08.09.2026 18:00",
+        "Status: In Progress",
+      ].join("\n"),
     }));
   });
 

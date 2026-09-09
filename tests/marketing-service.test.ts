@@ -79,6 +79,10 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     findActiveUserByUsername: vi.fn(),
     listUsers: vi.fn(async () => [head, creator, assignee, unrelated]),
     activateUser: vi.fn(),
+    updateUserRole: vi.fn(async (userId, role) => {
+      const found = [head, creator, assignee, unrelated].find((candidate) => candidate.id === userId);
+      return { ...(found ?? assignee), role };
+    }),
     createTask: vi.fn(),
     getTask: vi.fn(async () => task()),
     listTasks: vi.fn(async () => [task()]),
@@ -390,5 +394,139 @@ describe("MarketingService MVP permissions", () => {
     expect(result.task).toEqual(created);
     expect(result.notification).toEqual({ status: "FAILED", reason: "DELIVERY_FAILED" });
     expect(repo.createTask).toHaveBeenCalledTimes(1);
+  });
+
+  describe("accept notifies the creator", () => {
+    it("notifies the creator through the shared workflow when the assignee accepts", async () => {
+      const repo = repository({ getTask: vi.fn(async () => task({ status: "ASSIGNED" })) });
+      const notifications = notifier();
+      const service = new MarketingService(repo, notifications);
+
+      const result = await service.performTaskAction(assignee, ids.task, { action: "ACCEPT" });
+
+      expect(result.status).toBe("IN_PROGRESS");
+      expect(repo.transitionTask).toHaveBeenCalledWith(expect.objectContaining({
+        actorId: ids.assignee,
+        newStatus: "IN_PROGRESS",
+      }));
+      expect(notifications.notifyWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+        event: "TASK_ACCEPTED",
+        recipients: [creator],
+      }));
+    });
+
+    it("this is the same code path Telegram and the Mini App both call, so both transports notify identically", async () => {
+      // There is exactly one acceptance workflow (MarketingService.performTaskAction).
+      // Neither the Telegram handler nor the Mini App route implements acceptance
+      // notification on its own — both call this method, so this single test
+      // stands in for "accept via Mini App" and "accept via Telegram" alike.
+      const repo = repository({ getTask: vi.fn(async () => task({ status: "ASSIGNED" })) });
+      const notifications = notifier();
+      await new MarketingService(repo, notifications).performTaskAction(assignee, ids.task, { action: "ACCEPT" });
+      expect(notifications.notifyWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not notify anyone when the creator accepts their own self-assigned task", async () => {
+      const selfTask = task({ creatorId: ids.assignee, assigneeId: ids.assignee, status: "ASSIGNED" });
+      const repo = repository({ getTask: vi.fn(async () => selfTask) });
+      const notifications = notifier();
+      const service = new MarketingService(repo, notifications);
+
+      await service.performTaskAction(assignee, ids.task, { action: "ACCEPT" });
+
+      expect(notifications.notifyWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("rejects a duplicate accept once the task is already in progress, sending no second notification", async () => {
+      const notifications = notifier();
+      let currentStatus: "ASSIGNED" | "IN_PROGRESS" = "ASSIGNED";
+      const repo = repository({
+        getTask: vi.fn(async () => task({ status: currentStatus })),
+        transitionTask: vi.fn(async (input) => {
+          currentStatus = "IN_PROGRESS";
+          return task({ status: input.newStatus });
+        }),
+      });
+      const service = new MarketingService(repo, notifications);
+
+      await service.performTaskAction(assignee, ids.task, { action: "ACCEPT" });
+      await expect(service.performTaskAction(assignee, ids.task, { action: "ACCEPT" }))
+        .rejects.toMatchObject({ code: "CONFLICT" });
+
+      expect(repo.transitionTask).toHaveBeenCalledTimes(1);
+      expect(notifications.notifyWorkflow).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the accepted task state even if the creator notification fails to send", async () => {
+      const repo = repository({ getTask: vi.fn(async () => task({ status: "ASSIGNED" })) });
+      const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const notifications = notifier({
+        notifyWorkflow: vi.fn(async () => { throw new Error("delivery failed"); }),
+      });
+      const service = new MarketingService(repo, notifications);
+
+      await expect(service.performTaskAction(assignee, ids.task, { action: "ACCEPT" }))
+        .resolves.toMatchObject({ status: "IN_PROGRESS" });
+      expect(repo.transitionTask).toHaveBeenCalledTimes(1);
+      warning.mockRestore();
+    });
+  });
+
+  describe("role can be corrected later", () => {
+    it("lets Head correct another team member's role", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+
+      const updated = await service.updateUserRole(head, ids.assignee, "DIGITAL_MARKETER");
+
+      expect(repo.updateUserRole).toHaveBeenCalledWith(ids.assignee, "DIGITAL_MARKETER");
+      expect(updated.role).toBe("DIGITAL_MARKETER");
+    });
+
+    it("lets a team member correct their own mis-set role", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+
+      await service.updateUserRole(assignee, ids.assignee, "CONTENT_MARKETER");
+
+      expect(repo.updateUserRole).toHaveBeenCalledWith(ids.assignee, "CONTENT_MARKETER");
+    });
+
+    it("does not let an ordinary user change someone else's role", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+
+      await expect(service.updateUserRole(assignee, ids.creator, "DIGITAL_MARKETER"))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(repo.updateUserRole).not.toHaveBeenCalled();
+    });
+
+    it("never allows self-promotion to Head, even for Head acting on themself", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+
+      await expect(service.updateUserRole(assignee, ids.assignee, "HEAD_OF_MARKETING"))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
+      await expect(service.updateUserRole(head, ids.head, "HEAD_OF_MARKETING"))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.updateUserRole).not.toHaveBeenCalled();
+    });
+
+    it("refuses to change the Head's role through this flow, even when Head requests it", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+
+      await expect(service.updateUserRole(head, ids.head, "SMM_MANAGER"))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(repo.updateUserRole).not.toHaveBeenCalled();
+    });
+
+    it("rejects a role change for a user that does not exist", async () => {
+      const repo = repository({ getUserById: vi.fn(async () => null) });
+      const service = new MarketingService(repo, notifier());
+
+      await expect(service.updateUserRole(head, "10000000-0000-4000-8000-000000000099", "SMM_MANAGER"))
+        .rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
   });
 });

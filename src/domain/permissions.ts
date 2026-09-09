@@ -8,6 +8,16 @@ export const TEAM_ROLES = [
 
 export type TeamRole = (typeof TEAM_ROLES)[number];
 
+/** Roles assignable through the activation/role-edit flows. Head is excluded on
+ * purpose: transferring the Head role is a sensitive, out-of-band operation and
+ * must never happen through the generic role-assignment surface. */
+export const NON_HEAD_ROLES = [
+  "OPERATOR_VIDEO_EDITOR",
+  "CONTENT_MARKETER",
+  "DIGITAL_MARKETER",
+  "SMM_MANAGER",
+] as const satisfies readonly TeamRole[];
+
 export interface ActorContext {
   readonly userId: string;
   readonly role: TeamRole;

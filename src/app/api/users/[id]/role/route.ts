@@ -13,7 +13,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const actor = await requireRequestActor();
     const { id } = await context.params;
     const body = BodySchema.parse(await request.json());
-    return Response.json({ user: await getMarketingService().activateUser(actor, id, body.role) });
+    return Response.json({ user: await getMarketingService().updateUserRole(actor, id, body.role) });
   } catch (error) {
     return errorResponse(error);
   }

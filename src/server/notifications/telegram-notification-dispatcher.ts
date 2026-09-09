@@ -110,6 +110,18 @@ function workflowMessage(input: WorkflowNotificationInput, appUrl: string): Tele
           ],
         },
       };
+    case "TASK_ACCEPTED":
+      return {
+        text: [
+          "✅ Task qabul qilindi",
+          "",
+          `Task: ${task.title}`,
+          `Assignee: ${userLabel(actor)}`,
+          `Deadline: ${formatDeadline(task.deadline)}`,
+          "Status: In Progress",
+        ].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
     case "TASK_COMPLETED":
       return {
         text: ["✅ Task qabul qilindi", "", `Task: ${task.title}`].join("\n"),

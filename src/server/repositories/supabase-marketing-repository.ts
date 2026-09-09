@@ -227,6 +227,19 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return mapUser(data);
   }
 
+  async updateUserRole(userId: string, role: TeamRole): Promise<User> {
+    const { data, error } = await this.client
+      .from("users")
+      .update({ role })
+      .eq("id", userId)
+      .eq("is_active", true)
+      .neq("role", "HEAD_OF_MARKETING")
+      .select("*")
+      .single();
+    if (error || !data) throwDataError(error, "Unable to update role.");
+    return mapUser(data);
+  }
+
   async createTask(input: CreateTaskRecord): Promise<Task> {
     const { data, error } = await this.client.rpc("create_task_with_event", {
       p_creator_id: input.creatorId,

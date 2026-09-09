@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApplicationError } from "../src/application/errors";
 import type { MarketingService } from "../src/application/marketing-service";
 import type { Task, User } from "../src/domain/models";
@@ -59,6 +59,18 @@ function serviceMock(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Telegram MVP handler", () => {
+  // The shorthand parser checks deadlines against the real wall clock in
+  // production (correct — a deadline is only "past" relative to now). Fixture
+  // dates below are fixed calendar dates, so the clock is pinned here to keep
+  // these tests deterministic regardless of when the suite actually runs.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-07T00:00:00.000Z"));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("onboards a private-chat user from Telegram identity", async () => {
     const service = serviceMock();
     const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({

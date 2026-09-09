@@ -43,6 +43,27 @@
   min-width: 0;
 }
 
+.ma-topbar-identity {
+  border: none;
+  background: transparent;
+  padding: 4px 2px;
+  margin: -4px -2px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+}
+
+.ma-topbar-identity:hover,
+.ma-topbar-identity:focus-visible {
+  background: var(--primary-soft);
+}
+
+.ma-topbar-identity:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
 .ma-eyebrow {
   font-size: 0.68rem;
   font-weight: 700;
@@ -390,6 +411,73 @@
 
 .ma-workload-count.danger {
   color: var(--danger);
+}
+
+.ma-workload-item {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.ma-workload-item .ma-workload-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.ma-workload-edit {
+  flex: 0 0 44px;
+  width: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.ma-workload-edit:hover,
+.ma-workload-edit:focus-visible {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.ma-workload-edit:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+/* ── Role picker ───────────────────────────────────────────────────────────── */
+
+.ma-role-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.ma-role-option {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.ma-role-option.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.ma-role-option:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
 }
 
 /* ── Bottom navigation ─────────────────────────────────────────────────────── */

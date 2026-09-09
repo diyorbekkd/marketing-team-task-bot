@@ -81,6 +81,37 @@ export class MarketingService {
     return this.repository.activateUser(userId, role);
   }
 
+  /**
+   * Fixes a role picked incorrectly at onboarding. Head may correct anyone's
+   * role; a team member may correct their own. The Head role itself is never
+   * settable here — transferring Head is a deliberate, out-of-scope operation,
+   * so neither a self-promotion nor a Head-to-Head reassignment can happen
+   * through this path.
+   */
+  async updateUserRole(actor: User, userId: string, role: TeamRole): Promise<User> {
+    if (role === "HEAD_OF_MARKETING") {
+      throw new ApplicationError("INVALID_INPUT", "Head role changes are outside this flow.");
+    }
+    const actingOnSelf = actor.id === userId;
+    if (!isHead(actorFromUser(actor)) && !actingOnSelf) {
+      throw new ApplicationError("FORBIDDEN", "Only Head may change another teammate's role.");
+    }
+    const target = await this.repository.getUserById(userId);
+    if (!target) {
+      throw new ApplicationError("NOT_FOUND", "User not found.");
+    }
+    if (!target.isActive) {
+      throw new ApplicationError("CONFLICT", "Pending users are assigned a role through activation.");
+    }
+    if (target.role === "HEAD_OF_MARKETING") {
+      throw new ApplicationError("FORBIDDEN", "Head's role cannot be changed through this flow.");
+    }
+    if (target.role === role) {
+      return target;
+    }
+    return this.repository.updateUserRole(userId, role);
+  }
+
   async createTask(
     actor: User,
     input: unknown,
@@ -211,7 +242,18 @@ export class MarketingService {
       reason: action.reason,
     });
 
-    if (action.action === "SUBMIT_REVIEW") {
+    if (action.action === "ACCEPT") {
+      // The creator gets notified whenever their task is accepted, regardless of
+      // whether the acceptance came from the Telegram bot or the Mini App — both
+      // transports call this same method. Skip the notification when the creator
+      // accepted their own self-assigned task; there is no one else to inform.
+      if (task.creatorId !== actor.id) {
+        await this.dispatchWorkflowNotification(
+          { event: "TASK_ACCEPTED", task: transitionedTask, actor },
+          [task.creatorId],
+        );
+      }
+    } else if (action.action === "SUBMIT_REVIEW") {
       await this.dispatchWorkflowNotification(
         { event: "REVIEW_REQUESTED", task: transitionedTask, actor },
         [task.creatorId],

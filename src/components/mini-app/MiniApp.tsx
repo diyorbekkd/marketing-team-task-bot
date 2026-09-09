@@ -313,6 +313,8 @@ export default function MiniApp() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showPendingUsers, setShowPendingUsers] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const [roleEditUser, setRoleEditUser] = useState<User | null>(null);
   const [taskNotice, setTaskNotice] = useState<{ kind: "success" | "warning"; text: string } | null>(null);
 
   const isHead = currentUser?.role === "HEAD_OF_MARKETING";
@@ -421,6 +423,13 @@ export default function MiniApp() {
     setNav("tasks");
   }, []);
 
+  const handleRoleSaved = useCallback((updated: User) => {
+    setRoleEditUser(null);
+    setUsers((prev) => prev.map((u) => (u.id === updated.id ? { ...u, role: updated.role } : u)));
+    setCurrentUser((prev) => (prev && prev.id === updated.id ? { ...prev, role: updated.role } : prev));
+    setTaskNotice({ kind: "success", text: `Role updated to ${ROLE_LABELS[updated.role]}.` });
+  }, []);
+
   if (authState === "loading") {
     return (
       <div className="ma-center">
@@ -454,10 +463,10 @@ export default function MiniApp() {
     <div className="ma-shell">
       <header className="ma-topbar">
         <div className="ma-brand" aria-hidden="true">M</div>
-        <div className="ma-topbar-text">
-          <span className="ma-eyebrow">Marketing workspace</span>
+        <button className="ma-topbar-text ma-topbar-identity" onClick={() => setShowProfile(true)}>
+          <span className="ma-eyebrow">{currentUser ? ROLE_LABELS[currentUser.role] : "Marketing workspace"}</span>
           <span className="ma-username">{currentUser?.displayName}</span>
-        </div>
+        </button>
         <div className="ma-topbar-actions">
           {isHead && pendingUsers.length > 0 && (
             <button
@@ -527,6 +536,7 @@ export default function MiniApp() {
             error={homeError}
             onRetry={loadHome}
             onSelectMember={selectMember}
+            onEditRole={setRoleEditUser}
           />
         )}
       </main>
@@ -566,6 +576,22 @@ export default function MiniApp() {
           users={pendingUsers}
           onClose={() => setShowPendingUsers(false)}
           onActivated={loadUsers}
+        />
+      )}
+
+      {showProfile && currentUser && (
+        <ProfilePanel
+          user={currentUser}
+          onClose={() => setShowProfile(false)}
+          onEditRole={() => { setShowProfile(false); setRoleEditUser(currentUser); }}
+        />
+      )}
+
+      {roleEditUser && (
+        <RoleEditSheet
+          user={roleEditUser}
+          onClose={() => setRoleEditUser(null)}
+          onSaved={handleRoleSaved}
         />
       )}
     </div>
@@ -696,11 +722,13 @@ function WorkloadList({
   tasks,
   users,
   onSelectMember,
+  onEditRole,
   limit,
 }: {
   tasks: Task[];
   users: User[];
   onSelectMember: (userId: string) => void;
+  onEditRole?: (user: User) => void;
   limit?: number;
 }) {
   const rows = workloadFor(tasks, users).slice(0, limit ?? undefined);
@@ -710,7 +738,7 @@ function WorkloadList({
   return (
     <ul className="ma-workload-list">
       {rows.map((row) => (
-        <li key={row.user.id}>
+        <li key={row.user.id} className="ma-workload-item">
           <button className="ma-workload-row" onClick={() => onSelectMember(row.user.id)}>
             <span className="ma-workload-name">
               {row.user.displayName}
@@ -722,6 +750,16 @@ function WorkloadList({
               <span className={`ma-workload-count${row.overdue > 0 ? " danger" : ""}`}>{row.overdue} overdue</span>
             </span>
           </button>
+          {onEditRole && row.user.role !== "HEAD_OF_MARKETING" && (
+            <button
+              className="ma-workload-edit"
+              onClick={() => onEditRole(row.user)}
+              aria-label={`Edit role for ${row.user.displayName}`}
+              title="Edit role"
+            >
+              ✎
+            </button>
+          )}
         </li>
       ))}
     </ul>
@@ -737,6 +775,7 @@ function TeamView({
   error,
   onRetry,
   onSelectMember,
+  onEditRole,
 }: {
   tasks: Task[];
   users: User[];
@@ -744,6 +783,7 @@ function TeamView({
   error: string | null;
   onRetry: () => void;
   onSelectMember: (userId: string) => void;
+  onEditRole: (user: User) => void;
 }) {
   if (loading && tasks.length === 0) {
     return <div className="ma-center-inline"><div className="ma-spinner" aria-label="Loading" /></div>;
@@ -755,9 +795,9 @@ function TeamView({
     <div className="ma-home">
       <div className="ma-greeting">
         <h1>Team workload</h1>
-        <p className="ma-muted">Tap a teammate to see their tasks.</p>
+        <p className="ma-muted">Tap a teammate to see their tasks, or ✎ to fix their role.</p>
       </div>
-      <WorkloadList tasks={tasks} users={users} onSelectMember={onSelectMember} />
+      <WorkloadList tasks={tasks} users={users} onSelectMember={onSelectMember} onEditRole={onEditRole} />
     </div>
   );
 }
@@ -1479,6 +1519,124 @@ function PendingUsersPanel({
               {errors[u.id] && <div className="ma-error-inline" role="alert">{errors[u.id]}</div>}
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Profile Panel ────────────────────────────────────────────────────────────
+
+function ProfilePanel({
+  user,
+  onClose,
+  onEditRole,
+}: {
+  user: User;
+  onClose: () => void;
+  onEditRole: () => void;
+}) {
+  const canEditOwnRole = user.role !== "HEAD_OF_MARKETING";
+  return (
+    <div
+      className="ma-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Your profile"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="ma-panel">
+        <div className="ma-panel-header">
+          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
+          <span className="ma-panel-title">Your Profile</span>
+        </div>
+        <div className="ma-panel-body">
+          <dl className="ma-detail-meta">
+            <dt>Name</dt><dd>{user.displayName}</dd>
+            <dt>Role</dt><dd>{ROLE_LABELS[user.role]}</dd>
+            {user.telegramUsername && <><dt>Telegram</dt><dd>@{user.telegramUsername}</dd></>}
+          </dl>
+          {canEditOwnRole ? (
+            <button className="ma-btn secondary full" onClick={onEditRole}>Edit role</button>
+          ) : (
+            <p className="ma-muted">Head&rsquo;s role can only be changed outside the app.</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Role Edit Sheet ──────────────────────────────────────────────────────────
+
+function RoleEditSheet({
+  user,
+  onClose,
+  onSaved,
+}: {
+  user: User;
+  onClose: () => void;
+  onSaved: (user: User) => void;
+}) {
+  const [role, setRole] = useState<Role>(
+    ACTIVATION_ROLES.includes(user.role) ? user.role : ACTIVATION_ROLES[0]
+  );
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    if (pending) return;
+    if (role === user.role) { onClose(); return; }
+    setPending(true);
+    setError(null);
+    const { data, error: e } = await apiFetch<{ user: User }>(`/api/users/${user.id}/role`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role }),
+    });
+    setPending(false);
+    if (e) { setError(friendlyError(e)); return; }
+    if (data?.user) onSaved(data.user);
+  };
+
+  return (
+    <div
+      className="ma-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Edit role"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="ma-panel">
+        <div className="ma-panel-header">
+          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
+          <span className="ma-panel-title">Edit Role</span>
+        </div>
+        <div className="ma-panel-body">
+          <p className="ma-muted">
+            Correcting <strong>{user.displayName}</strong>&rsquo;s role. This takes effect immediately.
+          </p>
+          <div className="ma-role-options" role="radiogroup" aria-label="Role">
+            {ACTIVATION_ROLES.map((r) => (
+              <button
+                key={r}
+                type="button"
+                role="radio"
+                aria-checked={role === r}
+                className={`ma-role-option${role === r ? " active" : ""}`}
+                onClick={() => setRole(r)}
+              >
+                {ROLE_LABELS[r]}
+              </button>
+            ))}
+          </div>
+          {error && <div className="ma-error-inline" role="alert">{error}</div>}
+          <div className="ma-form-row">
+            <button className="ma-btn primary full" disabled={pending} onClick={save}>
+              {pending ? "Saving…" : "Save role"}
+            </button>
+            <button className="ma-btn secondary" onClick={onClose} disabled={pending}>Cancel</button>
+          </div>
         </div>
       </div>
     </div>
