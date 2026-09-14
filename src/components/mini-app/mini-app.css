@@ -29,7 +29,7 @@
   padding: 4px 8px;
   border-radius: 999px;
   background: var(--success-soft);
-  color: #15803d;
+  color: var(--success-text);
   font-size: 0.7rem;
   font-weight: 700;
 }
@@ -48,14 +48,14 @@
   text-align: left;
   cursor: pointer;
 }
-.ma-checklist-items button.complete { color: #15803d; background: var(--success-soft); }
+.ma-checklist-items button.complete { color: var(--success-text); background: var(--success-soft); }
 .ma-checklist-items button:disabled { cursor: default; opacity: 0.72; }
 .ma-checklist-card p { margin: 10px 0 0; }
 
 .ma-recurrence-card { display: flex; flex-direction: column; gap: 9px; }
 .ma-recurrence-status { width: fit-content; }
-.ma-recurrence-status.paused { background: var(--warning-soft); color: #92400e; }
-.ma-recurrence-status.stopped { background: var(--danger-soft); color: #b91c1c; }
+.ma-recurrence-status.paused { background: var(--warning-soft); color: var(--warning-text); }
+.ma-recurrence-status.stopped { background: var(--danger-soft); color: var(--danger-text); }
 
 .ma-reports { display: flex; flex-direction: column; gap: 14px; }
 .ma-reports h1 { margin: 2px 0 0; font-size: 1.4rem; color: var(--ink); }
@@ -93,7 +93,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: max(16px, env(safe-area-inset-top)) 16px 12px;
+  padding: max(16px, env(safe-area-inset-top), var(--tg-content-safe-area-inset-top, 0px)) 16px 12px;
   background: var(--paper);
   border-bottom: 1px solid var(--line);
   position: sticky;
@@ -211,7 +211,7 @@
 
 .ma-main {
   flex: 1;
-  padding: 16px 16px calc(92px + env(safe-area-inset-bottom));
+  padding: 16px 16px calc(92px + max(env(safe-area-inset-bottom), var(--tg-safe-area-inset-bottom, 0px)));
 }
 
 .ma-notice {
@@ -227,13 +227,13 @@
 }
 
 .ma-notice.success {
-  color: #15803d;
+  color: var(--success-text);
   background: var(--success-soft);
   border-color: rgba(22, 163, 74, 0.3);
 }
 
 .ma-notice.warning {
-  color: #92400e;
+  color: var(--warning-text);
   background: var(--warning-soft);
   border-color: rgba(217, 119, 6, 0.3);
 }
@@ -320,14 +320,14 @@
   border: 1px solid rgba(220, 38, 38, 0.25);
   border-radius: var(--radius-sm);
   background: var(--danger-soft);
-  color: #b91c1c;
+  color: var(--danger-text);
   font-size: 0.875rem;
 }
 
 .ma-error button {
   border: none;
   background: none;
-  color: #b91c1c;
+  color: var(--danger-text);
   font-weight: 700;
   text-decoration: underline;
   cursor: pointer;
@@ -342,7 +342,7 @@
   padding: 8px 12px;
   border-radius: 8px;
   background: var(--danger-soft);
-  color: #b91c1c;
+  color: var(--danger-text);
   font-size: 0.82rem;
 }
 
@@ -421,6 +421,12 @@
 .ma-stat-tile.tone-danger .ma-stat-value { color: var(--danger); }
 .ma-stat-tile.tone-warning .ma-stat-value { color: var(--warning); }
 .ma-stat-tile.tone-violet .ma-stat-value { color: var(--violet); }
+
+/* Head's Overdue/Blocked tiles read as the thing to triage first — a
+   slightly larger number, not a louder color (color only appears once the
+   count is actually nonzero, via the tone-* classes above). */
+.ma-stat-tile.critical { padding: 16px 14px; }
+.ma-stat-tile.critical .ma-stat-value { font-size: 1.9rem; }
 
 .ma-stat-label {
   font-size: 0.78rem;
@@ -539,18 +545,6 @@
   border-color: var(--primary);
 }
 
-.ma-workload-actions {
-  display: flex;
-  gap: 8px;
-  flex: none;
-}
-
-.ma-workload-edit.danger:hover,
-.ma-workload-edit.danger:focus-visible {
-  color: var(--danger);
-  border-color: var(--danger);
-}
-
 .ma-workload-row.inactive {
   cursor: default;
   opacity: 0.85;
@@ -631,7 +625,7 @@
   display: flex;
   border-top: 1px solid var(--line);
   background: var(--card);
-  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  padding: 6px 8px calc(6px + max(env(safe-area-inset-bottom), var(--tg-safe-area-inset-bottom, 0px)));
   z-index: 20;
 }
 
@@ -913,7 +907,7 @@
 }
 
 .ma-task-title {
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--ink);
   line-height: 1.35;
@@ -949,9 +943,9 @@
   text-transform: uppercase;
 }
 
-.ma-priority.p-low    { background: var(--success-soft); color: #15803d; }
+.ma-priority.p-low    { background: var(--success-soft); color: var(--success-text); }
 .ma-priority.p-normal { background: var(--primary-soft); color: var(--primary-dark); }
-.ma-priority.p-high   { background: var(--danger-soft); color: #b91c1c; }
+.ma-priority.p-high   { background: var(--danger-soft); color: var(--danger-text); }
 
 /* ── Status pills ──────────────────────────────────────────────────────────── */
 
@@ -970,22 +964,35 @@
   border-radius: 50%;
 }
 
-.ma-status-pill.s-assigned,   .ma-status-dot.s-assigned    { background: #e2e8f0; color: #334155; }
+.ma-status-pill.s-assigned,   .ma-status-dot.s-assigned    { background: var(--neutral-pill-bg); color: var(--neutral-pill-text); }
 .ma-status-pill.s-in_progress,.ma-status-dot.s-in_progress { background: var(--primary-soft); color: var(--primary-dark); }
-.ma-status-pill.s-blocked,    .ma-status-dot.s-blocked     { background: var(--danger-soft); color: #b91c1c; }
+.ma-status-pill.s-blocked,    .ma-status-dot.s-blocked     { background: var(--danger-soft); color: var(--danger-text); }
 .ma-status-pill.s-review,     .ma-status-dot.s-review      { background: var(--violet-soft); color: var(--violet); }
-.ma-status-pill.s-revision,   .ma-status-dot.s-revision    { background: var(--warning-soft); color: #92400e; }
-.ma-status-pill.s-done,       .ma-status-dot.s-done        { background: var(--success-soft); color: #15803d; }
-.ma-status-pill.s-cancelled,  .ma-status-dot.s-cancelled   { background: #f1f5f9; color: #64748b; }
+.ma-status-pill.s-revision,   .ma-status-dot.s-revision    { background: var(--warning-soft); color: var(--warning-text); }
+.ma-status-pill.s-done,       .ma-status-dot.s-done        { background: var(--success-soft); color: var(--success-text); }
+.ma-status-pill.s-cancelled,  .ma-status-dot.s-cancelled   { background: var(--cancelled-pill-bg); color: var(--cancelled-pill-text); }
 
-/* dots need their own background */
-.ma-status-dot.s-assigned    { background: #64748b; }
+/* dots need their own solid background (pill background above is a soft tint) */
+.ma-status-dot.s-assigned    { background: var(--neutral-pill-text); }
 .ma-status-dot.s-in_progress { background: var(--primary); }
 .ma-status-dot.s-blocked     { background: var(--danger); }
 .ma-status-dot.s-review      { background: var(--violet); }
 .ma-status-dot.s-revision    { background: var(--warning); }
 .ma-status-dot.s-done        { background: var(--success); }
-.ma-status-dot.s-cancelled   { background: #94a3b8; }
+.ma-status-dot.s-cancelled   { background: var(--cancelled-pill-text); }
+
+/* ── Priority — de-emphasized so it never competes with task status; only
+   "high" gets a colored pill, "normal"/"low" are quiet inline text ──────── */
+.ma-priority.p-normal,
+.ma-priority.p-low {
+  background: transparent;
+  padding: 0;
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.ma-priority.p-low { opacity: 0.75; }
 
 .ma-overdue-text { color: var(--danger); font-weight: 600; }
 .ma-today-text   { color: var(--warning); font-weight: 600; }
@@ -1016,7 +1023,13 @@
 
 .ma-panel {
   width: 100%;
-  max-height: 92vh;
+  /* Prefer Telegram's own stable viewport height (set as a CSS var by its
+     SDK, updated on viewportChanged) over a flat vh, which does not know
+     when the on-screen keyboard has shrunk the usable area. Falls back to
+     100vh outside Telegram. Either way this only bounds the sheet — its
+     own overflow-y:auto lets a form scroll internally when the keyboard
+     covers part of it, rather than clipping content. */
+  max-height: min(92vh, calc(var(--tg-viewport-stable-height, 100vh) - 16px));
   overflow-y: auto;
   background: var(--card);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -1142,8 +1155,8 @@
 
 .ma-btn.primary   { background: var(--primary); color: #fff; }
 .ma-btn.secondary { background: var(--paper); color: var(--ink); border: 1px solid var(--line); }
-.ma-btn.warn      { background: var(--warning-soft); color: #92400e; }
-.ma-btn.danger    { background: var(--danger-soft); color: #b91c1c; }
+.ma-btn.warn      { background: var(--warning-soft); color: var(--warning-text); }
+.ma-btn.danger    { background: var(--danger-soft); color: var(--danger-text); }
 .ma-btn.full      { width: 100%; text-align: center; }
 
 /* ── Deadline request ──────────────────────────────────────────────────────── */
@@ -1209,12 +1222,16 @@
 .ma-block-form input,
 .ma-block-form textarea,
 .ma-block-form select {
-  padding: 11px 12px;
+  padding: 12px 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--card);
   color: var(--ink);
-  font-size: 0.9rem;
+  /* Must stay >=16px: WebKit (including Telegram's in-app iOS browser)
+     zooms the whole page on focusing any form control below that size,
+     regardless of viewport meta. This is not a compact-UI nicety to trim —
+     see docs/MOBILE_UX_AUDIT.md "form control font-size too small". */
+  font-size: 16px;
   font-family: inherit;
   width: 100%;
   appearance: auto;
@@ -1235,10 +1252,154 @@
   border-color: var(--primary);
 }
 
+.ma-deadline-summary {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* ── Person picker ─────────────────────────────────────────────────────────── */
+
+.ma-picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 16px;
+  min-height: 44px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ma-picker-trigger:focus-visible {
+  outline: 2px solid var(--primary);
+  border-color: var(--primary);
+}
+
+.ma-picker-trigger-name {
+  flex: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ma-picker-trigger-placeholder {
+  flex: 1;
+  color: var(--muted);
+}
+
+.ma-picker-trigger-chevron {
+  color: var(--muted);
+  font-size: 1.1rem;
+}
+
+.ma-picker-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.ma-picker-avatar.sm {
+  flex-basis: 28px;
+  width: 28px;
+  height: 28px;
+  font-size: 0.68rem;
+}
+
+.ma-picker-body {
+  padding: 8px 12px 20px !important;
+}
+
+.ma-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ma-picker-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.ma-picker-row:hover,
+.ma-picker-row:focus-visible {
+  background: var(--paper);
+}
+
+.ma-picker-row.selected {
+  background: var(--primary-soft);
+}
+
+.ma-picker-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.ma-picker-name {
+  font-size: 0.9rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ma-picker-role {
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+
+.ma-picker-check {
+  color: var(--primary);
+  font-weight: 700;
+}
+
 .ma-form-row {
   display: flex;
   gap: 10px;
   align-items: flex-end;
+}
+
+.ma-form-row select {
+  padding: 12px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 16px;
+  font-family: inherit;
+  min-height: 44px;
+  flex: 1;
 }
 
 .flex-1 { flex: 1; }

@@ -195,10 +195,10 @@ const FILTER_LABELS: Record<Filter, string> = {
 
 const EMPTY_COPY: Record<Filter, string> = {
   my: "No tasks assigned to you yet.",
-  today: "Bugun task yo‘q",
-  overdue: "Overdue tasklar yo‘q",
+  today: "Bugun task yo‘q.",
+  overdue: "Overdue task yo‘q.",
   team: "No team tasks yet.",
-  review: "Nothing waiting for review.",
+  review: "Review kutayotgan task yo‘q.",
   blocked: "No blocked tasks.",
 };
 
@@ -278,6 +278,18 @@ function localDatetimeToISO(local: string): string {
   // local is "YYYY-MM-DDTHH:mm" — append seconds and +05:00 offset
   const withSeconds = local.length === 16 ? local + ":00" : local;
   return withSeconds + "+05:00";
+}
+
+/** Sparing haptic feedback for a handful of meaningful moments (task
+ * created, a checklist item toggled, a workflow action completing) — never
+ * wired to every tap. Silently does nothing outside Telegram or on older
+ * clients without HapticFeedback. */
+function haptic(kind: "success" | "warning" | "error" | "selection" | "impact") {
+  const feedback = window.Telegram?.WebApp?.HapticFeedback;
+  if (!feedback) return;
+  if (kind === "selection") feedback.selectionChanged();
+  else if (kind === "impact") feedback.impactOccurred("light");
+  else feedback.notificationOccurred(kind);
 }
 
 /** Recognizably technical failures get a human message; validation messages
@@ -425,6 +437,21 @@ export default function MiniApp() {
 
       setAuthState("no-telegram");
     })();
+  }, []);
+
+  // Follow Telegram's own theme (independent of the device OS theme, and
+  // not something prefers-color-scheme alone can see) rather than forcing
+  // a fixed light palette inside a dark Telegram client. Runs regardless of
+  // auth state so the loading/no-telegram screens are correct too.
+  useEffect(() => {
+    const webApp = window.Telegram?.WebApp;
+    if (!webApp) return;
+    const applyTheme = () => {
+      document.documentElement.dataset.theme = webApp.colorScheme === "dark" ? "dark" : "light";
+    };
+    applyTheme();
+    webApp.onEvent("themeChanged", applyTheme);
+    return () => webApp.offEvent("themeChanged", applyTheme);
   }, []);
 
   // Load users (used for later targeted refreshes, e.g. after activating a
@@ -709,6 +736,7 @@ export default function MiniApp() {
           onClose={() => setShowQuickAdd(false)}
           onCreated={(notification) => {
             setShowQuickAdd(false);
+            haptic("success");
             setTaskNotice(notification.status === "SENT"
               ? { kind: "success", text: "Task created and assignee notified." }
               : {
@@ -811,6 +839,10 @@ const STAT_TILES: { key: Filter; label: string; tone: string }[] = [
   { key: "review", label: "Review", tone: "violet" },
 ];
 
+// Head opens Home to triage the team, not to admire a personal to-do list:
+// Overdue/Blocked need to register first, Today/Review are secondary.
+const HEAD_CRITICAL_TILES = new Set<Filter>(["overdue", "blocked"]);
+
 function HomeView({
   isHead,
   displayName,
@@ -842,8 +874,11 @@ function HomeView({
   }
 
   const counts = countsFor(tasks);
-  const priority = priorityTasks(tasks);
   const firstName = displayName.split(" ")[0] || displayName;
+  const todayTasks = tasks.filter((t) => !isTerminal(t.status) && isToday(t.deadline));
+  // "Upcoming" excludes what Today already showed, so the two sections stay
+  // complementary instead of repeating the same one or two tasks.
+  const upcoming = priorityTasks(tasks.filter((t) => !isToday(t.deadline)));
 
   return (
     <div className="ma-home">
@@ -853,12 +888,20 @@ function HomeView({
       </div>
 
       <div className="ma-stat-grid">
-        {STAT_TILES.map((tile) => (
-          <button key={tile.key} className={`ma-stat-tile tone-${tile.tone}`} onClick={() => onGoToFilter(tile.key)}>
-            <span className="ma-stat-value">{counts[tile.key as keyof typeof counts]}</span>
-            <span className="ma-stat-label">{tile.label}</span>
-          </button>
-        ))}
+        {STAT_TILES.map((tile) => {
+          const value = counts[tile.key as keyof typeof counts];
+          const critical = isHead && HEAD_CRITICAL_TILES.has(tile.key);
+          return (
+            <button
+              key={tile.key}
+              className={`ma-stat-tile${value > 0 ? ` tone-${tile.tone}` : ""}${critical ? " critical" : ""}`}
+              onClick={() => onGoToFilter(tile.key)}
+            >
+              <span className="ma-stat-value">{value}</span>
+              <span className="ma-stat-label">{tile.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {isHead && (
@@ -872,11 +915,20 @@ function HomeView({
       )}
 
       <section className="ma-section">
-        <h3>{isHead ? "Priority tasks" : "Your priority tasks"}</h3>
-        {priority.length === 0 ? (
+        <h3>Today</h3>
+        {todayTasks.length === 0 ? (
+          <div className="ma-empty">Bugun task yo‘q.</div>
+        ) : (
+          <TaskList tasks={todayTasks} users={users} onSelect={onSelectTask} />
+        )}
+      </section>
+
+      <section className="ma-section">
+        <h3>Upcoming</h3>
+        {upcoming.length === 0 ? (
           <div className="ma-empty">{isHead ? "Nothing urgent right now." : "You're all caught up."}</div>
         ) : (
-          <TaskList tasks={priority} users={users} onSelect={onSelectTask} />
+          <TaskList tasks={upcoming} users={users} onSelect={onSelectTask} />
         )}
       </section>
     </div>
@@ -898,11 +950,13 @@ function WorkloadList({
   onDeactivate?: (user: User) => void;
   limit?: number;
 }) {
+  const [menuUser, setMenuUser] = useState<User | null>(null);
   const rows = workloadFor(tasks, users).slice(0, limit ?? undefined);
   if (rows.length === 0) {
     return <div className="ma-empty">No active team members yet.</div>;
   }
   return (
+    <>
     <ul className="ma-workload-list">
       {rows.map((row) => (
         <li key={row.user.id} className="ma-workload-item">
@@ -917,33 +971,57 @@ function WorkloadList({
               <span className={`ma-workload-count${row.overdue > 0 ? " danger" : ""}`}>{row.overdue} overdue</span>
             </span>
           </button>
+          {/* One overflow button instead of two always-visible icons — admin
+              actions shouldn't visually compete with the workload numbers
+              that matter on every glance at this list. */}
           {row.user.role !== "HEAD_OF_MARKETING" && (onEditRole || onDeactivate) && (
-            <span className="ma-workload-actions">
-              {onEditRole && (
-                <button
-                  className="ma-workload-edit"
-                  onClick={() => onEditRole(row.user)}
-                  aria-label={`Edit role for ${row.user.displayName}`}
-                  title="Edit role"
-                >
-                  ✎
-                </button>
-              )}
-              {onDeactivate && (
-                <button
-                  className="ma-workload-edit danger"
-                  onClick={() => onDeactivate(row.user)}
-                  aria-label={`Remove ${row.user.displayName} from team`}
-                  title="Remove from team"
-                >
-                  ⛔
-                </button>
-              )}
-            </span>
+            <button
+              className="ma-workload-edit"
+              onClick={() => setMenuUser(row.user)}
+              aria-label={`More actions for ${row.user.displayName}`}
+              title="More actions"
+            >
+              ⋯
+            </button>
           )}
         </li>
       ))}
     </ul>
+      {menuUser && (
+        <div
+          className="ma-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Actions for ${menuUser.displayName}`}
+          onClick={(e) => { if (e.target === e.currentTarget) setMenuUser(null); }}
+        >
+          <div className="ma-panel">
+            <div className="ma-panel-header">
+              <button className="ma-back-btn" onClick={() => setMenuUser(null)} aria-label="Close">←</button>
+              <span className="ma-panel-title">{menuUser.displayName}</span>
+            </div>
+            <div className="ma-panel-body ma-picker-body">
+              <ul className="ma-picker-list">
+                {onEditRole && (
+                  <li>
+                    <button className="ma-picker-row" onClick={() => { const u = menuUser; setMenuUser(null); onEditRole(u); }}>
+                      <span className="ma-picker-info"><span className="ma-picker-name">Edit role</span></span>
+                    </button>
+                  </li>
+                )}
+                {onDeactivate && (
+                  <li>
+                    <button className="ma-picker-row" onClick={() => { const u = menuUser; setMenuUser(null); onDeactivate(u); }}>
+                      <span className="ma-picker-info"><span className="ma-picker-name" style={{ color: "var(--danger)" }}>Remove from team</span></span>
+                    </button>
+                  </li>
+                )}
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -996,7 +1074,7 @@ function TeamView({
     <div className="ma-home">
       <div className="ma-greeting">
         <h1>Team workload</h1>
-        <p className="ma-muted">Tap a teammate to see their tasks, ✎ to fix their role, or ⛔ to remove them.</p>
+        <p className="ma-muted">Tap a teammate to see their tasks, or ⋯ for role and membership actions.</p>
       </div>
       <WorkloadList tasks={tasks} users={users} onSelectMember={onSelectMember} onEditRole={onEditRole} onDeactivate={onDeactivate} />
 
@@ -1446,6 +1524,7 @@ function TaskDetailPanel({
     );
     setActionPending(false);
     if (e) { setActionError(friendlyError(e)); return false; }
+    haptic("impact");
     await load();
     onRefresh();
     return true;
@@ -1500,6 +1579,7 @@ function TaskDetailPanel({
     setChecklistPendingId(null);
     if (e) { setActionError(friendlyError(e)); return; }
     if (data?.postingChecklist) {
+      haptic("selection");
       setDetail((previous) => previous ? { ...previous, postingChecklist: data.postingChecklist } : previous);
     }
   };
@@ -1809,11 +1889,14 @@ function TaskDetailPanel({
                     {detail?.recurringDefinition && (
                       <>
                         <label htmlFor="recurrence-assignee">Assignee</label>
-                        <select id="recurrence-assignee" value={recurrenceAssigneeId} onChange={(event) => setRecurrenceAssigneeId(event.target.value)}>
-                          {users.filter((u) => u.isActive).map((u) => (
-                            <option key={u.id} value={u.id}>{u.displayName}</option>
-                          ))}
-                        </select>
+                        <PersonPickerField
+                          id="recurrence-assignee"
+                          users={users.filter((u) => u.isActive)}
+                          selectedId={recurrenceAssigneeId}
+                          onSelect={setRecurrenceAssigneeId}
+                          pickerTitle="Assignee"
+                          placeholder="Choose assignee"
+                        />
                       </>
                     )}
                     <div className="ma-form-row">
@@ -1867,6 +1950,131 @@ function TaskDetailPanel({
 }
 
 // ─── Quick Add Panel ──────────────────────────────────────────────────────────
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  return (parts[0][0] + (parts[1]?.[0] ?? "")).toUpperCase();
+}
+
+/** Human-readable relative deadline summary ("Bugun, 18:00" / "Ertaga, 12:00"
+ * / "16 Sep, 14:00") shown alongside the exact datetime-local control — the
+ * stored/submitted timestamp is always the exact value, this is display-only. */
+function relativeDeadlineSummary(local: string): string | null {
+  if (!local) return null;
+  const iso = localDatetimeToISO(local);
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return null;
+  const time = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
+  if (isToday(iso)) return `Bugun, ${time}`;
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  if (getTZDateParts(date).day === getTZDateParts(tomorrow).day
+    && getTZDateParts(date).month === getTZDateParts(tomorrow).month
+    && getTZDateParts(date).year === getTZDateParts(tomorrow).year) {
+    return `Ertaga, ${time}`;
+  }
+  const day = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, day: "numeric", month: "short" }).format(date);
+  return `${day}, ${time}`;
+}
+
+// ─── Person Picker (assignee bottom sheet) ─────────────────────────────────
+
+function PersonPicker({
+  title,
+  users,
+  selectedId,
+  onSelect,
+  onClose,
+}: {
+  title: string;
+  users: User[];
+  selectedId: string | null;
+  onSelect: (userId: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="ma-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="ma-panel">
+        <div className="ma-panel-header">
+          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
+          <span className="ma-panel-title">{title}</span>
+        </div>
+        <div className="ma-panel-body ma-picker-body">
+          <ul className="ma-picker-list" aria-label={title}>
+            {users.map((u) => (
+              <li key={u.id}>
+                <button
+                  className={`ma-picker-row${u.id === selectedId ? " selected" : ""}`}
+                  onClick={() => { onSelect(u.id); onClose(); }}
+                >
+                  <span className="ma-picker-avatar" aria-hidden="true">{initials(u.displayName)}</span>
+                  <span className="ma-picker-info">
+                    <span className="ma-picker-name">{u.displayName}</span>
+                    <span className="ma-picker-role">{ROLE_LABELS[u.role]}</span>
+                  </span>
+                  {u.id === selectedId && <span className="ma-picker-check" aria-hidden="true">✓</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Button that looks like the other form controls but opens a full
+ * tappable-row bottom sheet instead of a native <select> — the team is
+ * small, so a clean list beats squeezing this into a cramped dropdown. */
+function PersonPickerField({
+  id,
+  users,
+  selectedId,
+  onSelect,
+  pickerTitle,
+  placeholder,
+}: {
+  id: string;
+  users: User[];
+  selectedId: string | null;
+  onSelect: (userId: string) => void;
+  pickerTitle: string;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = users.find((u) => u.id === selectedId) ?? null;
+
+  return (
+    <>
+      <button type="button" id={id} className="ma-picker-trigger" onClick={() => setOpen(true)}>
+        {selected ? (
+          <>
+            <span className="ma-picker-avatar sm" aria-hidden="true">{initials(selected.displayName)}</span>
+            <span className="ma-picker-trigger-name">{selected.displayName}</span>
+          </>
+        ) : (
+          <span className="ma-picker-trigger-placeholder">{placeholder}</span>
+        )}
+        <span className="ma-picker-trigger-chevron" aria-hidden="true">›</span>
+      </button>
+      {open && (
+        <PersonPicker
+          title={pickerTitle}
+          users={users}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
 
 function QuickAddPanel({
   currentUser,
@@ -1963,16 +2171,22 @@ function QuickAddPanel({
               </div>
             )}
             {usersLoaded && (
-              <select id="qa-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
-                {activeUsers.map((u) => (
-                  <option key={u.id} value={u.id}>{u.displayName}</option>
-                ))}
-              </select>
+              <PersonPickerField
+                id="qa-assignee"
+                users={activeUsers}
+                selectedId={assigneeId}
+                onSelect={setAssigneeId}
+                pickerTitle="Assignee"
+                placeholder="Choose assignee"
+              />
             )}
           </div>
           <div className="ma-form-group">
             <label htmlFor="qa-deadline">Deadline *</label>
             <input id="qa-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+            {relativeDeadlineSummary(deadline) && (
+              <span className="ma-deadline-summary">{relativeDeadlineSummary(deadline)}</span>
+            )}
           </div>
           <details className="ma-more-details">
             <summary>Priority &amp; description</summary>
@@ -2320,12 +2534,14 @@ function DeactivateMemberSheet({
                   {action === "REASSIGN" && (
                     <div className="ma-form-group">
                       <label htmlFor="reassign-to">Reassign to</label>
-                      <select id="reassign-to" value={reassignTo} onChange={(e) => setReassignTo(e.target.value)}>
-                        <option value="">Choose a teammate…</option>
-                        {reassignCandidates.map((candidate) => (
-                          <option key={candidate.id} value={candidate.id}>{candidate.displayName}</option>
-                        ))}
-                      </select>
+                      <PersonPickerField
+                        id="reassign-to"
+                        users={reassignCandidates}
+                        selectedId={reassignTo || null}
+                        onSelect={setReassignTo}
+                        pickerTitle="Reassign to"
+                        placeholder="Choose a teammate…"
+                      />
                     </div>
                   )}
                 </>
