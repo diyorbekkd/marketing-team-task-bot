@@ -154,3 +154,76 @@ export function parseGroupTaskMessage(text: string, now = new Date()): ParsedTas
   if (looksLikePositionalTask(text)) return parsePositionalTask(text, now);
   return null;
 }
+
+/**
+ * Bulk task creation reuses this exact single-task parser for every block —
+ * there is no separate bulk grammar. A message is bulk only if it contains a
+ * line that is exactly "---"; a message with no such line is always parsed
+ * as a single task, unchanged from before bulk existed.
+ */
+export const BULK_SEPARATOR = "---";
+export const MAX_BULK_TASKS = 20;
+
+export function containsBulkSeparator(text: string): boolean {
+  return text.split(/\r?\n/).some((line) => line.trim() === BULK_SEPARATOR);
+}
+
+/** Splits on a line that is exactly "---", trims blank lines from each
+ * block's edges, and drops blocks left empty by the split (for example a
+ * lone "---" with nothing but whitespace on either side) so they can never
+ * be mistaken for an attempted task. */
+export function splitBulkBlocks(text: string): string[] {
+  const lines = text.split(/\r?\n/);
+  const blocks: string[][] = [[]];
+  for (const line of lines) {
+    if (line.trim() === BULK_SEPARATOR) {
+      blocks.push([]);
+      continue;
+    }
+    blocks[blocks.length - 1].push(line);
+  }
+  return blocks.map((block) => block.join("\n").trim()).filter((block) => block.length > 0);
+}
+
+export interface TaskMessageBlockResult {
+  /** 1-based position among the blocks actually parsed, for user-facing messages. */
+  readonly index: number;
+  readonly raw: string;
+  readonly parsed: ParsedTaskShorthand | null;
+  readonly error: TaskShorthandError | null;
+}
+
+export interface TaskMessageParseResult {
+  readonly isBulk: boolean;
+  readonly results: readonly TaskMessageBlockResult[];
+  /** True when the message had more task-shaped blocks than MAX_BULK_TASKS and the excess was not parsed at all. */
+  readonly truncated: boolean;
+}
+
+/**
+ * Single entry point for both the group and the private bot: splits into
+ * blocks (one, unless "---" is present), and runs the exact same
+ * `parseGroupTaskMessage` shape-detection + parsing on each block. A block
+ * with no task shape at all yields `parsed: null, error: null` (ordinary
+ * text, never reported); a block that looks like an attempted task but fails
+ * validation yields an `error`. Non-`TaskShorthandError` failures propagate.
+ */
+export function parseTaskMessage(text: string, now = new Date()): TaskMessageParseResult {
+  const isBulk = containsBulkSeparator(text);
+  const blocks = isBulk ? splitBulkBlocks(text) : [text.trim()];
+  const truncated = isBulk && blocks.length > MAX_BULK_TASKS;
+  const limited = blocks.slice(0, MAX_BULK_TASKS);
+
+  const results = limited.map((raw, i): TaskMessageBlockResult => {
+    try {
+      return { index: i + 1, raw, parsed: parseGroupTaskMessage(raw, now), error: null };
+    } catch (error) {
+      if (error instanceof TaskShorthandError) {
+        return { index: i + 1, raw, parsed: null, error };
+      }
+      throw error;
+    }
+  });
+
+  return { isBulk, results, truncated };
+}

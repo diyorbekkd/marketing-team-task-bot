@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_BULK_TASKS,
+  containsBulkSeparator,
   parseGroupTaskMessage,
   parsePositionalTask,
+  parseTaskMessage,
   parseTaskShorthand,
   parseTashkentDeadline,
+  splitBulkBlocks,
 } from "../src/telegram/task-shorthand";
 
 const now = new Date("2026-09-07T08:00:00.000Z");
@@ -131,5 +135,72 @@ describe("Telegram task shorthand", () => {
       "T: Publish reel\nA: @editor\nDL: 08.09.2026 18:30",
       now,
     )).toMatchObject({ title: "Publish reel", assigneeUsername: "editor" });
+  });
+
+  describe("bulk message parsing", () => {
+    it("detects the exact '---' separator line but not the word inside other text", () => {
+      expect(containsBulkSeparator("Title\n---\nMore")).toBe(true);
+      expect(containsBulkSeparator("  ---  \nignored trailing/leading spaces on the line itself")).toBe(true);
+      expect(containsBulkSeparator("a---b")).toBe(false);
+      expect(containsBulkSeparator("Just a normal task\n@editor\n08.09.2026 18:00")).toBe(false);
+    });
+
+    it("splits on the separator, trims blank lines per block, and drops empty blocks", () => {
+      const text = "\n\nFirst\n@editor\n08.09.2026 18:00\n\n---\n\n\nSecond\n@lead\n09.09.2026 07:00\n\n---\n\n   \n";
+      expect(splitBulkBlocks(text)).toEqual([
+        "First\n@editor\n08.09.2026 18:00",
+        "Second\n@lead\n09.09.2026 07:00",
+      ]);
+    });
+
+    it("a message with no separator parses exactly as the existing single-task format, unchanged", () => {
+      const result = parseTaskMessage("T: Publish reel\nA: @editor\nDL: 08.09.2026 18:30", now);
+      expect(result.isBulk).toBe(false);
+      expect(result.results).toHaveLength(1);
+      expect(result.results[0].parsed).toMatchObject({ title: "Publish reel", assigneeUsername: "editor" });
+      expect(result.truncated).toBe(false);
+    });
+
+    it("a lone separator with blank content on both sides never produces a task attempt", () => {
+      expect(parseTaskMessage("---", now).results).toEqual([]);
+      expect(parseTaskMessage("\n---\n\n", now).results).toEqual([]);
+    });
+
+    it("parses every block with the exact single-task parser, isolating one bad block's error from the rest", () => {
+      const text = [
+        "First task", "@editor", "08.09.2026 18:00",
+        "---",
+        "Bad block", "@editor", "08-09-2026 18:00",
+        "---",
+        "Third task", "@lead", "09.09.2026 07:00",
+      ].join("\n");
+      const result = parseTaskMessage(text, now);
+
+      expect(result.isBulk).toBe(true);
+      expect(result.results).toHaveLength(3);
+      expect(result.results[0]).toMatchObject({ index: 1, error: null });
+      expect(result.results[0].parsed).toMatchObject({ title: "First task" });
+      expect(result.results[1]).toMatchObject({ index: 2, parsed: null });
+      expect(result.results[1].error?.message).toBeTruthy();
+      expect(result.results[2]).toMatchObject({ index: 3, error: null });
+      expect(result.results[2].parsed).toMatchObject({ title: "Third task" });
+    });
+
+    it("caps a batch at MAX_BULK_TASKS and reports truncation instead of silently dropping the excess", () => {
+      const blocks = Array.from({ length: MAX_BULK_TASKS + 1 }, (_, i) => `Task ${i + 1}\n@editor\n0${(i % 9) + 1}.09.2026 18:00`);
+      const result = parseTaskMessage(blocks.join("\n---\n"), now);
+
+      expect(result.isBulk).toBe(true);
+      expect(result.truncated).toBe(true);
+      expect(result.results).toHaveLength(MAX_BULK_TASKS);
+    });
+
+    it("does not truncate or report truncation when the batch is exactly at the limit", () => {
+      const blocks = Array.from({ length: MAX_BULK_TASKS }, (_, i) => `Task ${i + 1}\n@editor\n0${(i % 9) + 1}.09.2026 18:00`);
+      const result = parseTaskMessage(blocks.join("\n---\n"), now);
+
+      expect(result.truncated).toBe(false);
+      expect(result.results).toHaveLength(MAX_BULK_TASKS);
+    });
   });
 });

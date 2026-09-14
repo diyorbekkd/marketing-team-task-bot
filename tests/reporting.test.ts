@@ -63,6 +63,26 @@ describe("report metrics", () => {
     expect(metric.carryOver).toBe(1);
   });
 
+  it("attributes a new task's pre-first-transition time to IN_PROGRESS, not ASSIGNED, since it never required Accept", () => {
+    // Created directly IN_PROGRESS (the current creation path for every
+    // transport): its only transition is straight to REVIEW, with no
+    // ASSIGNED->IN_PROGRESS Accept step ever recorded.
+    const current = task({ createdAt: "2026-09-07T00:00:00Z" });
+    const events: TaskEvent[] = [
+      event({ id: crypto.randomUUID(), oldValue: "IN_PROGRESS", newValue: "REVIEW", createdAt: "2026-09-08T00:00:00Z" }),
+      event({ id: crypto.randomUUID(), oldValue: "REVIEW", newValue: "DONE", createdAt: "2026-09-08T05:00:00Z" }),
+    ];
+    const metric = calculateAnalytics({ tasks: [current], events, deadlineRequests: [], now: new Date("2026-09-09T00:00:00Z"), windowDays: 30 });
+    expect(metric.averageStatusHours.IN_PROGRESS).toBe(24);
+    expect(metric.averageStatusHours.ASSIGNED).toBeUndefined();
+  });
+
+  it("attributes a legacy task's whole life to its current status when it has never transitioned at all", () => {
+    const current = task({ status: "ASSIGNED", completedAt: null, createdAt: "2026-09-07T00:00:00Z" });
+    const metric = calculateAnalytics({ tasks: [current], events: [], deadlineRequests: [], now: new Date("2026-09-08T00:00:00Z"), windowDays: 30 });
+    expect(metric.averageStatusHours.ASSIGNED).toBe(24);
+  });
+
   it("averages blocked and review durations from status-change history within the window", () => {
     const current = task({ status: "DONE" });
     const events: TaskEvent[] = [

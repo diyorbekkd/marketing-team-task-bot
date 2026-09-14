@@ -372,8 +372,20 @@ export default function MiniApp() {
   const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [taskNotice, setTaskNotice] = useState<{ kind: "success" | "warning"; text: string } | null>(null);
+  // Tracks whether the active team list has ever loaded successfully, so the
+  // assignee picker can block submission with a loading/retry state instead
+  // of a false "not found" while the first fetch is still in flight.
+  const [usersLoaded, setUsersLoaded] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
 
   const isHead = currentUser?.role === "HEAD_OF_MARKETING";
+
+  // AbortControllers so a slow, superseded request can never overwrite state
+  // written by a newer one (e.g. rapidly switching Tasks-tab filters).
+  const bootstrapAbortRef = useRef<AbortController | null>(null);
+  const usersAbortRef = useRef<AbortController | null>(null);
+  const tasksAbortRef = useRef<AbortController | null>(null);
+  const homeAbortRef = useRef<AbortController | null>(null);
 
   // Auth on mount
   useEffect(() => {
@@ -415,21 +427,38 @@ export default function MiniApp() {
     })();
   }, []);
 
-  // Load users
+  // Load users (used for later targeted refreshes, e.g. after activating a
+  // pending user — the initial load goes through loadBootstrap instead).
   const loadUsers = useCallback(async () => {
-    const { data } = await apiFetch<{ users: User[] }>("/api/users");
-    if (data?.users) setUsers(data.users);
+    usersAbortRef.current?.abort();
+    const controller = new AbortController();
+    usersAbortRef.current = controller;
+    const { data, error } = await apiFetch<{ users: User[] }>("/api/users", { signal: controller.signal });
+    if (controller.signal.aborted) return;
+    if (data?.users) {
+      setUsers(data.users);
+      setUsersLoaded(true);
+      setUsersError(null);
+    } else {
+      setUsersError(friendlyError(error) ?? "Failed to load team");
+    }
   }, []);
 
-  // Load the Tasks-tab list for the active filter
+  // Load the Tasks-tab list for the active filter. Only called while the
+  // Tasks tab is actually open (see the effect below) — not on every mount.
   const loadTasks = useCallback(
     async (f: Filter) => {
+      tasksAbortRef.current?.abort();
+      const controller = new AbortController();
+      tasksAbortRef.current = controller;
       setLoadingTasks(true);
       setTasksError(null);
       const scope = scopeForFilter(f, isHead);
       const { data, error } = await apiFetch<{ tasks: Task[] }>(
-        `/api/tasks?scope=${scope}`
+        `/api/tasks?scope=${scope}`,
+        { signal: controller.signal }
       );
+      if (controller.signal.aborted) return;
       setLoadingTasks(false);
       if (data?.tasks) {
         setTasks(f === "blocked" ? data.tasks.filter((t) => t.status === "BLOCKED") : data.tasks);
@@ -442,26 +471,77 @@ export default function MiniApp() {
 
   // Load the Home/Team overview dataset (team-wide for Head, personal otherwise)
   const loadHome = useCallback(async () => {
+    homeAbortRef.current?.abort();
+    const controller = new AbortController();
+    homeAbortRef.current = controller;
     setHomeLoading(true);
     setHomeError(null);
     const { data, error } = await apiFetch<{ tasks: Task[] }>(
-      `/api/tasks?scope=${isHead ? "team" : "my"}`
+      `/api/tasks?scope=${isHead ? "team" : "my"}`,
+      { signal: controller.signal }
     );
+    if (controller.signal.aborted) return;
     setHomeLoading(false);
     if (data?.tasks) setHomeTasks(data.tasks);
     else setHomeError(friendlyError(error) ?? "Failed to load overview");
   }, [isHead]);
 
+  // First-paint load: one round trip for the active team list plus the Home
+  // task summary, instead of three separate sequential/parallel fetches.
+  // Runs once per authed session — the Tasks-tab list is deliberately NOT
+  // included here; it loads lazily when the Tasks tab is opened.
+  const loadBootstrap = useCallback(async () => {
+    bootstrapAbortRef.current?.abort();
+    const controller = new AbortController();
+    bootstrapAbortRef.current = controller;
+    setHomeLoading(true);
+    setHomeError(null);
+    const { data, error } = await apiFetch<{ users: User[]; tasks: Task[] }>(
+      "/api/bootstrap",
+      { signal: controller.signal }
+    );
+    if (controller.signal.aborted) return;
+    setHomeLoading(false);
+    if (data) {
+      setUsers(data.users);
+      setUsersLoaded(true);
+      setUsersError(null);
+      setHomeTasks(data.tasks);
+    } else {
+      const message = friendlyError(error) ?? "Failed to load overview";
+      setHomeError(message);
+      setUsersError(message);
+    }
+  }, []);
+
   useEffect(() => {
     if (authState !== "authed") return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void Promise.all([loadUsers(), loadTasks(filter), loadHome()]);
-  }, [authState, filter, loadUsers, loadTasks, loadHome]);
+    void loadBootstrap();
+    // Deliberately run once per authed session, not on every render of
+    // loadBootstrap (which is stable/[]) — this is the one-time first paint.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState]);
+
+  // Lazy-load the Tasks-tab list only once that tab is actually opened, and
+  // whenever its filter changes while it stays open.
+  useEffect(() => {
+    if (authState !== "authed" || nav !== "tasks") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadTasks(filter);
+  }, [authState, nav, filter, loadTasks]);
 
   const refreshAll = useCallback(() => {
-    void loadTasks(filter);
     void loadHome();
-  }, [loadTasks, filter, loadHome]);
+    if (nav === "tasks") void loadTasks(filter);
+  }, [loadHome, nav, loadTasks, filter]);
+
+  // Home/Team retry: if the team list never loaded, re-run the combined
+  // bootstrap fetch (it also failed); otherwise just retry the task summary.
+  const retryHome = useCallback(() => {
+    if (!usersLoaded) void loadBootstrap();
+    else void loadHome();
+  }, [usersLoaded, loadBootstrap, loadHome]);
 
   const goToFilter = useCallback((f: Filter) => {
     setMemberFilter(null);
@@ -561,7 +641,7 @@ export default function MiniApp() {
             users={users}
             loading={homeLoading}
             error={homeError}
-            onRetry={loadHome}
+            onRetry={retryHome}
             onSelectTask={setSelectedTaskId}
             onGoToFilter={goToFilter}
             onSelectMember={selectMember}
@@ -593,7 +673,7 @@ export default function MiniApp() {
             inactiveMembers={inactiveMembers}
             loading={homeLoading}
             error={homeError}
-            onRetry={loadHome}
+            onRetry={retryHome}
             onSelectMember={selectMember}
             onEditRole={setRoleEditUser}
             onDeactivate={setDeactivateTarget}
@@ -623,6 +703,9 @@ export default function MiniApp() {
         <QuickAddPanel
           currentUser={currentUser!}
           users={users}
+          usersLoaded={usersLoaded}
+          usersError={usersError}
+          onRetryTeam={retryHome}
           onClose={() => setShowQuickAdd(false)}
           onCreated={(notification) => {
             setShowQuickAdd(false);
@@ -1788,11 +1871,17 @@ function TaskDetailPanel({
 function QuickAddPanel({
   currentUser,
   users,
+  usersLoaded,
+  usersError,
+  onRetryTeam,
   onClose,
   onCreated,
 }: {
   currentUser: User;
   users: User[];
+  usersLoaded: boolean;
+  usersError: string | null;
+  onRetryTeam: () => void;
   onClose: () => void;
   onCreated: (notification: AssignmentNotificationResult) => void;
 }) {
@@ -1805,9 +1894,14 @@ function QuickAddPanel({
   const [error, setError] = useState<string | null>(null);
 
   const activeUsers = users.filter((u) => u.isActive);
+  // Never allow submission before the team list is ready: an assignee
+  // picked while it's still loading would either be missing from the
+  // dropdown or silently fall back to self-assignment. This is a loading
+  // state, not a "not found" error.
+  const teamReady = usersLoaded && activeUsers.length > 0;
 
   const submit = async () => {
-    if (pending || !title.trim() || !assigneeId || !deadline) return;
+    if (pending || !teamReady || !title.trim() || !assigneeId || !deadline) return;
     setPending(true);
     setError(null);
     const body: Record<string, unknown> = {
@@ -1856,11 +1950,25 @@ function QuickAddPanel({
           </div>
           <div className="ma-form-group">
             <label htmlFor="qa-assignee">Assignee *</label>
-            <select id="qa-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
-              {activeUsers.map((u) => (
-                <option key={u.id} value={u.id}>{u.displayName}</option>
-              ))}
-            </select>
+            {!usersLoaded && !usersError && (
+              <div className="ma-loading-inline">
+                <div className="ma-spinner ma-spinner-sm" aria-label="Loading team" />
+                <span>Loading team…</span>
+              </div>
+            )}
+            {usersError && (
+              <div className="ma-error-inline" role="alert">
+                <span>Jamoa ma&apos;lumotlarini yuklab bo&apos;lmadi. Qayta urinib ko&apos;ring.</span>
+                <button type="button" className="ma-link-btn" onClick={onRetryTeam}>Retry</button>
+              </div>
+            )}
+            {usersLoaded && (
+              <select id="qa-assignee" value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
+                {activeUsers.map((u) => (
+                  <option key={u.id} value={u.id}>{u.displayName}</option>
+                ))}
+              </select>
+            )}
           </div>
           <div className="ma-form-group">
             <label htmlFor="qa-deadline">Deadline *</label>
@@ -1888,8 +1996,8 @@ function QuickAddPanel({
             </div>
           </details>
           {error && <div className="ma-error-inline" role="alert">{error}</div>}
-          <button className="ma-btn primary full" disabled={pending || !title.trim() || !deadline || !assigneeId} onClick={submit}>
-            {pending ? "Creating…" : "Create Task"}
+          <button className="ma-btn primary full" disabled={pending || !teamReady || !title.trim() || !deadline || !assigneeId} onClick={submit}>
+            {pending ? "Creating…" : !teamReady ? "Loading team…" : "Create Task"}
           </button>
         </div>
       </div>

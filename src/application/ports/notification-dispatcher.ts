@@ -16,6 +16,14 @@ export interface AssignmentNotificationInput {
   readonly assignee: User;
 }
 
+/** Sent instead of several individual notifyAssignment calls when one bulk
+ * Telegram message assigns more than one task to the same person. */
+export interface BulkAssignmentNotificationInput {
+  readonly tasks: readonly Task[];
+  readonly creator: User;
+  readonly assignee: User;
+}
+
 export type WorkflowNotificationEvent =
   | "DEADLINE_CHANGE_REQUESTED"
   | "DEADLINE_CHANGE_APPROVED"
@@ -64,6 +72,7 @@ export interface ReminderNotificationResult {
 
 export interface NotificationDispatcher {
   notifyAssignment(input: AssignmentNotificationInput): Promise<AssignmentNotificationResult>;
+  notifyBulkAssignment(input: BulkAssignmentNotificationInput): Promise<AssignmentNotificationResult>;
   notifyWorkflow(input: WorkflowNotificationInput): Promise<WorkflowNotificationResult>;
   notifyReminder(input: ReminderNotificationInput): Promise<ReminderNotificationResult>;
 }

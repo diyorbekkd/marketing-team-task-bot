@@ -63,7 +63,7 @@ const deadlineRequest: DeadlineChangeRequest = {
 describe("Telegram notification dispatcher", () => {
   beforeEach(() => sendTelegramMessage.mockReset());
 
-  it("sends assignment context and lifecycle actions to the assignee", async () => {
+  it("sends assignment context with no Accept action, since new tasks start already in progress", async () => {
     sendTelegramMessage.mockResolvedValueOnce(undefined);
     const notifier = new TelegramNotificationDispatcher("test-token", "https://tasks.example.com");
 
@@ -73,11 +73,26 @@ describe("Telegram notification dispatcher", () => {
       text: expect.stringContaining("Creator: Team Lead"),
       replyMarkup: {
         inline_keyboard: [
-          [{ text: "Accept", callback_data: `task:${task.id}:ACCEPT` }],
-          [{ text: "Open task", web_app: { url: "https://tasks.example.com" } }],
+          [{ text: "📋 Open Task", web_app: { url: "https://tasks.example.com" } }],
         ],
       },
     }));
+    const [, call] = (sendTelegramMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call.text).not.toContain("Accept");
+    expect(call.text).toContain("Status: In Progress");
+  });
+
+  it("sends one combined message for several tasks assigned to the same person in a bulk batch", async () => {
+    sendTelegramMessage.mockResolvedValueOnce(undefined);
+    const notifier = new TelegramNotificationDispatcher("test-token", "https://tasks.example.com");
+    const second: Task = { ...task, id: "20000000-0000-4000-8000-000000000002", title: "Second task", deadline: "2026-09-09T07:00:00.000Z" };
+
+    await expect(notifier.notifyBulkAssignment({ tasks: [task, second], creator, assignee })).resolves.toEqual({ status: "SENT" });
+    const [, call] = (sendTelegramMessage as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call.chatId).toBe("43");
+    expect(call.text).toContain("2 ta yangi task");
+    expect(call.text).toContain("1. Publish launch reel");
+    expect(call.text).toContain("2. Second task");
   });
 
   it("fails safely without attempting a fabricated chat ID when onboarding is absent", async () => {

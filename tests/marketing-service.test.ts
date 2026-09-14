@@ -103,7 +103,7 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     registerTelegramUser: vi.fn(),
     getUserById: vi.fn(async (id) => [head, creator, assignee, unrelated].find((candidate) => candidate.id === id) ?? null),
     getUserByTelegramId: vi.fn(),
-    findActiveUserByUsername: vi.fn(),
+    findUserByUsername: vi.fn(),
     listUsers: vi.fn(async () => [head, creator, assignee, unrelated]),
     activateUser: vi.fn(async ({ userId, role }) => {
       const found = [head, creator, assignee, unrelated].find((candidate) => candidate.id === userId);
@@ -157,6 +157,7 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
 function notifier(overrides: Partial<NotificationDispatcher> = {}): NotificationDispatcher {
   return {
     notifyAssignment: vi.fn(async () => ({ status: "SENT" as const })),
+    notifyBulkAssignment: vi.fn(async () => ({ status: "SENT" as const })),
     notifyWorkflow: vi.fn(async ({ recipients }: WorkflowNotificationInput) => ({
       deliveries: recipients.map((recipient) => ({
         recipientUserId: recipient.id,
@@ -413,7 +414,7 @@ describe("MarketingService MVP permissions", () => {
   it("resolves positional assignees before persistence and preserves assignment notification delivery", async () => {
     const created = task();
     const repo = repository({
-      findActiveUserByUsername: vi.fn(async () => assignee),
+      findUserByUsername: vi.fn(async () => assignee),
       createTask: vi.fn(async () => created),
     });
     const notifications = notifier();
@@ -426,13 +427,13 @@ describe("MarketingService MVP permissions", () => {
       priority: "normal",
     }, 18);
 
-    expect(repo.findActiveUserByUsername).toHaveBeenCalledWith("misbahmarketing");
+    expect(repo.findUserByUsername).toHaveBeenCalledWith("misbahmarketing");
     expect(repo.createTask).toHaveBeenCalledTimes(1);
     expect(notifications.notifyAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
   });
 
   it("does not persist or notify when a positional assignee is unknown", async () => {
-    const repo = repository({ findActiveUserByUsername: vi.fn(async () => null) });
+    const repo = repository({ findUserByUsername: vi.fn(async () => null) });
     const notifications = notifier();
     const service = new MarketingService(repo, notifications);
 
@@ -462,6 +463,113 @@ describe("MarketingService MVP permissions", () => {
     expect(result.task).toEqual(created);
     expect(result.notification).toEqual({ status: "FAILED", reason: "DELIVERY_FAILED" });
     expect(repo.createTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("distinguishes a genuinely unknown username from one that is known but inactive", async () => {
+    const unknownRepo = repository({ findUserByUsername: vi.fn(async () => null) });
+    await expect(
+      new MarketingService(unknownRepo, notifier()).createTaskForUsername(creator, {
+        title: "Yangi creative",
+        assigneeUsername: "ghost",
+        deadline: "2026-09-08T13:00:00.000Z",
+      })
+    ).rejects.toMatchObject({ message: "@ghost aktiv jamoa a'zolari orasida topilmadi." });
+
+    const inactiveRepo = repository({
+      findUserByUsername: vi.fn(async () => ({ ...assignee, isActive: false })),
+    });
+    await expect(
+      new MarketingService(inactiveRepo, notifier()).createTaskForUsername(creator, {
+        title: "Yangi creative",
+        assigneeUsername: "smmmanager",
+        deadline: "2026-09-08T13:00:00.000Z",
+      })
+    ).rejects.toMatchObject({ message: "@smmmanager hozir aktiv jamoa a'zosi emas." });
+  });
+
+  describe("bulk task creation", () => {
+    it("creates every valid block independently, each with a deterministic per-block idempotency key", async () => {
+      const created = task();
+      const repo = repository({
+        findUserByUsername: vi.fn(async (username: string) =>
+          username === "assignee" ? assignee : username === "unrelated" ? unrelated : null),
+        createTask: vi.fn(async (input) => task({ ...created, assigneeId: input.assigneeId, title: input.title })),
+      });
+      const notifications = notifier();
+      const service = new MarketingService(repo, notifications);
+
+      const outcomes = await service.createTasksBulk(creator, [
+        { title: "First", assigneeUsername: "assignee", deadline: "2026-09-08T13:00:00.000Z" },
+        { title: "Second", assigneeUsername: "unrelated", deadline: "2026-09-09T07:00:00.000Z" },
+      ], 555);
+
+      expect(outcomes).toHaveLength(2);
+      expect(outcomes[0]).toMatchObject({ status: "CREATED", index: 0 });
+      expect(outcomes[1]).toMatchObject({ status: "CREATED", index: 1 });
+      expect(repo.createTask).toHaveBeenCalledWith(expect.objectContaining({ sourceTelegramUpdateId: 55500 }));
+      expect(repo.createTask).toHaveBeenCalledWith(expect.objectContaining({ sourceTelegramUpdateId: 55501 }));
+      // Distinct assignees: each gets their own individual notification, not a bulk one.
+      expect(notifications.notifyAssignment).toHaveBeenCalledTimes(2);
+      expect(notifications.notifyBulkAssignment).not.toHaveBeenCalled();
+    });
+
+    it("isolates one invalid block so every other valid block is still created", async () => {
+      const created = task();
+      const repo = repository({
+        findUserByUsername: vi.fn(async (username: string) => (username === "assignee" ? assignee : null)),
+        createTask: vi.fn(async (input) => task({ ...created, assigneeId: input.assigneeId })),
+      });
+      const service = new MarketingService(repo, notifier());
+
+      const outcomes = await service.createTasksBulk(creator, [
+        { title: "Valid one", assigneeUsername: "assignee", deadline: "2026-09-08T13:00:00.000Z" },
+        { title: "Bad assignee", assigneeUsername: "ghost", deadline: "2026-09-09T07:00:00.000Z" },
+        { title: "Valid two", assigneeUsername: "assignee", deadline: "2026-09-10T07:00:00.000Z" },
+      ], 10);
+
+      expect(outcomes[0]).toMatchObject({ status: "CREATED" });
+      expect(outcomes[1]).toMatchObject({ status: "FAILED", errorMessage: "@ghost aktiv jamoa a'zolari orasida topilmadi." });
+      expect(outcomes[2]).toMatchObject({ status: "CREATED" });
+      expect(repo.createTask).toHaveBeenCalledTimes(2);
+    });
+
+    it("rejects a block whose assignee is inactive without touching the other blocks", async () => {
+      const repo = repository({
+        findUserByUsername: vi.fn(async () => ({ ...assignee, isActive: false })),
+        createTask: vi.fn(async () => task()),
+      });
+      const service = new MarketingService(repo, notifier());
+
+      const outcomes = await service.createTasksBulk(creator, [
+        { title: "Only block", assigneeUsername: "smmmanager", deadline: "2026-09-08T13:00:00.000Z" },
+      ], 42);
+
+      expect(outcomes[0]).toMatchObject({ status: "FAILED", errorMessage: "@smmmanager hozir aktiv jamoa a'zosi emas." });
+      expect(repo.createTask).not.toHaveBeenCalled();
+    });
+
+    it("sends one combined notification when the same assignee receives multiple tasks in a batch", async () => {
+      const repo = repository({
+        findUserByUsername: vi.fn(async () => assignee),
+        createTask: vi.fn(async (input) => task({ assigneeId: input.assigneeId, title: input.title })),
+      });
+      const notifications = notifier();
+      const service = new MarketingService(repo, notifications);
+
+      await service.createTasksBulk(creator, [
+        { title: "First", assigneeUsername: "assignee", deadline: "2026-09-08T13:00:00.000Z" },
+        { title: "Second", assigneeUsername: "assignee", deadline: "2026-09-09T07:00:00.000Z" },
+      ], 7);
+
+      expect(notifications.notifyAssignment).not.toHaveBeenCalled();
+      expect(notifications.notifyBulkAssignment).toHaveBeenCalledTimes(1);
+      expect(notifications.notifyBulkAssignment).toHaveBeenCalledWith(
+        expect.objectContaining({ creator, assignee, tasks: expect.arrayContaining([
+          expect.objectContaining({ title: "First" }),
+          expect.objectContaining({ title: "Second" }),
+        ]) })
+      );
+    });
   });
 
   describe("accept notifies the creator", () => {

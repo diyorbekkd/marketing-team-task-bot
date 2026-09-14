@@ -35,7 +35,9 @@ export interface MarketingRepository {
   registerTelegramUser(identity: TelegramIdentityInput, expectedHeadTelegramUserId: string): Promise<User>;
   getUserById(id: string): Promise<User | null>;
   getUserByTelegramId(telegramUserId: string): Promise<User | null>;
-  findActiveUserByUsername(username: string): Promise<User | null>;
+  /** Looks up by canonical Telegram username regardless of active state, so
+   * callers can distinguish "no such username" from "exists but inactive". */
+  findUserByUsername(username: string): Promise<User | null>;
   listUsers(): Promise<User[]>;
   activateUser(input: { userId: string; actorId: string; role: TeamRole }): Promise<User>;
   updateUserRole(input: { userId: string; actorId: string; role: TeamRole }): Promise<User>;

@@ -335,11 +335,30 @@
 }
 
 .ma-error-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 8px 12px;
   border-radius: 8px;
   background: var(--danger-soft);
   color: #b91c1c;
   font-size: 0.82rem;
+}
+
+.ma-loading-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.ma-spinner-sm {
+  width: 16px;
+  height: 16px;
+  border-width: 2px;
 }
 
 .ma-muted {

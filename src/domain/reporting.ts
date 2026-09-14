@@ -92,7 +92,14 @@ function average(values: number[]): number | null {
 function durationSegments(task: Task, events: readonly TaskEvent[], start: Date, end: Date) {
   const changes = events.filter((event) => event.taskId === task.id && event.eventType === "STATUS_CHANGED")
     .slice().sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-  let status = "ASSIGNED";
+  // The status a task was created with is not always ASSIGNED: tasks created
+  // through the shared creation path start IN_PROGRESS directly (no Accept
+  // step), while older legacy rows still started ASSIGNED. Rather than
+  // assume either, derive it from the first STATUS_CHANGED event's oldValue
+  // (the status immediately before that first transition) when one exists;
+  // a task with no transitions at all has spent its whole life in its
+  // current status.
+  let status = typeof changes[0]?.oldValue === "string" ? changes[0].oldValue : task.status;
   let segmentStart = new Date(task.createdAt).getTime();
   const result: Array<{ status: string; hours: number }> = [];
   for (const event of changes) {

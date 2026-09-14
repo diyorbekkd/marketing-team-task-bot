@@ -21,6 +21,10 @@ const remindersMembershipMigration = readFileSync(
   new URL("../supabase/migrations/20260909200000_reminders_and_membership.sql", import.meta.url),
   "utf8",
 );
+const autostartMigration = readFileSync(
+  new URL("../supabase/migrations/20260914090000_autostart_tasks.sql", import.meta.url),
+  "utf8",
+);
 
 describe("fast-track database workflow contract", () => {
   it("locks workflow rows and revalidates lifecycle transitions in the transaction", () => {
@@ -123,5 +127,23 @@ describe("deadline reminders and team-membership database contract", () => {
   it("locks down the new user_events audit table", () => {
     expect(remindersMembershipMigration).toContain("alter table public.user_events enable row level security");
     expect(remindersMembershipMigration).toContain("revoke all on table public.user_events from public, anon, authenticated");
+  });
+});
+
+describe("auto-start task creation database contract", () => {
+  it("inserts new tasks directly as IN_PROGRESS through the one shared creation function", () => {
+    expect(autostartMigration).toContain("create or replace function public.create_task_with_event_v2(");
+    expect(autostartMigration).toContain("'IN_PROGRESS', p_creator_id, p_assignee_id,");
+    expect(autostartMigration).not.toMatch(/values \([^)]*'ASSIGNED'/);
+  });
+
+  it("keeps idempotency on conflict, so a duplicated webhook delivery (including a bulk block) is a no-op", () => {
+    expect(autostartMigration).toContain("on conflict do nothing");
+    expect(autostartMigration).toContain("where source_telegram_update_id = p_source_telegram_update_id");
+  });
+
+  it("still attaches a posting checklist for a tagged task created through the auto-start path", () => {
+    expect(autostartMigration).toContain("#posting");
+    expect(autostartMigration).toContain("private.attach_posting_checklist(v_task.id)");
   });
 });

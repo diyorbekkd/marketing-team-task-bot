@@ -13,6 +13,8 @@ Mini App/API ──────> HTTP adapter ─────┘              �
 
 The Telegram and Mini App transports validate and translate external data, resolve a verified actor, call the same application services, and format results. They do not own workflow or authorization rules.
 
+Task creation specifically has exactly one shared parsing/validation/persistence path regardless of transport: the Telegram group, the private bot, the Mini App, recurring generation, and bulk (`---`-separated) creation all end at the same `MarketingRepository.createTask` call, which in turn calls the single PostgreSQL function `create_task_with_event_v2`. There is no separate grammar or business logic per transport — only per-transport parsing of raw text into the same shape (`src/telegram/task-shorthand.ts`'s `parseTaskMessage`) or a typed request body (the Mini App). A bulk message's per-block idempotency reuses the existing unique `tasks.source_telegram_update_id` column with a deterministic synthetic key (`updateId * 100 + blockIndex`), so no schema change was needed to make a duplicated Telegram webhook delivery a no-op for a whole batch, the same way it already was for one task.
+
 ## Runtime and repository boundaries
 
 - `src/app`: Next.js UI and route handlers. Route handlers are adapters, not business services.
@@ -65,6 +67,10 @@ All schedule calculations use `Asia/Tashkent` (fixed UTC+05:00), while database 
 ## Deployment
 
 The expected production layout is a single Next.js deployment (for example, Vercel) plus one managed Supabase project and a Telegram HTTPS webhook pointed at the deployment. Migrations are applied in order during a controlled release. No production resources are created during Sprint 0.
+
+The Vercel function region is pinned (`vercel.json`'s `regions`) to match the Supabase project's region rather than left on Vercel's default, since every database-touching request otherwise pays a full cross-region round trip on top of the client's own latency. Whenever the Supabase project's region changes, this pin should move with it.
+
+The Mini App's first screen is served by one consolidated route, `/api/bootstrap` (`src/app/api/bootstrap/route.ts`), that runs the active-team-list and Home-task-summary reads in parallel server-side and returns both in one response — a thin consolidating route with no business logic of its own, calling the same `MarketingService` methods the per-resource routes (`/api/users`, `/api/tasks`) already call. Per-tab data that is not needed for the first screen (the Tasks-tab list for a specific filter, Reports) is fetched lazily by the client only once that tab is opened, not eagerly at mount.
 
 ## Extended data structures
 

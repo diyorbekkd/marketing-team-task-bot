@@ -54,17 +54,21 @@ Construction, plumbing and auto-parts variations
 
 The first three meaningful lines are title, assignee username, and deadline. A fourth-line `high`, `normal`, or `low` value sets priority; otherwise priority defaults to `normal` and line four onward is the optional multiline description. The previous labeled `T:`, `A:`, `DL:`, `P:`, and `D:` format and explicit bot mentions remain supported for compatibility. A deadline always contains an unambiguous date and time and is interpreted in `Asia/Tashkent`.
 
-To avoid treating group conversation as work, positional input is considered only in the configured marketing group when its assignee/deadline lines have the task shape. The sender and assignee must both resolve to active onboarded team members, and the deadline must be in the future before any task or audit event is created.
+To avoid treating group conversation as work, positional input is considered only in the configured marketing group when its assignee/deadline lines have the task shape. The sender and assignee must both resolve to active onboarded team members, and the deadline must be in the future before any task or audit event is created. Username resolution is server-side, case-insensitive, and tolerant of surrounding whitespace and a leading `@`; an unrecognized username and a recognized-but-inactive username produce two distinct messages (`"@username aktiv jamoa a'zolari orasida topilmadi."` vs. `"@username hozir aktiv jamoa a'zosi emas."`) rather than one generic "not found".
+
+**Bulk creation**: a message may contain several task blocks separated by a line that is exactly `---`. Each block is parsed and validated by the exact same single-task parser above — there is no separate bulk grammar. A message with no `---` line is unaffected and parses exactly as a single task. Each block succeeds or fails independently (one bad block never blocks the others); the sender gets a compact success/failure report naming the 1-based position of any failed block. A message may contain at most 20 task blocks; exceeding that returns a fixed refusal message instead of silently truncating. Bulk creation is idempotent per block, so a duplicated Telegram webhook delivery never creates the same batch twice.
 
 ### Private bot chat
 
-Private chat will later provide onboarding, task acceptance, requests, alerts, summaries, and a `/task` wizard. Sprint 0 includes only the transport skeleton.
+A private message to the bot supports the exact same task-creation format as the group — positional or labeled, single or bulk (`---`-separated) — through the identical shared parser and creation workflow. The sender must be an active, onboarded team member; an inactive or unrecognized sender is rejected without becoming active and without creating anything. Because a private chat is a dedicated conversation rather than shared group traffic, its parse-error messages may be more detailed than the group's. `/start` and button-callback payloads are never parsed as task text. Private chat also handles onboarding, task-action commands (`/accept`, `/block`, `/revision`, `/deadline`), and callback-driven workflow actions.
 
 ### Telegram Mini App
 
 The Mini App will eventually include Home, Tasks, Team, Calendar, and Reports. It will provide task lists and details, quick add, Kanban, factual workload counts, overdue/blocked/review queues, calendar, filters, search, reports, and activity history. Employee views are mainly personal; Head views are team-wide.
 
-Quick Add stays short: title, assignee, and deadline are required; priority and description are optional.
+Quick Add stays short: title, assignee, and deadline are required; priority and description are optional. Submission is blocked while the team list is still loading (a loading/retry state, never a false "not found"); a team-list load failure shows `"Jamoa ma'lumotlarini yuklab bo'lmadi. Qayta urinib ko'ring."`.
+
+The first screen loads from one consolidated `/api/bootstrap` call (active team list + a Home task summary) rather than several separate requests; the Tasks-tab list, Team detail, and Reports data load lazily only once their tab is actually opened. A small team's assignee picker filters the already-loaded active list locally, with no per-keystroke network search.
 
 ## Task model
 
@@ -104,9 +108,11 @@ The Head may manage every task and perform creator-level actions on any task. He
 
 ## Lifecycle rules
 
-### Acceptance
+### Acceptance (legacy) and auto-start
 
-An assigned task begins as `ASSIGNED`. Acceptance transitions it to `IN_PROGRESS`.
+A task created through any current path (marketing group, private bot, Mini App, recurring generation, bulk creation) begins directly as `IN_PROGRESS` — the assignee does not accept it first. The assignment notification never offers an Accept action for these tasks, and no `TASK_ACCEPTED` event is recorded for them.
+
+Tasks created before this rule was introduced may still exist as `ASSIGNED`; the `ACCEPT` transition (`ASSIGNED` → `IN_PROGRESS`) remains supported so those legacy tasks are not stranded, and the Mini App shows the Accept action only for a task whose current status is genuinely `ASSIGNED`. No existing record is migrated or rewritten by this change.
 
 ### Blocked
 
@@ -143,6 +149,8 @@ Analytics must use history where historical state matters rather than attempting
 Membership changes append a separate, equally immutable `user_events` record (actor, target user, event type, old/new value, timestamp) for `USER_ACTIVATED`, `USER_DEACTIVATED`, `USER_REACTIVATED`, and `USER_ROLE_CHANGED`. Routine UI interactions are not logged this way — only state changes that affect who is on the active team or what they're allowed to do.
 
 ## Notifications and reports
+
+A new task's assignment notification states the title, creator, deadline, priority, and `Status: In Progress`, with an Open Task button; it never offers Accept (see Lifecycle rules). When a bulk batch assigns more than one task to the same person, they receive one combined message listing all of their new tasks instead of one notification per task; a batch that spreads across several different people still sends one notification per person.
 
 Deadline reminders fire for every active (non-`DONE`/`CANCELLED`) task at five thresholds relative to its deadline: 24 hours before, 3 hours before, at the deadline, 1 hour overdue, and 24 hours overdue. Before/at-deadline reminders go to the assignee only; the two overdue reminders escalate to the assignee, creator, and Head (deduplicated, so a creator who is also Head or the assignee receives one message, not two). Delivery is idempotent per `(task_id, deadline, reminder_type)` — a cron sweep that runs every few minutes, or runs twice, never resends a reminder that already went out for that exact deadline value. Changing a task's deadline starts a fresh reminder cycle for the new value; delivery history for the old deadline is untouched and does not block the new one. A threshold that passed more than a few hours before the sweep first sees it is treated as missed rather than fired retroactively, so deploying this feature (or recovering from a scheduler gap) does not burst-notify on old deadlines.
 

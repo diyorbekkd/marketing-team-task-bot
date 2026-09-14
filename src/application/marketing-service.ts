@@ -14,6 +14,21 @@ import { z } from "zod";
 import { nextOccurrence, RecurrenceInputSchema, RecurrenceUpdateSchema } from "@/domain/recurrence";
 import { calculateAnalytics, isOpenTask, workloadMetrics } from "@/domain/reporting";
 
+/**
+ * Deterministic per-block idempotency key reusing the existing unique
+ * `tasks.source_telegram_update_id` column — no schema change needed. Safe
+ * for any realistic Telegram update id: multiplying by a fixed base larger
+ * than the maximum batch size and adding a 0-based block index never
+ * overlaps a different update's range, and a duplicated webhook delivery
+ * recomputes the exact same key for the exact same block, so
+ * `ON CONFLICT DO NOTHING` already makes a retry a no-op exactly the way it
+ * does for a single task.
+ */
+const BULK_UPDATE_ID_BASE = 100;
+function bulkBlockUpdateId(updateId: number, blockIndex: number): number {
+  return updateId * BULK_UPDATE_ID_BASE + blockIndex;
+}
+
 const DeactivationInputSchema = z.object({
   openTasksAction: z.enum(["REASSIGN", "CANCEL", "KEEP"]).default("KEEP"),
   reassignToUserId: z.string().uuid().optional(),
@@ -35,6 +50,10 @@ export interface TaskCreationResult {
   readonly assignee: User;
   readonly notification: AssignmentNotificationResult;
 }
+
+export type BulkTaskCreationOutcome =
+  | { readonly index: number; readonly status: "CREATED"; readonly task: Task; readonly assignee: User }
+  | { readonly index: number; readonly status: "FAILED"; readonly errorMessage: string };
 
 function actorFromUser(user: User): ActorContext {
   return { userId: user.id, role: user.role };
@@ -264,10 +283,60 @@ export class MarketingService {
     if (!assignee?.isActive) {
       throw new ApplicationError("INVALID_INPUT", "Assignee must be an active team member.");
     }
+    return this.createTaskWithAssignee(actor, assignee, parsed, sourceTelegramUpdateId);
+  }
 
+  /**
+   * Resolves the assignee by username exactly once, then hands the already-
+   * validated User straight to task creation — createTask (the Mini App's
+   * by-id path) must never be asked to re-resolve the same person a second
+   * time. A second, redundant lookup was the confirmed root cause of an
+   * intermittent "assignee not found" report: it doubled the exposure to any
+   * single slow/failed read for no benefit, since the first read had already
+   * proven the assignee's identity.
+   */
+  async createTaskForUsername(
+    actor: User,
+    input: Omit<z.input<typeof CreateTaskInputSchema>, "assigneeId"> & { assigneeUsername: string },
+    sourceTelegramUpdateId?: number,
+  ): Promise<TaskCreationResult> {
+    const assignee = await this.resolveActiveAssigneeByUsername(input.assigneeUsername);
+    const parsed = CreateTaskInputSchema.parse({
+      title: input.title,
+      assigneeId: assignee.id,
+      deadline: input.deadline,
+      priority: input.priority,
+      description: input.description,
+    });
+    return this.createTaskWithAssignee(actor, assignee, parsed, sourceTelegramUpdateId);
+  }
+
+  /**
+   * Distinguishes a genuinely unknown username from one that exists but is
+   * currently inactive — the two need different, specific messages rather
+   * than one generic "not found" that could just as easily describe a typo
+   * or a teammate Head hasn't reactivated yet.
+   */
+  private async resolveActiveAssigneeByUsername(username: string): Promise<User> {
+    const user = await this.repository.findUserByUsername(username);
+    if (!user) {
+      throw new ApplicationError("INVALID_INPUT", `@${username} aktiv jamoa a'zolari orasida topilmadi.`);
+    }
+    if (!user.isActive) {
+      throw new ApplicationError("INVALID_INPUT", `@${username} hozir aktiv jamoa a'zosi emas.`);
+    }
+    return user;
+  }
+
+  private async createTaskWithAssignee(
+    actor: User,
+    assignee: User,
+    parsed: z.infer<typeof CreateTaskInputSchema>,
+    sourceTelegramUpdateId?: number,
+  ): Promise<TaskCreationResult> {
     const task = await this.repository.createTask({
       creatorId: actor.id,
-      assigneeId: parsed.assigneeId,
+      assigneeId: assignee.id,
       title: parsed.title,
       description: parsed.description,
       priority: parsed.priority,
@@ -295,22 +364,97 @@ export class MarketingService {
     return { task, assignee, notification };
   }
 
-  async createTaskForUsername(
+  /**
+   * Bulk creation for one Telegram message containing several `---`
+   * -separated task blocks. Each block is already independently parsed and
+   * validated by the shared shorthand parser before this runs; this method
+   * only handles resolving/creating/notifying, one block at a time, so a
+   * failure on one block can never affect another. Idempotency is per block:
+   * callers pass a distinct `sourceTelegramUpdateId` per block (a
+   * deterministic function of the real Telegram update id and the block's
+   * position), reusing the same unique-constraint mechanism that already
+   * protects a single task from a duplicated webhook delivery.
+   *
+   * Notifications are grouped per assignee: someone who receives exactly one
+   * task from the batch gets the normal individual message; someone who
+   * receives more than one gets a single combined message instead of one
+   * per task. This never affects task creation itself — every block is
+   * created and audited through the same `repository.createTask` call as a
+   * single task would be, whether or not its notification ends up grouped.
+   */
+  async createTasksBulk(
     actor: User,
-    input: Omit<z.input<typeof CreateTaskInputSchema>, "assigneeId"> & { assigneeUsername: string },
-    sourceTelegramUpdateId?: number,
-  ): Promise<TaskCreationResult> {
-    const assignee = await this.repository.findActiveUserByUsername(input.assigneeUsername);
-    if (!assignee) {
-      throw new ApplicationError("INVALID_INPUT", `No active teammate matches @${input.assigneeUsername}.`);
+    blocks: ReadonlyArray<Omit<z.input<typeof CreateTaskInputSchema>, "assigneeId"> & { assigneeUsername: string }>,
+    baseSourceTelegramUpdateId: number,
+  ): Promise<BulkTaskCreationOutcome[]> {
+    const outcomes: BulkTaskCreationOutcome[] = [];
+    const perAssignee = new Map<string, Array<{ task: Task; assignee: User }>>();
+
+    for (let index = 0; index < blocks.length; index += 1) {
+      const block = blocks[index];
+      try {
+        const assignee = await this.resolveActiveAssigneeByUsername(block.assigneeUsername);
+        const parsed = CreateTaskInputSchema.parse({
+          title: block.title,
+          assigneeId: assignee.id,
+          deadline: block.deadline,
+          priority: block.priority,
+          description: block.description,
+        });
+        const task = await this.repository.createTask({
+          creatorId: actor.id,
+          assigneeId: assignee.id,
+          title: parsed.title,
+          description: parsed.description,
+          priority: parsed.priority,
+          deadline: parsed.deadline,
+          sourceTelegramUpdateId: bulkBlockUpdateId(baseSourceTelegramUpdateId, index),
+        });
+        outcomes.push({ index, status: "CREATED", task, assignee });
+        const group = perAssignee.get(assignee.id) ?? [];
+        group.push({ task, assignee });
+        perAssignee.set(assignee.id, group);
+      } catch (error) {
+        // One invalid/failing block must never abort the rest of the batch —
+        // each block is independently validated and created.
+        const message = error instanceof ApplicationError
+          ? error.message
+          : error instanceof z.ZodError
+            ? (error.issues[0]?.message ?? "Task format is invalid.")
+            : "Task could not be created.";
+        outcomes.push({ index, status: "FAILED", errorMessage: message });
+      }
     }
-    return this.createTask(actor, {
-      title: input.title,
-      assigneeId: assignee.id,
-      deadline: input.deadline,
-      priority: input.priority,
-      description: input.description,
-    }, sourceTelegramUpdateId);
+
+    for (const group of perAssignee.values()) {
+      const assignee = group[0].assignee;
+      try {
+        const notification = group.length === 1
+          ? await this.notificationDispatcher.notifyAssignment({ task: group[0].task, creator: actor, assignee })
+          : await this.notificationDispatcher.notifyBulkAssignment({
+              tasks: group.map((entry) => entry.task),
+              creator: actor,
+              assignee,
+            });
+        const log = {
+          event: notification.status === "SENT" ? "task_assignment_notification_sent" : "task_assignment_notification_failed",
+          taskIds: group.map((entry) => entry.task.id),
+          batched: group.length > 1,
+          ...(notification.status === "FAILED" ? { reason: notification.reason } : {}),
+        };
+        if (notification.status === "SENT") console.info(JSON.stringify(log));
+        else console.warn(JSON.stringify(log));
+      } catch {
+        console.warn(JSON.stringify({
+          event: "task_assignment_notification_failed",
+          taskIds: group.map((entry) => entry.task.id),
+          batched: group.length > 1,
+          reason: "DISPATCH_FAILED",
+        }));
+      }
+    }
+
+    return outcomes;
   }
 
   async listTasks(actor: User, scope: TaskScope = "my", now = new Date()): Promise<Task[]> {

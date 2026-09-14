@@ -10,6 +10,7 @@ import { ApplicationError } from "@/application/errors";
 import type { TeamRole } from "@/domain/permissions";
 import type { TaskStatus } from "@/domain/task";
 import type { ReminderType } from "@/domain/reminders";
+import { canonicalTelegramUsername } from "@/domain/telegram-username";
 import type {
   DeadlineChangeRequest,
   PostingChecklist,
@@ -262,12 +263,11 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return data ? mapUser(data) : null;
   }
 
-  async findActiveUserByUsername(username: string): Promise<User | null> {
+  async findUserByUsername(username: string): Promise<User | null> {
     const { data, error } = await this.client
       .from("users")
       .select("*")
-      .eq("telegram_username", username.replace(/^@/, "").toLowerCase())
-      .eq("is_active", true)
+      .eq("telegram_username", canonicalTelegramUsername(username))
       .maybeSingle();
     if (error) throwDataError(error, "Unable to resolve assignee.");
     return data ? mapUser(data) : null;

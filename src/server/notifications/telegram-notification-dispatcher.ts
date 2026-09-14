@@ -3,6 +3,7 @@ import "server-only";
 import type {
   AssignmentNotificationInput,
   AssignmentNotificationResult,
+  BulkAssignmentNotificationInput,
   NotificationDispatcher,
   ReminderNotificationInput,
   ReminderNotificationResult,
@@ -32,6 +33,20 @@ function formatDeadline(deadline: string): string {
   const value = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
   return `${value("day")}.${value("month")}.${value("year")} ${value("hour")}:${value("minute")}`;
+}
+
+function formatDeadlineShort(deadline: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Tashkent",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(deadline));
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${value("day")} ${value("month")}, ${value("hour")}:${value("minute")}`;
 }
 
 function formatDeadlineTime(deadline: string): string {
@@ -254,20 +269,46 @@ export class TelegramNotificationDispatcher implements NotificationDispatcher, R
     try {
       await sendTelegramMessage(this.botToken, {
         chatId: assignee.telegramUserId,
+        // New tasks start IN_PROGRESS immediately — no Accept step, and no
+        // Accept button, since there is nothing left for the assignee to
+        // accept.
         text: [
-          "New task assigned to you.",
-          `Title: ${task.title}`,
+          "📋 Yangi task",
+          "",
+          task.title,
+          "",
           `Creator: ${creator.displayName}`,
           `Deadline: ${formatDeadline(task.deadline)}`,
           `Priority: ${task.priority}`,
-          `Task ID: ${task.id}`,
+          "",
+          "Status: In Progress",
         ].join("\n"),
-        replyMarkup: {
-          inline_keyboard: [
-            [{ text: "Accept", callback_data: `task:${task.id}:ACCEPT` }],
-            [{ text: "Open task", web_app: { url: this.appUrl } }],
-          ],
-        },
+        replyMarkup: { inline_keyboard: [openTaskButton(this.appUrl)] },
+      });
+      return { status: "SENT" };
+    } catch {
+      return { status: "FAILED", reason: "DELIVERY_FAILED" };
+    }
+  }
+
+  async notifyBulkAssignment(
+    { tasks, assignee }: BulkAssignmentNotificationInput,
+  ): Promise<AssignmentNotificationResult> {
+    if (!/^\d+$/.test(assignee.telegramUserId)) {
+      return { status: "FAILED", reason: "ASSIGNEE_NOT_ONBOARDED" };
+    }
+
+    try {
+      await sendTelegramMessage(this.botToken, {
+        chatId: assignee.telegramUserId,
+        text: [
+          `📋 ${tasks.length} ta yangi task`,
+          "",
+          ...tasks.map((task, index) => `${index + 1}. ${task.title} — ${formatDeadlineShort(task.deadline)}`),
+          "",
+          "Mini App'da tasklarni ko‘rishingiz mumkin.",
+        ].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(this.appUrl)] },
       });
       return { status: "SENT" };
     } catch {

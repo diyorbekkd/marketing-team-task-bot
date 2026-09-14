@@ -4,9 +4,12 @@ import type { Task, User } from "@/domain/models";
 import type { PostingChecklist } from "@/domain/models";
 import type { TaskAction } from "@/domain/workflow";
 import {
+  BULK_SEPARATOR,
   TaskShorthandError,
+  containsBulkSeparator,
+  looksLikePositionalTask,
   looksLikeTaskShorthand,
-  parseGroupTaskMessage,
+  parseTaskMessage,
   parseTashkentDeadline,
 } from "./task-shorthand";
 import type { TelegramUpdate } from "./update";
@@ -55,6 +58,14 @@ function commandAction(command: string): TaskAction | null {
   return actions[command] ?? null;
 }
 
+/** A message is worth attempting to parse as a task (single or bulk) only if
+ * it has one of the recognized shapes — this is the same false-positive
+ * guard that always protected ordinary group conversation, now shared by
+ * the private bot and by bulk's block-splitting. */
+function looksLikeTaskCreationAttempt(text: string): boolean {
+  return containsBulkSeparator(text) || looksLikeTaskShorthand(text) || looksLikePositionalTask(text);
+}
+
 function taskFormatError(reason: string): string {
   return [
     "❌ Task yaratilmadi.",
@@ -64,6 +75,29 @@ function taskFormatError(reason: string): string {
     "Task nomi",
     "@username",
     "DD.MM.YYYY HH:mm",
+  ].join("\n");
+}
+
+/** The private bot is a dedicated conversation, so its parse-error help can
+ * afford to also mention priority/description and the bulk separator —
+ * concise, not a wall of documentation, and only shown when something
+ * actually looked like an attempted task and failed. */
+function privateTaskFormatHelp(reason?: string): string {
+  return [
+    ...(reason ? ["❌ Task yaratilmadi.", `Sabab: ${reason}`, ""] : []),
+    "Task yaratish formati:",
+    "",
+    "Task nomi",
+    "@assignee",
+    "DD.MM.YYYY HH:mm",
+    "priority",
+    "description",
+    "",
+    "Bir nechta task uchun ularni:",
+    "",
+    BULK_SEPARATOR,
+    "",
+    "bilan ajrating.",
   ].join("\n");
 }
 
@@ -88,6 +122,90 @@ function postingChecklistMessage(taskId: string, checklist: PostingChecklist): {
       ],
     },
   };
+}
+
+/**
+ * Single entry point for creating one or several tasks from a Telegram
+ * message, shared by the group and the private bot. Never throws for an
+ * expected parse/validation outcome — every case (silent ignore, a helpful
+ * error, a single confirmation, or a bulk partial-success report) is
+ * returned directly, so the caller's generic error handling is reserved for
+ * genuinely unexpected failures.
+ */
+async function handleTaskCreationText(
+  service: MarketingService,
+  actor: User,
+  text: string,
+  chatId: number,
+  updateId: number,
+  helpfulErrors: boolean,
+): Promise<TelegramHandlerResult> {
+  const parsedMessage = parseTaskMessage(text);
+  if (parsedMessage.results.length === 0) {
+    // e.g. a lone "---" with nothing real on either side — never an attempt.
+    return { messages: [] };
+  }
+
+  if (!parsedMessage.isBulk) {
+    const only = parsedMessage.results[0];
+    if (only.error) {
+      if (only.error instanceof TaskShorthandError) {
+        console.warn(JSON.stringify({ event: "task_parse_failed", updateId, reason: only.error.message }));
+      }
+      return {
+        messages: [{ chatId, text: helpfulErrors ? privateTaskFormatHelp(only.error.message) : taskFormatError(only.error.message) }],
+      };
+    }
+    if (!only.parsed) return { messages: [] };
+    try {
+      const { task, assignee, notification } = await service.createTaskForUsername(actor, only.parsed, updateId);
+      console.info(JSON.stringify({ event: "task_created", updateId, taskId: task.id, notificationStatus: notification.status }));
+      return {
+        messages: [{
+          chatId,
+          text: [
+            `Task created.\n${compactTask(task, assignee)}`,
+            ...(notification.status === "FAILED" ? [notificationWarning()] : []),
+          ].join("\n"),
+        }],
+      };
+    } catch (error) {
+      if (error instanceof ApplicationError) return { messages: [{ chatId, text: error.message }] };
+      throw error;
+    }
+  }
+
+  // Bulk: every block is independently reported. Parse-time failures (bad
+  // date/title shape) and creation-time failures (unknown/inactive assignee,
+  // a persistence error) are reconciled back to the block's original
+  // 1-based position so the user sees exactly which of their blocks needs
+  // fixing.
+  const parseFailures = parsedMessage.results
+    .filter((result): result is typeof result & { error: TaskShorthandError } => result.error !== null);
+  const parseSuccesses = parsedMessage.results
+    .filter((result): result is typeof result & { parsed: NonNullable<typeof result.parsed> } => result.parsed !== null);
+
+  const outcomes = parseSuccesses.length > 0
+    ? await service.createTasksBulk(actor, parseSuccesses.map((result) => result.parsed), updateId)
+    : [];
+
+  const createdCount = outcomes.filter((outcome) => outcome.status === "CREATED").length;
+  const failures = [
+    ...parseFailures.map((result) => ({ index: result.index, message: result.error.message })),
+    ...outcomes
+      .filter((outcome): outcome is Extract<typeof outcome, { status: "FAILED" }> => outcome.status === "FAILED")
+      .map((outcome) => ({ index: parseSuccesses[outcome.index].index, message: outcome.errorMessage })),
+  ].sort((a, b) => a.index - b.index);
+
+  console.info(JSON.stringify({ event: "bulk_tasks_created", updateId, created: createdCount, failed: failures.length }));
+
+  const lines = [
+    `✅ ${createdCount} ta task yaratildi`,
+    ...(failures.length > 0 ? [`❌ ${failures.length} ta task yaratilmadi`] : []),
+    ...failures.flatMap((failure) => ["", `${failure.index}-task:`, failure.message]),
+    ...(parsedMessage.truncated ? ["", "Bir xabarda maksimum 20 ta task yaratish mumkin."] : []),
+  ];
+  return { messages: [{ chatId, text: lines.join("\n") }] };
 }
 
 export function createTelegramUpdateHandler(service: MarketingService, config: TelegramHandlerConfig) {
@@ -183,59 +301,31 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
       }
 
       const isGroupChat = ["group", "supergroup"].includes(message.chat.type);
+      const isPrivateChat = message.chat.type === "private";
       const isConfiguredMarketingGroup = isGroupChat && String(message.chat.id) === config.marketingGroupId;
+
       if (isGroupChat) {
         if (!isConfiguredMarketingGroup) {
-          if (looksLikeTaskShorthand(text)) {
+          if (looksLikeTaskCreationAttempt(text)) {
             throw new ApplicationError("FORBIDDEN", "Tasks may only be created in the configured marketing group.");
           }
           return { messages: [] };
         }
 
-        let parsedTask = null;
-        let taskParseError: unknown;
-        try {
-          parsedTask = parseGroupTaskMessage(text);
-        } catch (error) {
-          taskParseError = error;
-        }
-
-        if (parsedTask || taskParseError) {
+        if (looksLikeTaskCreationAttempt(text)) {
           const actor = await service.requireActorByTelegramId(String(message.from.id));
-          if (taskParseError) {
-            if (taskParseError instanceof TaskShorthandError) {
-              console.warn(JSON.stringify({
-                event: "group_task_parse_failed",
-                updateId: update.update_id,
-                reason: taskParseError.message,
-              }));
-            }
-            throw taskParseError;
-          }
-
-          const { task, assignee, notification } = await service.createTaskForUsername(
-            actor,
-            parsedTask!,
-            update.update_id,
-          );
-          console.info(JSON.stringify({
-            event: "group_task_created",
-            updateId: update.update_id,
-            taskId: task.id,
-            notificationStatus: notification.status,
-          }));
-          return {
-            messages: [{
-              chatId: message.chat.id,
-              text: [
-                `Task created.\n${compactTask(task, assignee)}`,
-                ...(notification.status === "FAILED" ? [notificationWarning()] : []),
-              ].join("\n"),
-            }],
-          };
+          return await handleTaskCreationText(service, actor, text, message.chat.id, update.update_id, false);
         }
 
         if (!firstWord.startsWith("/")) return { messages: [] };
+      }
+
+      // The exact same shared parser/validation/creation workflow used by
+      // the group is available in a private conversation with the bot, for
+      // any active, onboarded sender — this was previously blocked outright.
+      if (isPrivateChat && looksLikeTaskCreationAttempt(text)) {
+        const actor = await service.requireActorByTelegramId(String(message.from.id));
+        return await handleTaskCreationText(service, actor, text, message.chat.id, update.update_id, true);
       }
 
       const actor = await service.requireActorByTelegramId(String(message.from.id));
