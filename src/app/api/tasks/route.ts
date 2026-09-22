@@ -7,7 +7,7 @@ const ScopeSchema = z.enum(["my", "team", "today", "overdue", "review"]);
 
 export async function GET(request: Request) {
   try {
-    const actor = await requireRequestActor();
+    const actor = await requireRequestActor(request);
     const requestedScope = new URL(request.url).searchParams.get("scope") ?? "my";
     const scope = ScopeSchema.parse(requestedScope);
     return Response.json({ tasks: await getMarketingService().listTasks(actor, scope) });
@@ -18,7 +18,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const actor = await requireRequestActor();
+    const actor = await requireRequestActor(request);
     const result = await getMarketingService().createTask(actor, await request.json());
     return Response.json(result, { status: 201 });
   } catch (error) {

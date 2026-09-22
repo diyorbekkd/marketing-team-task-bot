@@ -1,22 +1,45 @@
 import "server-only";
 
-import { cookies } from "next/headers";
 import type { User } from "@/domain/models";
 import { ApplicationError } from "@/application/errors";
-import { getMarketingService } from "@/server/application";
-import { getTelegramConfig } from "@/server/config";
-import { SESSION_COOKIE_NAME, verifySessionToken } from "./session";
+import { CookieRequestActorProvider } from "./cookie-request-actor-provider";
+import { ContentOsRequestActorProvider } from "./content-os-request-actor-provider";
+import type { RequestActorProvider, RequestActorResolution } from "./request-actor-provider";
 
-export async function requireRequestActor(): Promise<User> {
-  const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
-  if (!token) throw new ApplicationError("UNAUTHENTICATED", "Telegram authentication is required.");
+const defaultProviders: readonly RequestActorProvider[] = [
+  new ContentOsRequestActorProvider(),
+  new CookieRequestActorProvider(),
+];
 
-  const payload = verifySessionToken(token, getTelegramConfig().webhookSecret);
-  if (!payload) throw new ApplicationError("UNAUTHENTICATED", "The session is invalid or expired.");
-
-  const actor = await getMarketingService().requireActorById(payload.userId);
-  if (actor.telegramUserId !== payload.telegramUserId) {
-    throw new ApplicationError("UNAUTHENTICATED", "The session identity no longer matches.");
+/**
+ * Tries each provider in order and returns the first resolution. Exported
+ * (rather than hardcoded inside requireRequestActor) so tests can exercise
+ * the orchestration logic against fake providers without needing a real
+ * Next.js cookies() context or a real signed request.
+ */
+export async function resolveRequestActor(
+  request: Request,
+  providers: readonly RequestActorProvider[] = defaultProviders,
+): Promise<RequestActorResolution> {
+  for (const provider of providers) {
+    // Each provider gets its own clone so one provider reading the body
+    // (only ContentOsRequestActorProvider does) never consumes the stream
+    // for another provider or for the route handler's own later
+    // `await request.json()` on the original, un-cloned `request`.
+    const resolution = await provider.resolve(request.clone());
+    if (resolution) return resolution;
   }
-  return actor;
+  throw new ApplicationError("UNAUTHENTICATED", "Telegram authentication is required.");
+}
+
+/**
+ * Existing call sites (every route handler, MarketingService's callers)
+ * keep working unchanged: this still returns a plain `User`, exactly as
+ * before, regardless of which provider actually resolved it. Only the
+ * parameter changed (now takes the route's `request`, needed so a service-
+ * auth provider can read its method/path/body/headers) -- every existing
+ * route already had `request` in scope.
+ */
+export async function requireRequestActor(request: Request): Promise<User> {
+  return (await resolveRequestActor(request)).actor;
 }

@@ -4,7 +4,7 @@ import { errorResponse } from "@/server/http/errors";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const actor = await requireRequestActor();
+    const actor = await requireRequestActor(request);
     const { id } = await context.params;
     const task = await getMarketingService().performTaskAction(actor, id, await request.json());
     return Response.json({ task });

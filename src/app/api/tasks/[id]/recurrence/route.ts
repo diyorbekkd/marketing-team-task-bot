@@ -4,7 +4,7 @@ import { errorResponse } from "@/server/http/errors";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const actor = await requireRequestActor();
+    const actor = await requireRequestActor(request);
     const { id } = await context.params;
     const recurringDefinition = await getMarketingService().createRecurrence(actor, id, await request.json());
     return Response.json({ recurringDefinition }, { status: 201 });
@@ -15,7 +15,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
 export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const actor = await requireRequestActor();
+    const actor = await requireRequestActor(request);
     const { id } = await context.params;
     const recurringDefinition = await getMarketingService().updateRecurrence(actor, id, await request.json());
     return Response.json({ recurringDefinition });

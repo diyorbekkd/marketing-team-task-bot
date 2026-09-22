@@ -2,9 +2,9 @@ import { getMarketingService } from "@/server/application";
 import { requireRequestActor } from "@/server/auth/request-actor";
 import { errorResponse } from "@/server/http/errors";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const actor = await requireRequestActor();
+    const actor = await requireRequestActor(request);
     const users = (await getMarketingService().listUsers(actor)).map((user) => ({
       id: user.id,
       telegramUsername: user.telegramUsername,

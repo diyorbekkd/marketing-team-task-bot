@@ -9,9 +9,9 @@ import { errorResponse } from "@/server/http/errors";
 // queries already exist as MarketingService methods; this just avoids two
 // sequential client round trips (each paying the Vercel<->Supabase
 // cross-region latency) before the first useful screen can render.
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const actor = await requireRequestActor();
+    const actor = await requireRequestActor(request);
     const service = getMarketingService();
     const homeScope = actor.role === "HEAD_OF_MARKETING" ? "team" : "my";
 

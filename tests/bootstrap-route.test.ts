@@ -33,7 +33,7 @@ describe("Mini App bootstrap route", () => {
     listTasks.mockImplementation(async () => tasks);
 
     const { GET } = await import("../src/app/api/bootstrap/route");
-    const responsePromise = GET();
+    const responsePromise = GET(new Request("https://tasks.example.com/api/bootstrap"));
     await Promise.resolve(); // let the route's synchronous setup run
     expect(listTasks).toHaveBeenCalled();
     resolveUsers(users);
@@ -62,7 +62,7 @@ describe("Mini App bootstrap route", () => {
     listTasks.mockResolvedValue([]);
 
     const { GET } = await import("../src/app/api/bootstrap/route");
-    await GET();
+    await GET(new Request("https://tasks.example.com/api/bootstrap"));
 
     expect(listTasks).toHaveBeenCalledWith(actor, "team");
   });
@@ -73,7 +73,7 @@ describe("Mini App bootstrap route", () => {
     listTasks.mockRejectedValue(new Error("supabase unavailable"));
 
     const { GET } = await import("../src/app/api/bootstrap/route");
-    const response = await GET();
+    const response = await GET(new Request("https://tasks.example.com/api/bootstrap"));
 
     expect(response.status).toBeGreaterThanOrEqual(400);
   });

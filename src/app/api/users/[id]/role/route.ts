@@ -10,7 +10,7 @@ const BodySchema = z.object({
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const actor = await requireRequestActor();
+    const actor = await requireRequestActor(request);
     const { id } = await context.params;
     const body = BodySchema.parse(await request.json());
     return Response.json({ user: await getMarketingService().updateUserRole(actor, id, body.role) });

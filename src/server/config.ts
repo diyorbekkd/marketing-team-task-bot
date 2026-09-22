@@ -53,6 +53,21 @@ const TeamBootstrapConfigSchema = z.object({
 });
 const CronConfigSchema = z.object({ CRON_SECRET: z.string().min(16).max(512) });
 
+const ContentOsServiceAuthConfigSchema = z
+  .object({
+    CONTENT_OS_SERVICE_AUTH_ENABLED: z.enum(["true", "false"]).default("false"),
+    CONTENT_OS_SERVICE_SECRET: requiredSecret.optional(),
+  })
+  .superRefine((value, context) => {
+    if (value.CONTENT_OS_SERVICE_AUTH_ENABLED === "true" && !value.CONTENT_OS_SERVICE_SECRET) {
+      context.addIssue({
+        code: "custom",
+        path: ["CONTENT_OS_SERVICE_SECRET"],
+        message: "Required when CONTENT_OS_SERVICE_AUTH_ENABLED=true",
+      });
+    }
+  });
+
 export class ConfigurationError extends Error {
   readonly code = "INVALID_CONFIGURATION";
 
@@ -111,4 +126,14 @@ export function getTeamBootstrapConfig(env: Environment = process.env) {
 export function getCronConfig(env: Environment = process.env) {
   const parsed = parseConfig("scheduled jobs", CronConfigSchema, env);
   return { secret: parsed.CRON_SECRET } as const;
+}
+
+/** Defaults to disabled: CONTENT_OS_SERVICE_AUTH_ENABLED must be explicitly
+ * set to "true", and even then CONTENT_OS_SERVICE_SECRET is required. */
+export function getContentOsServiceAuthConfig(env: Environment = process.env) {
+  const parsed = parseConfig("Content OS service auth", ContentOsServiceAuthConfigSchema, env);
+  return {
+    enabled: parsed.CONTENT_OS_SERVICE_AUTH_ENABLED === "true",
+    secret: parsed.CONTENT_OS_SERVICE_SECRET,
+  } as const;
 }

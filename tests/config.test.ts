@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ConfigurationError,
   getAppConfig,
+  getContentOsServiceAuthConfig,
   getCronConfig,
   getSupabaseConfig,
   getTeamBootstrapConfig,
@@ -67,5 +68,31 @@ describe("configuration validation", () => {
       TELEGRAM_GROUP_ID: "123456789",
       HEAD_TELEGRAM_USER_ID: "123456789",
     })).toThrow(ConfigurationError);
+  });
+
+  describe("Content OS service auth (default disabled)", () => {
+    it("defaults to disabled when unset -- the flag must be explicit", () => {
+      expect(getContentOsServiceAuthConfig({})).toEqual({ enabled: false, secret: undefined });
+    });
+
+    it("stays disabled when explicitly set to \"false\"", () => {
+      expect(getContentOsServiceAuthConfig({ CONTENT_OS_SERVICE_AUTH_ENABLED: "false" }).enabled).toBe(false);
+    });
+
+    it("requires a secret when enabled -- enabling without one fails fast instead of running unsigned", () => {
+      expect(() => getContentOsServiceAuthConfig({ CONTENT_OS_SERVICE_AUTH_ENABLED: "true" })).toThrow(ConfigurationError);
+    });
+
+    it("enables with a secret present", () => {
+      const config = getContentOsServiceAuthConfig({
+        CONTENT_OS_SERVICE_AUTH_ENABLED: "true",
+        CONTENT_OS_SERVICE_SECRET: "a-real-secret-value",
+      });
+      expect(config).toEqual({ enabled: true, secret: "a-real-secret-value" });
+    });
+
+    it("rejects a non-boolean-literal value instead of coercing it", () => {
+      expect(() => getContentOsServiceAuthConfig({ CONTENT_OS_SERVICE_AUTH_ENABLED: "yes" })).toThrow(ConfigurationError);
+    });
   });
 });

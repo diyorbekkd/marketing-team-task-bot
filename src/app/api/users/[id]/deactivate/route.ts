@@ -4,7 +4,7 @@ import { errorResponse } from "@/server/http/errors";
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
-    const actor = await requireRequestActor();
+    const actor = await requireRequestActor(request);
     const { id } = await context.params;
     const body = await request.json().catch(() => ({}));
     const result = await getMarketingService().deactivateUser(actor, id, body);
