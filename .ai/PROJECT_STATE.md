@@ -1,10 +1,14 @@
 # Project state
 
-- Current sprint: Fast-track MVP vertical slice, plus two authorized follow-on phases: (1) daily/weekly summaries, `#posting` checklist, recurring tasks, workload/bottleneck analytics; (2) deadline reminders + team-member deactivation/reactivation.
-- Current branch: `fast-track/mvp`
-- Current objective: Live-verify both follow-on phases against production. Phase 1's report/cron logic was already manually verified live (see below); phase 2 (this pass) needs a real reminder round trip and a real deactivate/reactivate round trip using a known test account — see the handoff report's "Exact real tests performed" / "still needed" for the precise steps. The older MVP live-verification backlog (ordinary-conversation non-trigger, deadline-request/review round trips, Mini App click-through) is still open and can be resumed alongside these.
+- Current sprint: Sprint 9B independent review and hardening, based on the completed fast-track MVP and Content OS auth bridge.
+- Current branch: `codex/sprint-9b-hardening`
+- Current objective: Prepare a local-only Task Bot integration branch: independently accept or correct Sprint 9A changes, repair the pre-existing `#posting` creation defect without widening privileges, and leave Content OS transition compatibility pending until its provenance dependency is finalized. No push, deploy, live migration, or production-data change is authorized.
 - Completed sprints: Sprint 0 complete and independently reviewed.
 - Completed current tasks:
+  - **Sprint 9B independent audit (local only, 2026-10-14):** accepted Claude commits `3ddfad1` (SEO Specialist) and `97429cb` (service-role hardening) unchanged after source/migration review and PostgreSQL 17 dry-runs; integrated locally as `82a410a` and `c5a778e`.
+  - Reproduced the pre-existing `#posting` failure as `service_role`: `private.attach_posting_checklist` used `ON CONFLICT DO UPDATE` only to recover an existing id, which requires `UPDATE` on `task_checklists` despite the intended `SELECT, INSERT` grant. Commit `21b30d5` replaces it with insert-or-ignore plus a separate select, preserving idempotency and least privilege; database regression covers creation, four-item invariants, toggles, REVIEW gating, audit events, rollback, and reapply.
+  - A2/A3 (`199581f`) was audited but deliberately not integrated: normal/review-required direct-completion logic and legacy fallback are sound, but its `DONE -> REVISION` rule covers every Content OS task for creator/Head. The Content OS worktree now contains a parallel, uncommitted draft contract with immutable provenance and stable-code predicates for the exact source Blog / Head Review / reviewer relation; Task Bot integration must wait for that contract to be finalized and then consume those predicates instead of the broad rule.
+  - Corrected `AGENTS.md` rule 19: public-schema default privileges are not fully revoked. New table migrations must revoke from all ambient roles including `service_role`, then grant back only the intended capabilities. Project-wide default privileges were not changed.
   - Product, architecture, sprint, and Sprint 0 documentation
   - Next.js/TypeScript application skeleton
   - Foundational Supabase schema and RLS lock-down
