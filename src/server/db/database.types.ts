@@ -5,7 +5,7 @@ type UserRow = {
   telegram_user_id: number | string;
   telegram_username: string | null;
   display_name: string;
-  role: "OPERATOR_VIDEO_EDITOR" | "CONTENT_MARKETER" | "DIGITAL_MARKETER" | "SMM_MANAGER" | "HEAD_OF_MARKETING";
+  role: "OPERATOR_VIDEO_EDITOR" | "CONTENT_MARKETER" | "DIGITAL_MARKETER" | "SMM_MANAGER" | "SEO_SPECIALIST" | "HEAD_OF_MARKETING";
   is_active: boolean;
   deactivated_at: string | null;
   deactivated_by: string | null;

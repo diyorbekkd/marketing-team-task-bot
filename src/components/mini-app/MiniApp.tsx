@@ -10,6 +10,7 @@ type Role =
   | "CONTENT_MARKETER"
   | "DIGITAL_MARKETER"
   | "SMM_MANAGER"
+  | "SEO_SPECIALIST"
   | "HEAD_OF_MARKETING";
 
 type TaskStatus =
@@ -174,6 +175,7 @@ const ROLE_LABELS: Record<Role, string> = {
   CONTENT_MARKETER: "Content Marketer",
   DIGITAL_MARKETER: "Digital Marketer",
   SMM_MANAGER: "SMM Manager",
+  SEO_SPECIALIST: "SEO Specialist",
   HEAD_OF_MARKETING: "Head of Marketing",
 };
 
@@ -182,6 +184,7 @@ const ACTIVATION_ROLES: Role[] = [
   "CONTENT_MARKETER",
   "DIGITAL_MARKETER",
   "SMM_MANAGER",
+  "SEO_SPECIALIST",
 ];
 
 const FILTER_LABELS: Record<Filter, string> = {

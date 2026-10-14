@@ -34,6 +34,7 @@ const UserRowSchema = z.object({
     "CONTENT_MARKETER",
     "DIGITAL_MARKETER",
     "SMM_MANAGER",
+    "SEO_SPECIALIST",
     "HEAD_OF_MARKETING",
   ]),
   is_active: z.boolean(),

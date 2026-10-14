@@ -3,6 +3,7 @@ export const TEAM_ROLES = [
   "CONTENT_MARKETER",
   "DIGITAL_MARKETER",
   "SMM_MANAGER",
+  "SEO_SPECIALIST",
   "HEAD_OF_MARKETING",
 ] as const;
 
@@ -16,6 +17,7 @@ export const NON_HEAD_ROLES = [
   "CONTENT_MARKETER",
   "DIGITAL_MARKETER",
   "SMM_MANAGER",
+  "SEO_SPECIALIST",
 ] as const satisfies readonly TeamRole[];
 
 export interface ActorContext {

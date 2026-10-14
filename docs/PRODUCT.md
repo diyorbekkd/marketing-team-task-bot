@@ -19,7 +19,8 @@ The team roles are:
 - Operator / Video Editor
 - Content Marketer
 - Digital Marketer
-- SMM Manager
+- SMM Manager (legacy role, kept for compatibility)
+- SEO Specialist (`SEO_SPECIALIST`)
 - Head of Marketing
 
 The Head of Marketing is the `SUPER_ADMIN`, while remaining a normal participant who can create and receive tasks. Every task has exactly one creator and one assignee. Any active team member may create a task for any active team member.
