@@ -50,6 +50,14 @@ The backend uses a server-only Supabase client with disabled session persistence
 
 Tables live in `public` for conventional Supabase tooling but are opt-in locked: explicit grants are revoked from public clients, RLS is enabled, and no browser policies are installed. If direct authenticated reads become useful later, they require narrowly scoped policies derived from verified identities and a documented security review.
 
+## Content OS transition integration
+
+Content OS task classification and provenance remain Content OS-owned. Task Bot's `transition_task_with_events` RPC calls only the stable `content_os_*` predicates from the finalized Content OS transition contract; it does not infer task identity from titles, display names, or the latest Task Type version. If those predicates are absent, the RPC uses the legacy Task Bot matrix unchanged.
+
+Non-review-required Content OS tasks may complete directly from `IN_PROGRESS` or `REVISION` only through the operational RPC, by their assignee, after `content_os_completion_allowed` and any existing Task Bot posting checklist pass. Review-required tasks keep the ordinary `IN_PROGRESS → REVIEW → DONE` path.
+
+The Blog/Head Review revision round trip is a narrow two-row transaction. A qualifying open Head Review authorizes its source Blog's `DONE → REVISION`; the same RPC moves that exact review `IN_PROGRESS → BLOCKED` and records the review ID in immutable Blog event metadata. Blog resubmission recovers that review ID from the event, revalidates Content OS provenance, and atomically moves the Blog `REVISION → DONE` plus the same review `BLOCKED → ASSIGNED`. The reviewer accepts the restored review and may complete it only while the source Blog is `DONE`. No transition creates a Blog or Head Review task, and a failure on either row or audit insert rolls the complete transaction back. A response-loss retry is a status no-op after a committed transaction and therefore creates no duplicate events or revision rows.
+
 ## Configuration
 
 Secrets and environment-specific identifiers come from environment variables. Separate runtime parsers validate application, Supabase, and Telegram configuration only when that capability is used. This allows builds and pure unit tests without real credentials while still failing early when a configured integration starts.
