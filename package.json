@@ -14,6 +14,7 @@
     "test": "vitest run",
     "db:check-manifest": "node scripts/check-migration-manifest.mjs",
     "db:test-postgrest-errors": "node scripts/test-postgrest-business-errors.mjs",
+    "db:test-content-os-auth": "psql \"$CONTENT_OS_AUTH_TEST_DB_URL\" -v ON_ERROR_STOP=1 -f scripts/test-content-os-auth.sql && node scripts/test-content-os-auth-concurrency.mjs",
     "telegram:configure": "node --env-file-if-exists=.env.local scripts/configure-telegram.mjs",
     "telegram:status": "node --env-file-if-exists=.env.local scripts/configure-telegram.mjs --status",
     "test:watch": "vitest",

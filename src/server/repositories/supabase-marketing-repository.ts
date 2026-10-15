@@ -2,6 +2,8 @@ import "server-only";
 
 import { z } from "zod";
 import type {
+  ContentOsLoginChallengeStatus,
+  ContentOsLoginDecision,
   CreateTaskRecord,
   MarketingRepository,
   TelegramIdentityInput,
@@ -121,6 +123,14 @@ const RecurringDefinitionRowSchema = z.object({
   status: z.enum(["ACTIVE", "PAUSED", "STOPPED"]), next_occurrence_at: z.string().nullable(),
   pause_reason: z.string().nullable().default(null),
   created_at: z.string(), updated_at: z.string(),
+});
+
+const ContentOsLoginChallengeStatusSchema = z.object({
+  status: z.enum(["PENDING", "APPROVED", "CONSUMED", "CANCELLED", "EXPIRED", "UNAVAILABLE"]),
+});
+
+const ContentOsLoginDecisionSchema = z.object({
+  status: z.enum(["APPROVED", "CANCELLED", "DENIED", "EXPIRED", "UNAVAILABLE"]),
 });
 
 function mapUser(input: unknown): User {
@@ -298,6 +308,38 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     });
     if (error || !data) throwDataError(error, "Unable to reactivate team member.");
     return mapUser(rpcRecord(data));
+  }
+
+  async getContentOsLoginChallengeStatus(challengeId: string): Promise<ContentOsLoginChallengeStatus> {
+    const { data, error } = await this.client.rpc("content_os_auth_get_challenge_status", {
+      p_challenge_id: challengeId,
+    });
+    if (error || !data) throwDataError(error, "Unable to inspect Content OS login request.");
+    return ContentOsLoginChallengeStatusSchema.parse(rpcRecord(data)).status;
+  }
+
+  async approveContentOsLoginChallenge(input: {
+    challengeId: string;
+    telegramUserId: string;
+  }): Promise<ContentOsLoginDecision> {
+    const { data, error } = await this.client.rpc("content_os_auth_approve_challenge", {
+      p_challenge_id: input.challengeId,
+      p_telegram_user_id: input.telegramUserId,
+    });
+    if (error || !data) throwDataError(error, "Unable to approve Content OS login request.");
+    return ContentOsLoginDecisionSchema.parse(rpcRecord(data)).status;
+  }
+
+  async cancelContentOsLoginChallenge(input: {
+    challengeId: string;
+    telegramUserId: string;
+  }): Promise<ContentOsLoginDecision> {
+    const { data, error } = await this.client.rpc("content_os_auth_cancel_challenge", {
+      p_challenge_id: input.challengeId,
+      p_telegram_user_id: input.telegramUserId,
+    });
+    if (error || !data) throwDataError(error, "Unable to cancel Content OS login request.");
+    return ContentOsLoginDecisionSchema.parse(rpcRecord(data)).status;
   }
 
   async createTask(input: CreateTaskRecord): Promise<Task> {

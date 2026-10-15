@@ -19,6 +19,21 @@ export interface TelegramIdentityInput {
   readonly displayName: string;
 }
 
+export type ContentOsLoginChallengeStatus =
+  | "PENDING"
+  | "APPROVED"
+  | "CONSUMED"
+  | "CANCELLED"
+  | "EXPIRED"
+  | "UNAVAILABLE";
+
+export type ContentOsLoginDecision =
+  | "APPROVED"
+  | "CANCELLED"
+  | "DENIED"
+  | "EXPIRED"
+  | "UNAVAILABLE";
+
 export interface CreateTaskRecord {
   readonly creatorId: string;
   readonly assigneeId: string;
@@ -43,6 +58,16 @@ export interface MarketingRepository {
   updateUserRole(input: { userId: string; actorId: string; role: TeamRole }): Promise<User>;
   deactivateUser(input: { userId: string; actorId: string }): Promise<User>;
   reactivateUser(input: { userId: string; actorId: string }): Promise<User>;
+
+  getContentOsLoginChallengeStatus(challengeId: string): Promise<ContentOsLoginChallengeStatus>;
+  approveContentOsLoginChallenge(input: {
+    challengeId: string;
+    telegramUserId: string;
+  }): Promise<ContentOsLoginDecision>;
+  cancelContentOsLoginChallenge(input: {
+    challengeId: string;
+    telegramUserId: string;
+  }): Promise<ContentOsLoginDecision>;
 
   createTask(input: CreateTaskRecord): Promise<Task>;
   getTask(taskId: string): Promise<Task | null>;

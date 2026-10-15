@@ -121,6 +121,9 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
       const found = [head, creator, assignee, unrelated].find((candidate) => candidate.id === userId);
       return { ...(found ?? assignee), isActive: true, deactivatedAt: null };
     }),
+    getContentOsLoginChallengeStatus: vi.fn(async () => "PENDING" as const),
+    approveContentOsLoginChallenge: vi.fn(async () => "APPROVED" as const),
+    cancelContentOsLoginChallenge: vi.fn(async () => "CANCELLED" as const),
     reassignTask: vi.fn(async ({ taskId, newAssigneeId }) => task({ id: taskId, assigneeId: newAssigneeId })),
     createTask: vi.fn(),
     getTask: vi.fn(async () => task()),
@@ -186,6 +189,39 @@ describe("MarketingService MVP permissions", () => {
 
     await expect(service.onboardTelegram(identity, "1001")).resolves.toEqual(head);
     expect(repo.registerTelegramUser).toHaveBeenCalledWith(identity, "1001");
+  });
+
+  it("offers Content OS confirmation only for a pending challenge and an active existing user", async () => {
+    const repo = repository({
+      getUserByTelegramId: vi.fn(async () => creator),
+      getContentOsLoginChallengeStatus: vi.fn(async () => "PENDING" as const),
+    });
+    const service = new MarketingService(repo, notifier());
+
+    await expect(service.canConfirmContentOsLogin(creator.telegramUserId, ids.request)).resolves.toBe(true);
+
+    vi.mocked(repo.getUserByTelegramId).mockResolvedValue(null);
+    await expect(service.canConfirmContentOsLogin("9999", ids.request)).resolves.toBe(false);
+
+    vi.mocked(repo.getUserByTelegramId).mockResolvedValue({ ...creator, isActive: false });
+    await expect(service.canConfirmContentOsLogin(creator.telegramUserId, ids.request)).resolves.toBe(false);
+  });
+
+  it("maps database-owned Content OS login decisions without trusting browser identity", async () => {
+    const repo = repository();
+    const service = new MarketingService(repo, notifier());
+
+    await expect(service.approveContentOsLogin("1002", ids.request)).resolves.toBe(true);
+    expect(repo.approveContentOsLoginChallenge).toHaveBeenCalledWith({
+      challengeId: ids.request,
+      telegramUserId: "1002",
+    });
+
+    await expect(service.cancelContentOsLogin("1002", ids.request)).resolves.toBe(true);
+    expect(repo.cancelContentOsLoginChallenge).toHaveBeenCalledWith({
+      challengeId: ids.request,
+      telegramUserId: "1002",
+    });
   });
 
   it("allows only the assignee to accept and block a task", async () => {

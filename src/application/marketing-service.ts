@@ -89,6 +89,31 @@ export class MarketingService {
     return user;
   }
 
+  /**
+   * The deep-link payload is only a random challenge id. This readiness check
+   * deliberately returns one generic result for an unknown challenge and for
+   * an unknown, pending, or inactive Telegram identity, so the bot never
+   * becomes an account-enumeration oracle. Approval itself is revalidated and
+   * locked by PostgreSQL when the authenticated Telegram callback arrives.
+   */
+  async canConfirmContentOsLogin(telegramUserId: string, challengeId: string): Promise<boolean> {
+    const [user, status] = await Promise.all([
+      this.repository.getUserByTelegramId(telegramUserId),
+      this.repository.getContentOsLoginChallengeStatus(challengeId),
+    ]);
+    return Boolean(user?.isActive) && status === "PENDING";
+  }
+
+  async approveContentOsLogin(telegramUserId: string, challengeId: string): Promise<boolean> {
+    const decision = await this.repository.approveContentOsLoginChallenge({ challengeId, telegramUserId });
+    return decision === "APPROVED";
+  }
+
+  async cancelContentOsLogin(telegramUserId: string, challengeId: string): Promise<boolean> {
+    const decision = await this.repository.cancelContentOsLoginChallenge({ challengeId, telegramUserId });
+    return decision === "CANCELLED";
+  }
+
   async listUsers(actor: User): Promise<User[]> {
     const users = await this.repository.listUsers();
     return isHead(actorFromUser(actor)) ? users : users.filter((user) => user.isActive);

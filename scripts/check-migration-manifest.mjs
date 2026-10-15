@@ -25,6 +25,7 @@ export const EXPECTED_MIGRATIONS = [
   "20261014123341_repair_posting_checklist_creation.sql",
   "20261014130000_content_os_06_transition_contract.sql",
   "20261014130332_content_os_task_transition_compatibility.sql",
+  "20261015121850_content_os_telegram_web_auth.sql",
 ];
 
 export const IMPORTED_CONTENT_OS_HASHES = new Map([

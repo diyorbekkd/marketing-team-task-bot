@@ -252,6 +252,48 @@ export interface Database {
         Args: { p_task_id: string; p_new_assignee_id: string; p_actor_id: string };
         Returns: TaskRow;
       };
+      content_os_auth_create_challenge: {
+        Args: { p_verifier_hash: string };
+        Returns: { challenge_id: string; status: string; expires_at: string }[];
+      };
+      content_os_auth_get_challenge_status: {
+        Args: { p_challenge_id: string };
+        Returns: { status: string; expires_at: string | null }[];
+      };
+      content_os_auth_approve_challenge: {
+        Args: { p_challenge_id: string; p_telegram_user_id: string };
+        Returns: { status: string }[];
+      };
+      content_os_auth_cancel_challenge: {
+        Args: { p_challenge_id: string; p_telegram_user_id: string };
+        Returns: { status: string }[];
+      };
+      content_os_auth_redeem_challenge: {
+        Args: { p_challenge_id: string; p_verifier_hash: string; p_session_token_hash: string };
+        Returns: {
+          status: string;
+          session_id: string | null;
+          authenticated_user_id: string | null;
+          display_name: string | null;
+          role: UserRow["role"] | null;
+          expires_at: string | null;
+        }[];
+      };
+      content_os_auth_validate_session: {
+        Args: { p_session_token_hash: string };
+        Returns: {
+          status: string;
+          session_id: string | null;
+          authenticated_user_id: string | null;
+          display_name: string | null;
+          role: UserRow["role"] | null;
+          expires_at: string | null;
+        }[];
+      };
+      content_os_auth_revoke_session: {
+        Args: { p_session_token_hash: string };
+        Returns: boolean;
+      };
     };
     Enums: Record<never, never>;
     CompositeTypes: Record<never, never>;
