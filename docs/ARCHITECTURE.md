@@ -4,6 +4,14 @@
 
 Task Bot is the sole production migration owner for the database shared with Content OS. The complete ordered manifest lives in `supabase/migrations`; only this repository may run production `supabase db push`. Content OS migration copies in this manifest stay byte-identical to their source. See `docs/DATABASE_RELEASE.md` for the manifest guard, normal release flow, and rollback policy.
 
+## Content OS Telegram authentication
+
+Task Bot owns the database protocol and Telegram approval boundary for standalone Content OS. The browser generates a high-entropy verifier; the Content OS server sends only its SHA-256 proof to `content_os_auth_create_challenge`. The Telegram deep link carries only the random UUID challenge id. The existing bot derives the approver from the genuine Telegram update and calls the locked approval RPC after explicit confirmation.
+
+Content OS generates an independent opaque session token when redeeming an approved challenge and sends only its SHA-256 hash to PostgreSQL. The private, RLS-enabled auth tables contain verifier and token hashes only. Redemption locks and consumes a challenge once in the same transaction that inserts one session; concurrent replay cannot produce another session.
+
+Every protected request hashes its cookie token and calls `content_os_auth_validate_session`, which joins the current active `public.users` row and returns the current role. Roles are never persisted as session authority. A user-deactivation trigger revokes all live sessions and cancels outstanding approved challenges; later reactivation never revives them. See `docs/CONTENT_OS_TELEGRAM_AUTH.md` for the exact cross-repository RPC contract.
+
 ## Shape of the system
 
 Marketing Team Task Bot is one Next.js application backed by one Supabase PostgreSQL database. It is deliberately a modular monolith.

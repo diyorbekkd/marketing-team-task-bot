@@ -1,34 +1,40 @@
 # Current sprint
 
-## Sprint 9F — Release candidate freeze
+## Sprint 10A — Telegram auth and Cloudflare integration
 
 - Branch: `codex/sprint-9b-hardening`
-- Frozen Task Bot application/database SHA: `3a3becab5cd21cf2a6a2947e3e4de861ea6b0f4c`
-- Frozen Content OS SHA: `ceb5f52184f1886948ebb8a7f6b4196b6de6f42a`
-- Scope: release-control documentation only; no application or database behavior changes.
-- Prohibited: push, deploy, live migration, production credentials, or setting `CONTENT_OS_IDENTITY_TRUST`.
+- Task Bot starting SHA: `cfa5d76a42949671fd0ecd410d5d3e385e101dfa`
+- Content OS required starting SHA: `ceb5f52184f1886948ebb8a7f6b4196b6de6f42a`
+- Mode: strictly sequential cross-repository implementation; Task Bot must be committed and clean before Content OS is touched.
+- Prohibited: push, deploy, live migration, production credentials, live-data mutation, or production reliance on Sites/OpenAI identity headers.
 
-## Status
+## Phase A — Task Bot auth backend
+
+- Added canonical migration `20261015121850_content_os_telegram_web_auth.sql` after the frozen 19-file manifest.
+- Added private RLS-enabled challenge/session tables, seven narrow service-role RPCs, current-user validation, one-session revocation, and immediate all-session revocation on user deactivation.
+- Added existing-bot `/start contentos_<uuid>` confirmation and approve/cancel callback handling without changing normal onboarding or task notifications.
+- Added PostgreSQL lifecycle/catalog/security and true-concurrency harnesses plus unit/contract regressions.
+- PostgreSQL 17 normal migration rehearsal: exact eight-row baseline → exactly 12 pending → 20 rows → empty dry-run. No `--include-all`, repair, or manual ledger edit.
+- Phase A quality gate: 287/287 tests, lint, typecheck, production build, manifest guard, checksum verification, PostgreSQL auth lifecycle/concurrency, and `git diff --check` pass.
+
+## Gates while work continues
 
 ```text
-DB_RELEASE = GO
-APPLICATION_RELEASE = BLOCKED_ON_PLATFORM_AUTH
+AUTH_BACKEND = GO
+CLOUDFLARE_APP = PENDING_PHASE_B
+CROSS_REPO_AUTH = PENDING_PHASE_C
 PRODUCTION_RELEASE = HOLD
-CONTENT_OS_IDENTITY_TRUST = UNSET
 ```
 
-- Both repositories were clean at their frozen full SHAs.
-- The canonical 19-migration Task Bot manifest is frozen with a SHA-256 checksum for every file.
-- Content OS migrations 00–06 remain byte-identical to the canonical Task Bot copies.
-- Expected production ledger is exactly eight rows before the database release and exactly 19 afterward.
-- The production runbook requires normal pinned-CLI `db push`, the exact 11-file dry-run, final ledger/catalog/privilege verification, and forbids `--include-all`, repair, or manual ledger editing.
-- Application release remains blocked until the OpenAI Sites platform owner provides the written identity-header and sole-ingress guarantee for the frozen Site.
-- All release and execution approval boxes remain unchecked. This sprint does not mark the candidate production-ready.
+## Phase B entry condition
 
-## Release artifacts
+Do not touch Content OS until Phase A is locally committed and the Task Bot worktree is clean. Then verify Content OS is still clean at the exact required branch/SHA before any edit; stop if it advanced externally.
 
-- `docs/SPRINT_9F_RELEASE_MANIFEST.md`
-- `docs/SPRINT_9F_MIGRATIONS.sha256`
-- `docs/SPRINT_9F_PRODUCTION_RUNBOOK.md`
+## Phase A artifacts
 
-Documentation commits after the frozen Task Bot SHA are release-control artifacts only; application and database artifacts must still be built from the frozen SHA.
+- `docs/CONTENT_OS_TELEGRAM_AUTH.md`
+- `docs/SPRINT_10A_MIGRATIONS.sha256`
+- `scripts/test-content-os-auth.sql`
+- `scripts/test-content-os-auth-concurrency.mjs`
+
+The production database still has the prior eight-row ledger. Nothing in Sprint 10A has been pushed, deployed, or applied live.

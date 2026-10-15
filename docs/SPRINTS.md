@@ -89,6 +89,14 @@ Each sprint is intentionally bounded. Later-sprint work should not leak into an 
 - Preserve `DB_RELEASE = GO`, `APPLICATION_RELEASE = BLOCKED_ON_PLATFORM_AUTH`, and `PRODUCTION_RELEASE = HOLD`; keep `CONTENT_OS_IDENTITY_TRUST` unset until the external platform guarantee is documented and separately approved.
 - Make no application/database behavior change and perform no push, deploy, or live migration.
 
+## Sprint 10A — Telegram auth and Cloudflare integration
+
+- Replace the blocked production Sites identity model with approval through the existing Telegram Task Bot and a standalone Cloudflare Worker target for Content OS.
+- Keep `public.users` as the only user, active-state, and role authority; unknown, pending, and inactive users cannot approve login.
+- Store only SHA-256 verifier/session proofs in private RLS-enabled tables; use random one-time challenges, 30-day opaque server sessions, current-role validation, immediate deactivation revocation, and independent multi-device sessions.
+- Keep Task Bot as canonical migration owner. The Sprint 10A manifest has 20 migrations and rehearses the normal eight-row-to-20-row path without `--include-all`, history repair, or manual ledger changes.
+- Work across Task Bot and Content OS strictly sequentially, leaving each repository committed and clean before touching the other. Do not push, deploy, use production credentials, or apply live migrations. Production release remains `HOLD`.
+
 ## Fast-track next product phase — authorized 2026-09-09
 
 The user explicitly reordered and activated this scope after the production MVP: daily summaries, weekly summary, `#posting` checklist, recurring tasks, then workload/bottleneck analytics. It is delivered as one compatible increment on `fast-track/mvp`; Telegram's positional task format remains unchanged.

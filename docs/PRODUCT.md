@@ -63,6 +63,10 @@ To avoid treating group conversation as work, positional input is considered onl
 
 A private message to the bot supports the exact same task-creation format as the group — positional or labeled, single or bulk (`---`-separated) — through the identical shared parser and creation workflow. The sender must be an active, onboarded team member; an inactive or unrecognized sender is rejected without becoming active and without creating anything. Because a private chat is a dedicated conversation rather than shared group traffic, its parse-error messages may be more detailed than the group's. `/start` and button-callback payloads are never parsed as task text. Private chat also handles onboarding, task-action commands (`/accept`, `/block`, `/revision`, `/deadline`), and callback-driven workflow actions.
 
+The same existing bot approves Content OS web login. A private `/start contentos_<challenge-id>` deep link is separate from onboarding: it never creates or activates a user. An existing active member sees an explicit “Content OS ga kirishni tasdiqlash” prompt with Tasdiqlash and Bekor qilish buttons. The authenticated Telegram callback sender is the only identity used for approval. Unknown, pending, inactive, expired, cancelled, consumed, and malformed requests receive one generic refusal and cannot be approved.
+
+Content OS web sessions last 30 days and allow multiple devices. They retain only an opaque token in an HttpOnly browser cookie; the database stores its SHA-256 hash. Session validation joins the current `public.users` row on every request, so deactivation denies access immediately and a role change is visible on the next request. Deactivation permanently revokes existing sessions; reactivation requires a fresh login.
+
 ### Telegram Mini App
 
 The Mini App will eventually include Home, Tasks, Team, Calendar, and Reports. It will provide task lists and details, quick add, Kanban, factual workload counts, overdue/blocked/review queues, calendar, filters, search, reports, and activity history. Employee views are mainly personal; Head views are team-wide.
