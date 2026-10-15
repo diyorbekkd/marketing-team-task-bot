@@ -1,5 +1,7 @@
 # Sprint 10D workflow and authentication hardening
 
+> Superseded for release by Sprint 10E-FIX. In particular, Head no longer has a generic Head Review approval override; see `docs/SPRINT_10E_FIX_BLOCKER_CLOSURE.md`.
+
 Task Bot remains the authoritative migration, workflow, authorization, Telegram identity, and notification owner. Content OS was verified clean/read-only at starting SHA `dd7777dc55828609ee00f909fc590f73b604dfcd` and was not modified by Codex. It externally advanced during this sprint and was finally observed clean at `65195de41f9d0ca2859b180398bb5179324242ba`; that separate repository work is not part of this Task Bot change set.
 
 ## Reproduced findings before the fix

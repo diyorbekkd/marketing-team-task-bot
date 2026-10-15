@@ -215,15 +215,13 @@ begin
     raise exception 'Blog author directly changed their Head Review deadline';
   exception when insufficient_privilege then null;
   end;
-  -- Historical/bad external assignment cannot turn source authorship into
-  -- reviewer authority. Head remains the explicit exception.
-  update public.tasks set assignee_id = v_author where id = v_review_id;
+  -- Source authorship never turns into reviewer authority. Sprint 10E also
+  -- prevents constructing the historical bad assignment itself.
   begin
-    perform public.transition_task_with_events(v_review_id, v_author, 'REVIEW', null);
-    raise exception 'Blog author moved their Head Review lifecycle';
+    update public.tasks set assignee_id = v_author where id = v_review_id;
+    raise exception 'Blog author became their own Head Review assignee';
   exception when insufficient_privilege then null;
   end;
-  update public.tasks set assignee_id = v_reviewer where id = v_review_id;
   begin
     perform public.transition_task_with_events(v_review_id, v_author, 'CANCELLED', null);
     raise exception 'Blog author cancelled their Head Review';
@@ -339,7 +337,12 @@ begin
   exception when insufficient_privilege then null;
   end;
   update public.users set is_active = true, deactivated_at = null where id = v_reviewer;
-  perform public.transition_task_with_events(v_review_two_id, v_head, 'DONE', null);
+  begin
+    perform public.transition_task_with_events(v_review_two_id, v_head, 'DONE', null);
+    raise exception 'non-assigned Head approved a Head Review';
+  exception when insufficient_privilege then null;
+  end;
+  perform public.transition_task_with_events(v_review_two_id, v_reviewer, 'DONE', null);
 
   perform public.archive_task_with_event(v_blog_two.id, v_head, 'Completed cycle');
   update public.tasks set status = 'IN_PROGRESS', completed_at = null where id = v_review_two_id;

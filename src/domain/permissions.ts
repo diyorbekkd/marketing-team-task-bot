@@ -34,6 +34,9 @@ export interface TaskAccessContext {
   /** Null/undefined means a manual Task Bot task. A stable Content OS Task
    * Type code means generic creator privileges must not apply. */
   readonly contentTaskTypeCode?: string | null;
+  /** HEAD_REVIEW only: the immutable source Blog's current author/assignee.
+   * Missing provenance fails closed for review decisions. */
+  readonly sourceBlogAuthorId?: string | null;
 }
 
 export type EditableTaskField =
@@ -114,13 +117,35 @@ export function canReassignTask(actor: ActorContext, task: TaskAccessContext): b
   return canDirectReassign(actor, task);
 }
 
-export function canReviewTask(actor: ActorContext, task: TaskAccessContext): boolean {
+export function canApproveTask(actor: ActorContext, task: TaskAccessContext): boolean {
   if (!canViewTask(actor, task) || task.isArchived) return false;
-  if (isHead(actor)) return true;
   if (task.contentTaskTypeCode) {
-    return task.contentTaskTypeCode === "HEAD_REVIEW" && isAssignee(actor, task);
+    if (task.contentTaskTypeCode === "HEAD_REVIEW") {
+      return Boolean(task.sourceBlogAuthorId)
+        && actor.userId !== task.sourceBlogAuthorId
+        && isAssignee(actor, task);
+    }
+    return isHead(actor);
   }
-  return isCreator(actor, task);
+  return isHead(actor) || isCreator(actor, task);
+}
+
+export function canRequestRevision(actor: ActorContext, task: TaskAccessContext): boolean {
+  if (!canViewTask(actor, task) || task.isArchived) return false;
+  if (task.contentTaskTypeCode) {
+    if (task.contentTaskTypeCode === "HEAD_REVIEW") {
+      return Boolean(task.sourceBlogAuthorId)
+        && actor.userId !== task.sourceBlogAuthorId
+        && (isAssignee(actor, task) || isHead(actor));
+    }
+    return isHead(actor);
+  }
+  return isHead(actor) || isCreator(actor, task);
+}
+
+/** Compatibility name: a generic review check is approval authority. */
+export function canReviewTask(actor: ActorContext, task: TaskAccessContext): boolean {
+  return canApproveTask(actor, task);
 }
 
 export function canCancelTask(actor: ActorContext, task: TaskAccessContext): boolean {

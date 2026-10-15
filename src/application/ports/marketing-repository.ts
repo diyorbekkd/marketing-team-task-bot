@@ -90,6 +90,8 @@ export interface MarketingRepository {
   getTask(taskId: string): Promise<Task | null>;
   /** Stable pinned Content OS Task Type code, or null for a manual task. */
   getContentTaskTypeCode?(taskId: string): Promise<string | null>;
+  /** Immutable source Blog author for a provenance-linked HEAD_REVIEW. */
+  getContentOsHeadReviewSourceAuthorId?(taskId: string): Promise<string | null>;
   listTasks(): Promise<Task[]>;
   getTaskArchive(taskId: string): Promise<TaskArchive | null>;
   listTaskArchives(): Promise<TaskArchive[]>;
@@ -104,6 +106,11 @@ export interface MarketingRepository {
     taskId: string;
     actorId: string;
     newStatus: TaskStatus;
+    reason?: string;
+  }): Promise<Task>;
+  requestContentOsHeadReviewRevision(input: {
+    reviewTaskId: string;
+    actorId: string;
     reason?: string;
   }): Promise<Task>;
   reassignTask(input: { taskId: string; newAssigneeId: string; actorId: string }): Promise<Task>;

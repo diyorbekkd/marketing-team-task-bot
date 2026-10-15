@@ -3,13 +3,14 @@ import type { ActorContext, TeamRole } from "@/domain/permissions";
 import {
   canApproveDeadlineRequest,
   canArchiveTask,
+  canApproveTask,
   canCancelTask,
   canDirectChangeDeadline,
   canDirectReassign,
   canEditTask,
   canRequestDeadlineChange,
   canRequestReassign,
-  canReviewTask,
+  canRequestRevision,
   canRestoreTask,
   canViewTask,
   isAssignee,
@@ -633,17 +634,22 @@ export class MarketingService {
   }
 
   async getTaskDetails(actor: User, taskId: string) {
-    const { task, archive } = await this.requireVisibleTask(actor, taskId);
-    const [events, deadlineRequests, reassignRequests, postingChecklist, recurringDefinition] = await Promise.all([
+    const { task, archive, contentTaskTypeCode } = await this.requireVisibleTask(actor, taskId);
+    const [events, deadlineRequests, reassignRequests, postingChecklist, recurringDefinition, sourceBlogAuthorId] = await Promise.all([
       this.repository.listTaskEvents(taskId),
       this.repository.listDeadlineChangeRequests(),
       this.repository.listReassignRequests(),
       this.repository.getPostingChecklist(taskId),
       this.repository.getRecurringDefinitionForTask(taskId),
+      contentTaskTypeCode === "HEAD_REVIEW"
+        ? this.repository.getContentOsHeadReviewSourceAuthorId?.(taskId) ?? Promise.resolve(null)
+        : Promise.resolve(null),
     ]);
     return {
       task,
       archive,
+      contentTaskTypeCode,
+      sourceBlogAuthorId,
       events,
       deadlineRequests: deadlineRequests.filter((request) => request.taskId === taskId),
       reassignRequests: reassignRequests.filter((request) => request.taskId === taskId),
@@ -755,18 +761,29 @@ export class MarketingService {
       throw new ApplicationError("CONFLICT", "Restore this task before changing its workflow state.");
     }
 
-    if (!canTransition(task.status, action.action)) {
+    const isHeadReviewDecision = contentTaskTypeCode === "HEAD_REVIEW"
+      && ["APPROVE", "REQUEST_REVISION"].includes(action.action);
+    if (isHeadReviewDecision ? task.status !== "IN_PROGRESS" : !canTransition(task.status, action.action)) {
       throw new ApplicationError("CONFLICT", `${action.action} is not valid while task is ${task.status}.`);
     }
 
     const assigneeAction = ["ACCEPT", "BLOCK", "RESUME", "SUBMIT_REVIEW"].includes(action.action);
     const reviewerAction = ["APPROVE", "REQUEST_REVISION"].includes(action.action);
-    const headReviewHeadAction = contentTaskTypeCode === "HEAD_REVIEW" && isHead(actorContext);
-    if (assigneeAction && !isAssignee(actorContext, access) && !headReviewHeadAction) {
+    if (assigneeAction && !isAssignee(actorContext, access)) {
       throw new ApplicationError("FORBIDDEN", "Only the assignee may perform this action.");
     }
-    if (reviewerAction && !canReviewTask(actorContext, access)) {
-      throw new ApplicationError("FORBIDDEN", "You do not have review authority for this task.");
+    let sourceBlogAuthorId: string | null = null;
+    if (reviewerAction) {
+      sourceBlogAuthorId = contentTaskTypeCode === "HEAD_REVIEW"
+        ? await this.repository.getContentOsHeadReviewSourceAuthorId?.(taskId) ?? null
+        : null;
+      const reviewAccess = { ...access, sourceBlogAuthorId };
+      const authorized = action.action === "APPROVE"
+        ? canApproveTask(actorContext, reviewAccess)
+        : canRequestRevision(actorContext, reviewAccess);
+      if (!authorized) {
+        throw new ApplicationError("FORBIDDEN", "You do not have review authority for this task.");
+      }
     }
     if (action.action === "APPROVE" && contentTaskTypeCode === "BLOG") {
       throw new ApplicationError(
@@ -788,12 +805,19 @@ export class MarketingService {
       throw new ApplicationError("FORBIDDEN", "Only Head may reopen a task.");
     }
 
-    const transitionedTask = await this.repository.transitionTask({
-      taskId,
-      actorId: actor.id,
-      newStatus: statusForAction(action.action),
-      reason: action.reason,
-    });
+    const transitionedTask = contentTaskTypeCode === "HEAD_REVIEW"
+      && action.action === "REQUEST_REVISION"
+      ? await this.repository.requestContentOsHeadReviewRevision({
+        reviewTaskId: taskId,
+        actorId: actor.id,
+        reason: action.reason,
+      })
+      : await this.repository.transitionTask({
+        taskId,
+        actorId: actor.id,
+        newStatus: statusForAction(action.action),
+        reason: action.reason,
+      });
 
     if (action.action === "ACCEPT") {
       // The creator gets notified whenever their task is accepted, regardless of
@@ -825,7 +849,7 @@ export class MarketingService {
     } else if (action.action === "REQUEST_REVISION") {
       await this.dispatchWorkflowNotification(
         { event: "REVISION_REQUESTED", task: transitionedTask, actor, comment: action.reason },
-        [task.assigneeId],
+        [sourceBlogAuthorId ?? task.assigneeId],
         false,
         `REVISION_REQUESTED:${transitionedTask.id}:${transitionedTask.updatedAt}`,
       );

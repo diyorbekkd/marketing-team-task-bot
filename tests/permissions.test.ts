@@ -3,9 +3,11 @@ import {
   assertCanChangeDeadline,
   canChangeDeadline,
   canArchiveTask,
+  canApproveTask,
   canCancelTask,
   canRequestDeadlineChange,
   canRequestReassign,
+  canRequestRevision,
   canRestoreTask,
   canViewTask,
   canEditTask,
@@ -90,12 +92,27 @@ describe("task permission foundation", () => {
     expect(canRequestReassign(creator, blog)).toBe(true);
   });
 
-  it("gives a Head Review authority only to its assignee and active Head", () => {
-    const headReview = { ...task, contentTaskTypeCode: "HEAD_REVIEW" };
+  it("splits independent Head Review approval from supervisory revision", () => {
+    const headReview = {
+      ...task,
+      contentTaskTypeCode: "HEAD_REVIEW",
+      sourceBlogAuthorId: creator.userId,
+    };
     expect(canReviewTask(creator, headReview)).toBe(false);
-    expect(canReviewTask(assignee, headReview)).toBe(true);
-    expect(canReviewTask(head, headReview)).toBe(true);
-    expect(canReviewTask(unrelatedMember, headReview)).toBe(false);
+    expect(canApproveTask(assignee, headReview)).toBe(true);
+    expect(canRequestRevision(assignee, headReview)).toBe(true);
+    expect(canApproveTask(head, headReview)).toBe(false);
+    expect(canRequestRevision(head, headReview)).toBe(true);
+    expect(canApproveTask(unrelatedMember, headReview)).toBe(false);
+    expect(canRequestRevision(unrelatedMember, headReview)).toBe(false);
+
+    const headAuthoredAndAssigned = {
+      ...headReview,
+      assigneeId: head.userId,
+      sourceBlogAuthorId: head.userId,
+    };
+    expect(canApproveTask(head, headAuthoredAndAssigned)).toBe(false);
+    expect(canRequestRevision(head, headAuthoredAndAssigned)).toBe(false);
   });
 
   it("denies a team member unrelated to the task", () => {

@@ -117,6 +117,15 @@ Each sprint is intentionally bounded. Later-sprint work should not leak into an 
 - Keep Task Bot as canonical migration owner. The Sprint 10D manifest has 22 migrations and rehearses the normal eight-row-to-22-row path without `--include-all`, repair, or manual ledger changes.
 - Modify only Task Bot. Do not push, deploy, use production credentials, or apply live migrations. Production release remains `HOLD`.
 
+## Sprint 10E-FIX — Task Bot final blocker closure
+
+- Keep legacy assignment notifications inline but make `SENT` constraint-valid by writing `sent_at`; exclude every null-event legacy row from event-outbox leasing and terminalize only pre-existing ambiguous legacy rows during migration.
+- Enforce immutable Blog/reviewer independence for all Head Review creation and reassignment paths, including Head-authored Blogs and concurrent assignment changes.
+- Allow approval only by the active assigned reviewer. Allow active Head to request revision only when Head is not the source Blog author; Head must first be legitimately assigned to approve.
+- Preserve the exact atomic Blog completion/resubmission RPC consumed by Content OS and its same-Head-Review retry/response-loss behavior.
+- Keep Task Bot as canonical migration owner. The Sprint 10E-FIX manifest has 23 migrations and rehearses the normal eight-row-to-23-row path without `--include-all`, repair, or manual ledger changes.
+- Modify only Task Bot. Do not push, deploy, use production credentials, or apply live migrations. Production release remains `HOLD`.
+
 ## Fast-track next product phase — authorized 2026-09-09
 
 The user explicitly reordered and activated this scope after the production MVP: daily summaries, weekly summary, `#posting` checklist, recurring tasks, then workload/bottleneck analytics. It is delivered as one compatible increment on `fast-track/mvp`; Telegram's positional task format remains unchanged.

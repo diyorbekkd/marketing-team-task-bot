@@ -356,6 +356,18 @@ export interface Database {
         Args: { p_task_id: string };
         Returns: string | null;
       };
+      content_os_head_review_source_author_id: {
+        Args: { p_review_task_id: string };
+        Returns: string | null;
+      };
+      content_os_request_head_review_revision: {
+        Args: {
+          p_review_task_id: string;
+          p_actor_id: string;
+          p_reason: string | null;
+        };
+        Returns: TaskRow;
+      };
       claim_task_notification_outbox: {
         Args: { p_worker_id: string; p_limit: number };
         Returns: {

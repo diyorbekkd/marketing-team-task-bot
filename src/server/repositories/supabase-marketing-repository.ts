@@ -431,6 +431,14 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return z.string().min(1).nullable().parse(data);
   }
 
+  async getContentOsHeadReviewSourceAuthorId(taskId: string): Promise<string | null> {
+    const { data, error } = await this.client.rpc("content_os_head_review_source_author_id", {
+      p_review_task_id: taskId,
+    });
+    if (error) throwDataError(error, "Unable to inspect Head Review provenance.");
+    return z.string().uuid().nullable().parse(data);
+  }
+
   async listTasks(): Promise<Task[]> {
     const { data, error } = await this.client.from("tasks").select("*").order("deadline");
     if (error) throwDataError(error, "Unable to list tasks.");
@@ -474,6 +482,18 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       p_reason: input.reason ?? null,
     });
     if (error || !data) throwDataError(error, "Unable to update task.");
+    return mapTask(rpcRecord(data));
+  }
+
+  async requestContentOsHeadReviewRevision(
+    input: Parameters<MarketingRepository["requestContentOsHeadReviewRevision"]>[0],
+  ): Promise<Task> {
+    const { data, error } = await this.client.rpc("content_os_request_head_review_revision", {
+      p_review_task_id: input.reviewTaskId,
+      p_actor_id: input.actorId,
+      p_reason: input.reason ?? null,
+    });
+    if (error || !data) throwDataError(error, "Unable to request Content OS Blog revision.");
     return mapTask(rpcRecord(data));
   }
 
@@ -660,10 +680,12 @@ export class SupabaseMarketingRepository implements MarketingRepository {
   }
 
   async completeTaskNotification(input: Parameters<MarketingRepository["completeTaskNotification"]>[0]): Promise<void> {
+    const completedAt = new Date().toISOString();
     const { error } = await this.client.from("task_notification_deliveries").update({
       status: input.status,
       failure_reason: input.failureReason ?? null,
-      completed_at: new Date().toISOString(),
+      completed_at: completedAt,
+      sent_at: input.status === "SENT" ? completedAt : null,
     }).eq("dedupe_key", input.dedupeKey).eq("recipient_user_id", input.recipientUserId);
     if (error) throwDataError(error, "Unable to complete task notification.");
   }

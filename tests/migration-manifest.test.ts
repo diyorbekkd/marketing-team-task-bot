@@ -6,8 +6,8 @@ describe("canonical shared migration manifest", () => {
     const { checkMigrationManifest } = await import(modulePath);
     const result = checkMigrationManifest();
 
-    expect(result.files).toHaveLength(22);
-    expect(Object.keys(result.migrationHashes)).toHaveLength(22);
+    expect(result.files).toHaveLength(23);
+    expect(Object.keys(result.migrationHashes)).toHaveLength(23);
     expect(Object.keys(result.importedHashes)).toHaveLength(7);
   });
 });

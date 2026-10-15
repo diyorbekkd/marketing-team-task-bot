@@ -150,6 +150,7 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     reassignTask: vi.fn(async ({ taskId, newAssigneeId }) => task({ id: taskId, assigneeId: newAssigneeId })),
     createTask: vi.fn(),
     getTask: vi.fn(async () => task()),
+    getContentOsHeadReviewSourceAuthorId: vi.fn(async () => null),
     listTasks: vi.fn(async () => [task()]),
     getTaskArchive: vi.fn(async () => null),
     listTaskArchives: vi.fn(async () => []),
@@ -160,6 +161,11 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
       priority: input.priority,
     })),
     transitionTask: vi.fn(async (input) => task({ status: input.newStatus })),
+    requestContentOsHeadReviewRevision: vi.fn(async (input) => task({
+      id: input.reviewTaskId,
+      status: "BLOCKED",
+      blockedReason: "Waiting for source Blog revision",
+    })),
     changeTaskDeadline: vi.fn(async (input) => task({ id: input.taskId, deadline: input.newDeadline })),
     archiveTask: vi.fn(async (input) => ({
       taskId: input.taskId,
@@ -1282,18 +1288,49 @@ describe("MarketingService MVP permissions", () => {
       await expect(blogService.performTaskAction(creator, blog.id, { action: "CANCEL" }))
         .rejects.toMatchObject({ code: "FORBIDDEN" });
 
-      const review = task({ status: "REVIEW", creatorId: creator.id, assigneeId: assignee.id });
+      const review = task({ status: "IN_PROGRESS", creatorId: creator.id, assigneeId: assignee.id });
       const reviewRepo = repository({
         getTask: vi.fn(async () => review),
         getContentTaskTypeCode: vi.fn(async () => "HEAD_REVIEW"),
+        getContentOsHeadReviewSourceAuthorId: vi.fn(async () => creator.id),
       });
       const reviewService = new MarketingService(reviewRepo, notifier());
       await expect(reviewService.performTaskAction(creator, review.id, { action: "APPROVE" }))
         .rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(reviewService.performTaskAction(head, review.id, { action: "APPROVE" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      await reviewService.performTaskAction(head, review.id, { action: "REQUEST_REVISION" });
+      expect(reviewRepo.requestContentOsHeadReviewRevision).toHaveBeenCalledWith({
+        reviewTaskId: review.id,
+        actorId: head.id,
+        reason: undefined,
+      });
       await reviewService.performTaskAction(assignee, review.id, { action: "APPROVE" });
       expect(reviewRepo.transitionTask).toHaveBeenCalledWith(expect.objectContaining({
         taskId: review.id,
         actorId: assignee.id,
+        newStatus: "DONE",
+      }));
+
+      const headAuthorRepo = repository({
+        getTask: vi.fn(async () => ({ ...review, creatorId: head.id })),
+        getContentTaskTypeCode: vi.fn(async () => "HEAD_REVIEW"),
+        getContentOsHeadReviewSourceAuthorId: vi.fn(async () => head.id),
+      });
+      const headAuthorService = new MarketingService(headAuthorRepo, notifier());
+      await expect(headAuthorService.performTaskAction(head, review.id, { action: "REQUEST_REVISION" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+
+      const headReviewer = { ...review, assigneeId: head.id };
+      const headReviewerRepo = repository({
+        getTask: vi.fn(async () => headReviewer),
+        getContentTaskTypeCode: vi.fn(async () => "HEAD_REVIEW"),
+        getContentOsHeadReviewSourceAuthorId: vi.fn(async () => creator.id),
+      });
+      await new MarketingService(headReviewerRepo, notifier())
+        .performTaskAction(head, review.id, { action: "APPROVE" });
+      expect(headReviewerRepo.transitionTask).toHaveBeenCalledWith(expect.objectContaining({
+        actorId: head.id,
         newStatus: "DONE",
       }));
     });

@@ -76,6 +76,8 @@ interface DeadlineRequest {
 
 interface TaskDetail {
   task: Task;
+  contentTaskTypeCode: string | null;
+  sourceBlogAuthorId: string | null;
   events: TaskEvent[];
   deadlineRequests: DeadlineRequest[];
   postingChecklist: PostingChecklist | null;
@@ -1663,6 +1665,8 @@ function TaskDetailPanel({
   const postingChecklist = detail?.postingChecklist;
   const postingComplete = !postingChecklist || postingChecklist.items.every((item) => item.isCompleted);
   const recurringDefinition = detail?.recurringDefinition;
+  const isHeadReview = detail?.contentTaskTypeCode === "HEAD_REVIEW";
+  const isSourceBlogAuthor = detail?.sourceBlogAuthorId === currentUser.id;
   const canManageRecurrence = Boolean(task && (isHead || task.creatorId === currentUser.id || recurringDefinition?.createdBy === currentUser.id));
 
   const actions: { label: string; action: string; variant?: string }[] = [];
@@ -1671,8 +1675,17 @@ function TaskDetailPanel({
     if (task.status === "IN_PROGRESS" && isAssignee && postingComplete) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
     if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Block", action: "_block", variant: "warn" });
     if (task.status === "BLOCKED" && isAssignee) actions.push({ label: "Resume", action: "RESUME" });
-    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Approve", action: "APPROVE" });
-    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Request Revision", action: "_revision", variant: "warn" });
+    if (isHeadReview && task.status === "IN_PROGRESS" && isAssignee && !isSourceBlogAuthor) {
+      actions.push({ label: "Approve", action: "APPROVE" });
+    }
+    if (isHeadReview && task.status === "IN_PROGRESS"
+      && (isAssignee || isHead) && !isSourceBlogAuthor) {
+      actions.push({ label: "Request Revision", action: "_revision", variant: "warn" });
+    }
+    if (!isHeadReview && task.status === "REVIEW" && (isCreator || isHead)) {
+      actions.push({ label: "Approve", action: "APPROVE" });
+      actions.push({ label: "Request Revision", action: "_revision", variant: "warn" });
+    }
     if (task.status === "REVISION" && isAssignee && postingComplete) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
     if (!isTerminal(task.status) && (isCreator || isHead)) actions.push({ label: "Cancel", action: "CANCEL", variant: "danger" });
     if (isTerminal(task.status) && isHead) actions.push({ label: "Reopen", action: "REOPEN" });

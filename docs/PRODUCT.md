@@ -125,7 +125,7 @@ The assignee may mark a task `BLOCKED` with a required free-text reason. The sys
 
 ### Review and revision
 
-The assignee submits completed manual work to `REVIEW`. The manual-task creator or Head may approve it; one approval is sufficient and moves the task to `DONE`. A Content OS `HEAD_REVIEW` is controlled only by its active assigned reviewer or active Head. A Content OS `BLOG` cannot use generic completion: the dedicated transaction completes/resubmits the Blog while creating or resuming exactly one provenance-linked Head Review.
+The assignee submits completed manual work to `REVIEW`. The manual-task creator or Head may approve it; one approval is sufficient and moves the task to `DONE`. A Content OS `HEAD_REVIEW` may be approved only by its active assigned reviewer. Active Head may request revision as a supervisory override only when Head is not the source Blog author; to approve, Head must first be legitimately assigned as reviewer. The source Blog author can never be that reviewer, including when the author is Head. A Content OS `BLOG` cannot use generic completion: the dedicated transaction completes/resubmits the Blog while creating or resuming exactly one provenance-linked Head Review.
 
 A reviewer may request revision with optional explanatory text. The task moves to `REVISION`, and the revision record remains in history. The assignee can resume work and submit it for review again. Revision count is calculated from retained records/events.
 
