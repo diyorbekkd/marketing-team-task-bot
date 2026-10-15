@@ -46,6 +46,8 @@ Every important state mutation must update the current projection and append its
 
 Task events are append-only. Database triggers reject update and delete attempts even from trusted application code. Corrections are represented by new events.
 
+Soft archive state lives in `task_archives`, keyed by `task_id`, rather than adding an `ARCHIVED` workflow status. A task update trigger blocks operational changes until restore, and a separate trigger rejects every `tasks` delete. Archive/restore append immutable events but never replace the task row or alter its current workflow status.
+
 ## Security and identity
 
 Browser code never receives `SUPABASE_SERVICE_ROLE_KEY` or `TELEGRAM_BOT_TOKEN`. During the current server-mediated design, application tables are inaccessible to `anon` and `authenticated`; RLS is enabled with no permissive policies, and only trusted server code receives explicit table privileges through `service_role`.
@@ -55,6 +57,8 @@ Telegram webhook calls must include the configured secret token header. Incoming
 Mini App authentication will verify Telegram `initData` server-side using Telegram's documented signature algorithm, expiration checks, and the bot secret. The backend derives `telegram_user_id` from verified data and resolves it to an active internal user. A raw browser-provided ID, username, role, or `isHead` flag is never trusted.
 
 Application services receive an `ActorContext` created only after server verification. Shared guards determine whether that actor is Head, creator, or assignee. Every sensitive action checks those guards even if its UI control is hidden.
+
+Sprint 10B makes active membership an explicit input to the shared task predicates. Every active member can read non-archived team tasks; creator/Head direct changes, assignee request paths, and Head-only archive/restore are separate capabilities. The direct/request/archive RPCs repeat actor, relationship, task-state, archive-state, and target-active checks while holding their task/request row locks, so Telegram and Content OS converge on one authoritative transaction.
 
 ## Supabase access
 
@@ -80,6 +84,8 @@ Protected Vercel Cron handlers run daily summaries at 03:00/14:00 UTC, the Sunda
 
 Report deliveries use a unique `(report_type, interval_key, recipient_user_id)` database ledger. Deadline reminders use an analogous `(task_id, deadline, reminder_type)` ledger in `task_reminder_deliveries`, so a deadline change naturally starts a fresh delivery cycle without needing to touch history for the old deadline. Only active rows created by real Telegram `/start` onboarding are eligible for either ledger. One recipient failure does not abort other recipients or other tasks. Recurring generation locks and advances each definition in the same transaction that creates its occurrence, with a second unique constraint on `(recurring_definition_id, scheduled_occurrence_at)`. The recurring sweep also treats an inactive assignee as a hard stop: it auto-pauses that definition instead of generating a task for someone no longer on the team, mirroring the auto-pause already applied at deactivation time.
 
+Meaningful task notifications use the same dispatcher and add a semantic claim in `task_notification_deliveries` before delivery. Its unique `(dedupe_key, recipient_user_id)` constraint prevents duplicated sends after webhook/HTTP response loss or concurrent Telegram/Content OS action retries. Request resolution still commits independently of Telegram delivery; failed delivery is recorded without rolling back the task transaction.
+
 User activation, role changes, deactivation, and reactivation are each a single-transaction Postgres function (`*_with_event`) that updates `public.users` and appends a `user_events` row atomically, the same pattern already used for task mutations and their `task_events` — so a membership state change can never commit without its audit record, or vice versa.
 
 All schedule calculations use `Asia/Tashkent` (fixed UTC+05:00), while database timestamps remain `timestamptz`/UTC.
@@ -94,4 +100,4 @@ The Mini App's first screen is served by one consolidated route, `/api/bootstrap
 
 ## Extended data structures
 
-`task_checklists` and `task_checklist_items` persist the deterministic Posting workflow. `recurring_definitions` stores future schedule/template state while generated tasks remain ordinary `tasks` rows. `report_deliveries` and `task_reminder_deliveries` are the report and reminder idempotency ledgers. `user_events` is the membership audit trail, parallel to `task_events`. `users.deactivated_at`/`deactivated_by` distinguish a deactivated former member from a still-pending one, both of which have `is_active = false`. All new public tables are RLS-enabled, browser roles are revoked, and only the trusted `service_role` receives the minimum required grants.
+`task_checklists` and `task_checklist_items` persist the deterministic Posting workflow. `recurring_definitions` stores future schedule/template state while generated tasks remain ordinary `tasks` rows. `task_archives` stores only current soft-archive metadata. `report_deliveries`, `task_reminder_deliveries`, and `task_notification_deliveries` are idempotency ledgers. `user_events` is the membership audit trail, parallel to `task_events`. `users.deactivated_at`/`deactivated_by` distinguish a deactivated former member from a still-pending one, both of which have `is_active = false`. All new public tables are RLS-enabled, browser roles are revoked, and only the trusted `service_role` receives the minimum required grants.

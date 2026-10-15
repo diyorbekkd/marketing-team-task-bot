@@ -8,7 +8,9 @@ import type {
   RecurrenceFrequency,
   RecurrenceStatus,
   RecurringDefinition,
+  ReassignRequest,
   Task,
+  TaskArchive,
   TaskEvent,
   User,
 } from "@/domain/models";
@@ -72,6 +74,15 @@ export interface MarketingRepository {
   createTask(input: CreateTaskRecord): Promise<Task>;
   getTask(taskId: string): Promise<Task | null>;
   listTasks(): Promise<Task[]>;
+  getTaskArchive(taskId: string): Promise<TaskArchive | null>;
+  listTaskArchives(): Promise<TaskArchive[]>;
+  updateTaskContent(input: {
+    taskId: string;
+    actorId: string;
+    title: string;
+    description: string | null;
+    priority: TaskPriority;
+  }): Promise<Task>;
   transitionTask(input: {
     taskId: string;
     actorId: string;
@@ -79,6 +90,9 @@ export interface MarketingRepository {
     reason?: string;
   }): Promise<Task>;
   reassignTask(input: { taskId: string; newAssigneeId: string; actorId: string }): Promise<Task>;
+  changeTaskDeadline(input: { taskId: string; newDeadline: string; actorId: string }): Promise<Task>;
+  archiveTask(input: { taskId: string; actorId: string; reason?: string }): Promise<TaskArchive>;
+  restoreTask(input: { taskId: string; actorId: string }): Promise<Task>;
   listTaskEvents(taskId: string): Promise<TaskEvent[]>;
   listAllTaskEvents(): Promise<TaskEvent[]>;
   getPostingChecklist(taskId: string): Promise<PostingChecklist | null>;
@@ -99,6 +113,29 @@ export interface MarketingRepository {
     approve: boolean;
     resolutionNote?: string;
   }): Promise<DeadlineChangeRequest>;
+
+  createReassignRequest(input: {
+    taskId: string;
+    requestedBy: string;
+    requestedAssigneeId: string;
+    reason: string;
+  }): Promise<ReassignRequest>;
+  getReassignRequest(requestId: string): Promise<ReassignRequest | null>;
+  listReassignRequests(): Promise<ReassignRequest[]>;
+  resolveReassignRequest(input: {
+    requestId: string;
+    resolvedBy: string;
+    approve: boolean;
+    resolutionNote?: string;
+  }): Promise<ReassignRequest>;
+
+  claimTaskNotification(input: { dedupeKey: string; recipientUserId: string }): Promise<boolean>;
+  completeTaskNotification(input: {
+    dedupeKey: string;
+    recipientUserId: string;
+    status: "SENT" | "FAILED";
+    failureReason?: string;
+  }): Promise<void>;
 
   getRecurringDefinitionForTask(taskId: string): Promise<RecurringDefinition | null>;
   getRecurringDefinition(id: string): Promise<RecurringDefinition | null>;

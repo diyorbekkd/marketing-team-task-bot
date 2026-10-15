@@ -47,10 +47,16 @@ export class ReminderService {
    * re-sends. One recipient or task failing never aborts the sweep.
    */
   async deliver(now = new Date()): Promise<ReminderDeliverySummary> {
-    const [tasks, users] = await Promise.all([this.repository.listTasks(), this.repository.listUsers()]);
+    const [tasks, archives, users] = await Promise.all([
+      this.repository.listTasks(),
+      this.repository.listTaskArchives(),
+      this.repository.listUsers(),
+    ]);
+    const archivedIds = new Set(archives.map((archive) => archive.taskId));
     const summary = { tasksChecked: 0, sent: 0, deduplicated: 0, failed: 0, skippedNoRecipients: 0 };
 
     for (const task of tasks) {
+      if (archivedIds.has(task.id)) continue;
       if (!isOpenTask(task)) continue;
       const dueTypes = dueReminderTypes(task.deadline, now);
       if (dueTypes.length === 0) continue;

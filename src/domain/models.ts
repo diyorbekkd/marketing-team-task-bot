@@ -130,10 +130,34 @@ export const DeadlineChangeRequestSchema = z.object({
   updatedAt: z.string(),
 });
 
+export const ReassignRequestSchema = z.object({
+  id: z.string().uuid(),
+  taskId: z.string().uuid(),
+  requestedBy: z.string().uuid(),
+  currentAssigneeId: z.string().uuid(),
+  requestedAssigneeId: z.string().uuid(),
+  reason: z.string(),
+  status: z.enum(["PENDING", "APPROVED", "REJECTED", "CANCELLED"]),
+  resolvedBy: z.string().uuid().nullable(),
+  resolvedAt: z.string().nullable(),
+  resolutionNote: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const TaskArchiveSchema = z.object({
+  taskId: z.string().uuid(),
+  archivedAt: z.string(),
+  archivedBy: z.string().uuid(),
+  reason: z.string().nullable(),
+});
+
 export type User = z.infer<typeof UserSchema>;
 export type Task = z.infer<typeof TaskSchema>;
 export type TaskEvent = z.infer<typeof TaskEventSchema>;
 export type DeadlineChangeRequest = z.infer<typeof DeadlineChangeRequestSchema>;
+export type ReassignRequest = z.infer<typeof ReassignRequestSchema>;
+export type TaskArchive = z.infer<typeof TaskArchiveSchema>;
 export type PostingChecklist = z.infer<typeof PostingChecklistSchema>;
 export type PostingChecklistItem = z.infer<typeof PostingChecklistItemSchema>;
 export type RecurringDefinition = z.infer<typeof RecurringDefinitionSchema>;

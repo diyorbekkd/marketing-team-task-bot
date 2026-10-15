@@ -17,8 +17,10 @@ import type {
   DeadlineChangeRequest,
   PostingChecklist,
   PostingChecklistItem,
+  ReassignRequest,
   RecurringDefinition,
   Task,
+  TaskArchive,
   TaskEvent,
   User,
 } from "@/domain/models";
@@ -95,6 +97,28 @@ const DeadlineRequestRowSchema = z.object({
   resolution_note: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
+});
+
+const ReassignRequestRowSchema = z.object({
+  id: z.string().uuid(),
+  task_id: z.string().uuid(),
+  requested_by: z.string().uuid(),
+  current_assignee_id: z.string().uuid(),
+  requested_assignee_id: z.string().uuid(),
+  reason: z.string(),
+  status: z.enum(["PENDING", "APPROVED", "REJECTED", "CANCELLED"]),
+  resolved_by: z.string().uuid().nullable(),
+  resolved_at: z.string().nullable(),
+  resolution_note: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+});
+
+const TaskArchiveRowSchema = z.object({
+  task_id: z.string().uuid(),
+  archived_at: z.string(),
+  archived_by: z.string().uuid(),
+  reason: z.string().nullable(),
 });
 
 const ChecklistRowSchema = z.object({
@@ -219,6 +243,34 @@ function mapDeadlineRequest(input: unknown): DeadlineChangeRequest {
     resolutionNote: row.resolution_note,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function mapReassignRequest(input: unknown): ReassignRequest {
+  const row = ReassignRequestRowSchema.parse(input);
+  return {
+    id: row.id,
+    taskId: row.task_id,
+    requestedBy: row.requested_by,
+    currentAssigneeId: row.current_assignee_id,
+    requestedAssigneeId: row.requested_assignee_id,
+    reason: row.reason,
+    status: row.status,
+    resolvedBy: row.resolved_by,
+    resolvedAt: row.resolved_at,
+    resolutionNote: row.resolution_note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapTaskArchive(input: unknown): TaskArchive {
+  const row = TaskArchiveRowSchema.parse(input);
+  return {
+    taskId: row.task_id,
+    archivedAt: row.archived_at,
+    archivedBy: row.archived_by,
+    reason: row.reason,
   };
 }
 
@@ -370,6 +422,30 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return (data ?? []).map(mapTask);
   }
 
+  async getTaskArchive(taskId: string): Promise<TaskArchive | null> {
+    const { data, error } = await this.client.from("task_archives").select("*").eq("task_id", taskId).maybeSingle();
+    if (error) throwDataError(error, "Unable to load task archive state.");
+    return data ? mapTaskArchive(data) : null;
+  }
+
+  async listTaskArchives(): Promise<TaskArchive[]> {
+    const { data, error } = await this.client.from("task_archives").select("*").order("archived_at", { ascending: false });
+    if (error) throwDataError(error, "Unable to list archived tasks.");
+    return (data ?? []).map(mapTaskArchive);
+  }
+
+  async updateTaskContent(input: Parameters<MarketingRepository["updateTaskContent"]>[0]): Promise<Task> {
+    const { data, error } = await this.client.rpc("update_task_content_with_events", {
+      p_task_id: input.taskId,
+      p_actor_id: input.actorId,
+      p_title: input.title,
+      p_description: input.description ?? "",
+      p_priority: input.priority,
+    });
+    if (error || !data) throwDataError(error, "Unable to edit task.");
+    return mapTask(rpcRecord(data));
+  }
+
   async transitionTask(input: {
     taskId: string;
     actorId: string;
@@ -391,6 +467,30 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       p_task_id: input.taskId, p_new_assignee_id: input.newAssigneeId, p_actor_id: input.actorId,
     });
     if (error || !data) throwDataError(error, "Unable to reassign task.");
+    return mapTask(rpcRecord(data));
+  }
+
+  async changeTaskDeadline(input: { taskId: string; newDeadline: string; actorId: string }): Promise<Task> {
+    const { data, error } = await this.client.rpc("change_task_deadline_with_event", {
+      p_task_id: input.taskId, p_new_deadline: input.newDeadline, p_actor_id: input.actorId,
+    });
+    if (error || !data) throwDataError(error, "Unable to change task deadline.");
+    return mapTask(rpcRecord(data));
+  }
+
+  async archiveTask(input: { taskId: string; actorId: string; reason?: string }): Promise<TaskArchive> {
+    const { data, error } = await this.client.rpc("archive_task_with_event", {
+      p_task_id: input.taskId, p_actor_id: input.actorId, p_reason: input.reason ?? null,
+    });
+    if (error || !data) throwDataError(error, "Unable to archive task.");
+    return mapTaskArchive(rpcRecord(data));
+  }
+
+  async restoreTask(input: { taskId: string; actorId: string }): Promise<Task> {
+    const { data, error } = await this.client.rpc("restore_task_with_event", {
+      p_task_id: input.taskId, p_actor_id: input.actorId,
+    });
+    if (error || !data) throwDataError(error, "Unable to restore task.");
     return mapTask(rpcRecord(data));
   }
 
@@ -488,6 +588,59 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     });
     if (error || !data) throwDataError(error, "Unable to resolve deadline request.");
     return mapDeadlineRequest(rpcRecord(data));
+  }
+
+  async createReassignRequest(input: Parameters<MarketingRepository["createReassignRequest"]>[0]): Promise<ReassignRequest> {
+    const { data, error } = await this.client.rpc("create_reassign_request_with_event", {
+      p_task_id: input.taskId,
+      p_requested_by: input.requestedBy,
+      p_requested_assignee_id: input.requestedAssigneeId,
+      p_reason: input.reason,
+    });
+    if (error || !data) throwDataError(error, "Unable to request reassignment.");
+    return mapReassignRequest(rpcRecord(data));
+  }
+
+  async getReassignRequest(requestId: string): Promise<ReassignRequest | null> {
+    const { data, error } = await this.client.from("reassign_requests").select("*").eq("id", requestId).maybeSingle();
+    if (error) throwDataError(error, "Unable to load reassign request.");
+    return data ? mapReassignRequest(data) : null;
+  }
+
+  async listReassignRequests(): Promise<ReassignRequest[]> {
+    const { data, error } = await this.client.from("reassign_requests").select("*")
+      .order("created_at", { ascending: false });
+    if (error) throwDataError(error, "Unable to list reassign requests.");
+    return (data ?? []).map(mapReassignRequest);
+  }
+
+  async resolveReassignRequest(input: Parameters<MarketingRepository["resolveReassignRequest"]>[0]): Promise<ReassignRequest> {
+    const { data, error } = await this.client.rpc("resolve_reassign_request_with_events", {
+      p_request_id: input.requestId,
+      p_resolved_by: input.resolvedBy,
+      p_approve: input.approve,
+      p_resolution_note: input.resolutionNote ?? null,
+    });
+    if (error || !data) throwDataError(error, "Unable to resolve reassign request.");
+    return mapReassignRequest(rpcRecord(data));
+  }
+
+  async claimTaskNotification(input: { dedupeKey: string; recipientUserId: string }): Promise<boolean> {
+    const { error } = await this.client.from("task_notification_deliveries").insert({
+      dedupe_key: input.dedupeKey, recipient_user_id: input.recipientUserId,
+    });
+    if (!error) return true;
+    if (error.code === "23505") return false;
+    throwDataError(error, "Unable to claim task notification.");
+  }
+
+  async completeTaskNotification(input: Parameters<MarketingRepository["completeTaskNotification"]>[0]): Promise<void> {
+    const { error } = await this.client.from("task_notification_deliveries").update({
+      status: input.status,
+      failure_reason: input.failureReason ?? null,
+      completed_at: new Date().toISOString(),
+    }).eq("dedupe_key", input.dedupeKey).eq("recipient_user_id", input.recipientUserId);
+    if (error) throwDataError(error, "Unable to complete task notification.");
   }
 
   async getRecurringDefinitionForTask(taskId: string): Promise<RecurringDefinition | null> {

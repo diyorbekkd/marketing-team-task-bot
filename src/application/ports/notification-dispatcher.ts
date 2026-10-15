@@ -1,4 +1,4 @@
-import type { DeadlineChangeRequest, Task, User } from "@/domain/models";
+import type { DeadlineChangeRequest, ReassignRequest, Task, User } from "@/domain/models";
 import type { ReminderType } from "@/domain/reminders";
 
 export type NotificationFailureReason = "RECIPIENT_NOT_ONBOARDED" | "DELIVERY_FAILED";
@@ -28,6 +28,11 @@ export type WorkflowNotificationEvent =
   | "DEADLINE_CHANGE_REQUESTED"
   | "DEADLINE_CHANGE_APPROVED"
   | "DEADLINE_CHANGE_REJECTED"
+  | "DEADLINE_CHANGED"
+  | "REASSIGN_REQUESTED"
+  | "REASSIGN_APPROVED"
+  | "REASSIGN_REJECTED"
+  | "TASK_REASSIGNED"
   | "REVIEW_REQUESTED"
   | "TASK_ACCEPTED"
   | "TASK_COMPLETED"
@@ -40,6 +45,8 @@ export interface WorkflowNotificationInput {
   readonly actor: User;
   readonly recipients: readonly User[];
   readonly deadlineRequest?: DeadlineChangeRequest;
+  readonly reassignRequest?: ReassignRequest;
+  readonly targetAssignee?: User;
   readonly comment?: string;
 }
 

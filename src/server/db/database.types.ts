@@ -85,6 +85,23 @@ type ReassignRequestRow = {
   updated_at: string;
 }
 
+type TaskArchiveRow = {
+  task_id: string;
+  archived_at: string;
+  archived_by: string;
+  reason: string | null;
+}
+
+type TaskNotificationDeliveryRow = {
+  id: string;
+  dedupe_key: string;
+  recipient_user_id: string;
+  status: "CLAIMED" | "SENT" | "FAILED";
+  failure_reason: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
 type RevisionRow = {
   id: string;
   task_id: string;
@@ -169,6 +186,8 @@ export interface Database {
       report_deliveries: TableDefinition<ReportDeliveryRow>;
       user_events: TableDefinition<UserEventRow>;
       task_reminder_deliveries: TableDefinition<ReminderDeliveryRow>;
+      task_archives: TableDefinition<TaskArchiveRow>;
+      task_notification_deliveries: TableDefinition<TaskNotificationDeliveryRow>;
     };
     Views: Record<never, never>;
     Functions: {
@@ -250,6 +269,36 @@ export interface Database {
       };
       reassign_task_with_event: {
         Args: { p_task_id: string; p_new_assignee_id: string; p_actor_id: string };
+        Returns: TaskRow;
+      };
+      update_task_content_with_events: {
+        Args: {
+          p_task_id: string;
+          p_actor_id: string;
+          p_title: string;
+          p_description: string;
+          p_priority: TaskRow["priority"];
+        };
+        Returns: TaskRow;
+      };
+      change_task_deadline_with_event: {
+        Args: { p_task_id: string; p_new_deadline: string; p_actor_id: string };
+        Returns: TaskRow;
+      };
+      create_reassign_request_with_event: {
+        Args: { p_task_id: string; p_requested_by: string; p_requested_assignee_id: string; p_reason: string };
+        Returns: ReassignRequestRow;
+      };
+      resolve_reassign_request_with_events: {
+        Args: { p_request_id: string; p_resolved_by: string; p_approve: boolean; p_resolution_note: string | null };
+        Returns: ReassignRequestRow;
+      };
+      archive_task_with_event: {
+        Args: { p_task_id: string; p_actor_id: string; p_reason: string | null };
+        Returns: TaskArchiveRow;
+      };
+      restore_task_with_event: {
+        Args: { p_task_id: string; p_actor_id: string };
         Returns: TaskRow;
       };
       content_os_auth_create_challenge: {

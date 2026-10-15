@@ -240,7 +240,10 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
         const deadlineMatch = update.callback_query.data.match(
           /^deadline:([0-9a-f-]{36}):(APPROVE|REJECT)$/i,
         );
-        if (!taskMatch && !deadlineMatch && !checklistMatch && !contentOsLoginMatch) {
+        const reassignMatch = update.callback_query.data.match(
+          /^reassign:([0-9a-f-]{36}):(APPROVE|REJECT)$/i,
+        );
+        if (!taskMatch && !deadlineMatch && !reassignMatch && !checklistMatch && !contentOsLoginMatch) {
           return { messages: [], callbackQueryId: update.callback_query.id };
         }
 
@@ -306,6 +309,23 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
               ? [{
                   chatId: update.callback_query.message.chat.id,
                   text: `Deadline request is now ${deadlineRequest.status}.`,
+                }]
+              : [],
+          };
+        }
+
+        if (reassignMatch) {
+          const reassignRequest = await service.resolveReassignRequest(
+            actor,
+            reassignMatch[1],
+            reassignMatch[2].toUpperCase() === "APPROVE",
+          );
+          return {
+            callbackQueryId: update.callback_query.id,
+            messages: update.callback_query.message
+              ? [{
+                  chatId: update.callback_query.message.chat.id,
+                  text: `Reassign request is now ${reassignRequest.status}.`,
                 }]
               : [],
           };
@@ -420,6 +440,17 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
           reason: deadlineMatch[3],
         });
         return { messages: [{ chatId: message.chat.id, text: `Deadline request created: ${request.id}` }] };
+      }
+
+      const reassignMatch = text.match(/^\/reassign\s+([0-9a-f-]{36})\s+@?([a-z0-9_]{1,32})\s+(.+)$/is);
+      if (reassignMatch) {
+        const request = await service.requestReassignByUsername(
+          actor,
+          reassignMatch[1],
+          reassignMatch[2],
+          reassignMatch[3],
+        );
+        return { messages: [{ chatId: message.chat.id, text: `Reassign request created: ${request.id}` }] };
       }
 
       if (looksLikeTaskShorthand(text)) {

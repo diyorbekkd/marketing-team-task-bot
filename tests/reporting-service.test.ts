@@ -19,10 +19,16 @@ const task: Task = {
   createdAt: "2026-09-08T08:00:00Z", updatedAt: "2026-09-08T08:00:00Z",
 };
 
-function repository(claim = true): MarketingRepository {
+function repository(claim = true, archived = false): MarketingRepository {
   return {
     listUsers: vi.fn(async () => [head, employee, inactive]),
     listTasks: vi.fn(async () => [task]),
+    listTaskArchives: vi.fn(async () => archived ? [{
+      taskId: task.id,
+      archivedAt: "2026-09-09T02:00:00Z",
+      archivedBy: head.id,
+      reason: "No longer operational",
+    }] : []),
     listAllTaskEvents: vi.fn(async () => []),
     listDeadlineChangeRequests: vi.fn(async () => []),
     claimReportDelivery: vi.fn(async () => claim),
@@ -47,5 +53,13 @@ describe("scheduled report delivery", () => {
     const result = await new ReportingService(repository(false), dispatcher).deliver("WEEKLY", new Date("2026-09-13T05:00:00Z"));
     expect(result.deduplicated).toBe(2);
     expect(dispatcher.sendReport).not.toHaveBeenCalled();
+  });
+
+  it("excludes archived tasks from scheduled reports", async () => {
+    const sent: Array<{ recipient: User; text: string }> = [];
+    const dispatcher: ReportDispatcher = { sendReport: vi.fn(async (recipient, text) => { sent.push({ recipient, text }); }) };
+    await new ReportingService(repository(true, true), dispatcher).deliver("DAILY_MORNING", new Date("2026-09-09T03:00:00Z"));
+    expect(sent).toHaveLength(2);
+    expect(sent.every((delivery) => !delivery.text.includes(task.title))).toBe(true);
   });
 });

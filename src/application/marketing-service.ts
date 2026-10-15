@@ -1,7 +1,20 @@
 import { CreateTaskInputSchema, isOverdue } from "@/domain/task";
 import type { ActorContext, TeamRole } from "@/domain/permissions";
-import { canApproveDeadlineRequest, isAssignee, isCreator, isHead } from "@/domain/permissions";
-import type { DeadlineChangeRequest, Task, User } from "@/domain/models";
+import {
+  canApproveDeadlineRequest,
+  canArchiveTask,
+  canDirectChangeDeadline,
+  canDirectReassign,
+  canEditTask,
+  canRequestDeadlineChange,
+  canRequestReassign,
+  canRestoreTask,
+  canViewTask,
+  isAssignee,
+  isCreator,
+  isHead,
+} from "@/domain/permissions";
+import type { DeadlineChangeRequest, ReassignRequest, Task, TaskArchive, User } from "@/domain/models";
 import { TaskActionInputSchema, canTransition, statusForAction } from "@/domain/workflow";
 import type { MarketingRepository, TelegramIdentityInput } from "./ports/marketing-repository";
 import type {
@@ -43,7 +56,30 @@ const DeadlineRequestInputSchema = z.object({
   reason: z.string().trim().min(1).max(2000),
 });
 
-export type TaskScope = "my" | "team" | "today" | "overdue" | "review";
+const ReassignRequestInputSchema = z.object({
+  requestedAssigneeId: z.string().uuid(),
+  reason: z.string().trim().min(1).max(2000),
+}).strict();
+
+const DirectDeadlineInputSchema = z.object({
+  deadline: z.string().datetime({ offset: true }),
+}).strict();
+
+const DirectReassignInputSchema = z.object({
+  assigneeId: z.string().uuid(),
+}).strict();
+
+const EditTaskInputSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  description: z.string().max(5000).nullable().optional(),
+  priority: z.enum(["high", "normal", "low"]),
+}).strict();
+
+const ArchiveTaskInputSchema = z.object({
+  reason: z.string().trim().min(1).max(2000).optional(),
+}).strict();
+
+export type TaskScope = "my" | "all" | "team" | "today" | "overdue" | "review" | "archived";
 
 export interface TaskCreationResult {
   readonly task: Task;
@@ -56,11 +92,16 @@ export type BulkTaskCreationOutcome =
   | { readonly index: number; readonly status: "FAILED"; readonly errorMessage: string };
 
 function actorFromUser(user: User): ActorContext {
-  return { userId: user.id, role: user.role };
+  return { userId: user.id, role: user.role, isActive: user.isActive };
 }
 
-function taskAccess(task: Task) {
-  return { creatorId: task.creatorId, assigneeId: task.assigneeId };
+function taskAccess(task: Task, archive: TaskArchive | null = null) {
+  return {
+    creatorId: task.creatorId,
+    assigneeId: task.assigneeId,
+    status: task.status,
+    isArchived: archive !== null,
+  };
 }
 
 export class MarketingService {
@@ -183,13 +224,16 @@ export class MarketingService {
     if (!target) {
       throw new ApplicationError("NOT_FOUND", "User not found.");
     }
-    const [tasks, recurringDefinitions] = await Promise.all([
+    const [tasks, archives, recurringDefinitions] = await Promise.all([
       this.repository.listTasks(),
+      this.repository.listTaskArchives(),
       this.repository.listRecurringDefinitionsByAssignee(userId),
     ]);
-    const openTasks = tasks.filter((task) => task.assigneeId === userId && isOpenTask(task));
+    const archivedIds = new Set(archives.map((archive) => archive.taskId));
+    const openTasks = tasks.filter((task) => task.assigneeId === userId && isOpenTask(task) && !archivedIds.has(task.id));
     const historicalTaskCount = tasks.filter(
-      (task) => (task.assigneeId === userId || task.creatorId === userId) && !isOpenTask(task),
+      (task) => (task.assigneeId === userId || task.creatorId === userId)
+        && (!isOpenTask(task) || archivedIds.has(task.id)),
     ).length;
     return {
       user: target,
@@ -228,8 +272,14 @@ export class MarketingService {
     }
     const parsed = DeactivationInputSchema.parse(input);
 
-    const tasks = await this.repository.listTasks();
-    const openTasks = tasks.filter((task) => task.assigneeId === userId && isOpenTask(task));
+    const [tasks, archives] = await Promise.all([
+      this.repository.listTasks(),
+      this.repository.listTaskArchives(),
+    ]);
+    const archivedIds = new Set(archives.map((archive) => archive.taskId));
+    const openTasks = tasks.filter(
+      (task) => task.assigneeId === userId && isOpenTask(task) && !archivedIds.has(task.id),
+    );
 
     if (openTasks.length > 0 && parsed.openTasksAction === "REASSIGN") {
       const newAssignee = await this.repository.getUserById(parsed.reassignToUserId!);
@@ -242,7 +292,12 @@ export class MarketingService {
       for (const task of openTasks) {
         const reassigned = await this.repository.reassignTask({ taskId: task.id, newAssigneeId: newAssignee.id, actorId: actor.id });
         try {
-          await this.notificationDispatcher.notifyAssignment({ task: reassigned, creator: actor, assignee: newAssignee });
+          await this.notifyAssignmentOnce(
+            reassigned,
+            actor,
+            newAssignee,
+            `TASK_REASSIGNED:${reassigned.id}:${reassigned.updatedAt}`,
+          );
         } catch {
           console.warn(JSON.stringify({ event: "reassignment_notification_failed", taskId: task.id }));
         }
@@ -303,6 +358,7 @@ export class MarketingService {
     input: unknown,
     sourceTelegramUpdateId?: number,
   ): Promise<TaskCreationResult> {
+    this.requireActiveTeamMember(actor);
     const parsed = CreateTaskInputSchema.parse(input);
     const assignee = await this.repository.getUserById(parsed.assigneeId);
     if (!assignee?.isActive) {
@@ -325,6 +381,7 @@ export class MarketingService {
     input: Omit<z.input<typeof CreateTaskInputSchema>, "assigneeId"> & { assigneeUsername: string },
     sourceTelegramUpdateId?: number,
   ): Promise<TaskCreationResult> {
+    this.requireActiveTeamMember(actor);
     const assignee = await this.resolveActiveAssigneeByUsername(input.assigneeUsername);
     const parsed = CreateTaskInputSchema.parse({
       title: input.title,
@@ -369,12 +426,7 @@ export class MarketingService {
       sourceTelegramUpdateId,
     });
 
-    let notification: AssignmentNotificationResult;
-    try {
-      notification = await this.notificationDispatcher.notifyAssignment({ task, creator: actor, assignee });
-    } catch {
-      notification = { status: "FAILED", reason: "DELIVERY_FAILED" };
-    }
+    const notification = await this.notifyAssignmentOnce(task, actor, assignee);
 
     const log = {
       event: notification.status === "SENT"
@@ -387,6 +439,33 @@ export class MarketingService {
     else console.warn(JSON.stringify(log));
 
     return { task, assignee, notification };
+  }
+
+  private async notifyAssignmentOnce(
+    task: Task,
+    creator: User,
+    assignee: User,
+    dedupeKey = `TASK_ASSIGNED:${task.id}`,
+  ): Promise<AssignmentNotificationResult> {
+    const claimed = await this.repository.claimTaskNotification({
+      dedupeKey,
+      recipientUserId: assignee.id,
+    });
+    if (!claimed) return { status: "SENT" };
+
+    let result: AssignmentNotificationResult;
+    try {
+      result = await this.notificationDispatcher.notifyAssignment({ task, creator, assignee });
+    } catch {
+      result = { status: "FAILED", reason: "DELIVERY_FAILED" };
+    }
+    await this.repository.completeTaskNotification({
+      dedupeKey,
+      recipientUserId: assignee.id,
+      status: result.status,
+      ...(result.status === "FAILED" ? { failureReason: result.reason } : {}),
+    });
+    return result;
   }
 
   /**
@@ -412,6 +491,7 @@ export class MarketingService {
     blocks: ReadonlyArray<Omit<z.input<typeof CreateTaskInputSchema>, "assigneeId"> & { assigneeUsername: string }>,
     baseSourceTelegramUpdateId: number,
   ): Promise<BulkTaskCreationOutcome[]> {
+    this.requireActiveTeamMember(actor);
     const outcomes: BulkTaskCreationOutcome[] = [];
     const perAssignee = new Map<string, Array<{ task: Task; assignee: User }>>();
 
@@ -453,27 +533,52 @@ export class MarketingService {
 
     for (const group of perAssignee.values()) {
       const assignee = group[0].assignee;
+      const claimedGroup: typeof group = [];
+      for (const entry of group) {
+        const claimed = await this.repository.claimTaskNotification({
+          dedupeKey: `TASK_ASSIGNED:${entry.task.id}`,
+          recipientUserId: assignee.id,
+        });
+        if (claimed) claimedGroup.push(entry);
+      }
+      if (claimedGroup.length === 0) continue;
       try {
-        const notification = group.length === 1
-          ? await this.notificationDispatcher.notifyAssignment({ task: group[0].task, creator: actor, assignee })
+        const notification = claimedGroup.length === 1
+          ? await this.notificationDispatcher.notifyAssignment({ task: claimedGroup[0].task, creator: actor, assignee })
           : await this.notificationDispatcher.notifyBulkAssignment({
-              tasks: group.map((entry) => entry.task),
+              tasks: claimedGroup.map((entry) => entry.task),
               creator: actor,
               assignee,
             });
+        for (const entry of claimedGroup) {
+          await this.repository.completeTaskNotification({
+            dedupeKey: `TASK_ASSIGNED:${entry.task.id}`,
+            recipientUserId: assignee.id,
+            status: notification.status,
+            ...(notification.status === "FAILED" ? { failureReason: notification.reason } : {}),
+          });
+        }
         const log = {
           event: notification.status === "SENT" ? "task_assignment_notification_sent" : "task_assignment_notification_failed",
-          taskIds: group.map((entry) => entry.task.id),
-          batched: group.length > 1,
+          taskIds: claimedGroup.map((entry) => entry.task.id),
+          batched: claimedGroup.length > 1,
           ...(notification.status === "FAILED" ? { reason: notification.reason } : {}),
         };
         if (notification.status === "SENT") console.info(JSON.stringify(log));
         else console.warn(JSON.stringify(log));
       } catch {
+        for (const entry of claimedGroup) {
+          await this.repository.completeTaskNotification({
+            dedupeKey: `TASK_ASSIGNED:${entry.task.id}`,
+            recipientUserId: assignee.id,
+            status: "FAILED",
+            failureReason: "DISPATCH_FAILED",
+          });
+        }
         console.warn(JSON.stringify({
           event: "task_assignment_notification_failed",
-          taskIds: group.map((entry) => entry.task.id),
-          batched: group.length > 1,
+          taskIds: claimedGroup.map((entry) => entry.task.id),
+          batched: claimedGroup.length > 1,
           reason: "DISPATCH_FAILED",
         }));
       }
@@ -483,15 +588,22 @@ export class MarketingService {
   }
 
   async listTasks(actor: User, scope: TaskScope = "my", now = new Date()): Promise<Task[]> {
-    if (scope === "team" && !isHead(actorFromUser(actor))) {
-      throw new ApplicationError("FORBIDDEN", "Only Head may view team-wide tasks.");
+    this.requireActiveTeamMember(actor);
+    const [allTasks, archives] = await Promise.all([
+      this.repository.listTasks(),
+      this.repository.listTaskArchives(),
+    ]);
+    const archivedIds = new Set(archives.map((archive) => archive.taskId));
+    if (scope === "archived") {
+      if (!isHead(actorFromUser(actor))) {
+        throw new ApplicationError("FORBIDDEN", "Only Head may view archived tasks.");
+      }
+      return allTasks.filter((task) => archivedIds.has(task.id));
     }
 
-    const allTasks = await this.repository.listTasks();
-    const actorTasks = allTasks.filter((task) => task.assigneeId === actor.id || task.creatorId === actor.id);
-    const visible = scope === "team" || (isHead(actorFromUser(actor)) && scope !== "my")
-      ? allTasks
-      : actorTasks;
+    const nonArchived = allTasks.filter((task) => !archivedIds.has(task.id));
+    const actorTasks = nonArchived.filter((task) => task.assigneeId === actor.id || task.creatorId === actor.id);
+    const visible = scope === "my" ? actorTasks : nonArchived;
 
     if (scope === "overdue") {
       return visible.filter((task) => isOverdue({ deadline: new Date(task.deadline), status: task.status }, now));
@@ -515,27 +627,127 @@ export class MarketingService {
   }
 
   async getTaskDetails(actor: User, taskId: string) {
-    const task = await this.requireVisibleTask(actor, taskId);
-    const [events, requests, postingChecklist, recurringDefinition] = await Promise.all([
+    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    const [events, deadlineRequests, reassignRequests, postingChecklist, recurringDefinition] = await Promise.all([
       this.repository.listTaskEvents(taskId),
       this.repository.listDeadlineChangeRequests(),
+      this.repository.listReassignRequests(),
       this.repository.getPostingChecklist(taskId),
       this.repository.getRecurringDefinitionForTask(taskId),
     ]);
     return {
       task,
+      archive,
       events,
-      deadlineRequests: requests.filter((request) => request.taskId === taskId),
+      deadlineRequests: deadlineRequests.filter((request) => request.taskId === taskId),
+      reassignRequests: reassignRequests.filter((request) => request.taskId === taskId),
       postingChecklist,
       recurringDefinition,
     };
   }
 
+  async editTask(actor: User, taskId: string, input: unknown): Promise<Task> {
+    const parsed = EditTaskInputSchema.parse(input);
+    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    if (!canEditTask(actorFromUser(actor), taskAccess(task, archive))) {
+      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may edit task content.");
+    }
+    return this.repository.updateTaskContent({
+      taskId,
+      actorId: actor.id,
+      title: parsed.title,
+      description: parsed.description ?? null,
+      priority: parsed.priority,
+    });
+  }
+
+  async directReassignTask(actor: User, taskId: string, input: unknown): Promise<Task> {
+    const parsed = DirectReassignInputSchema.parse(input);
+    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    if (!canDirectReassign(actorFromUser(actor), taskAccess(task, archive))) {
+      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may directly reassign this task.");
+    }
+    const newAssignee = await this.repository.getUserById(parsed.assigneeId);
+    if (!newAssignee?.isActive) {
+      throw new ApplicationError("INVALID_INPUT", "New assignee must be an active marketing team member.");
+    }
+    const updated = await this.repository.reassignTask({
+      taskId,
+      newAssigneeId: newAssignee.id,
+      actorId: actor.id,
+    });
+    await this.dispatchWorkflowNotification(
+      { event: "TASK_REASSIGNED", task: updated, actor, targetAssignee: newAssignee },
+      [newAssignee.id],
+      false,
+      `TASK_REASSIGNED:${updated.id}:${updated.updatedAt}`,
+    );
+    return updated;
+  }
+
+  async directChangeDeadline(actor: User, taskId: string, input: unknown): Promise<Task> {
+    const parsed = DirectDeadlineInputSchema.parse(input);
+    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    if (!canDirectChangeDeadline(actorFromUser(actor), taskAccess(task, archive))) {
+      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may directly change this deadline.");
+    }
+    if (new Date(parsed.deadline).getTime() <= Date.now()) {
+      throw new ApplicationError("INVALID_INPUT", "New deadline must be in the future.");
+    }
+    const updated = await this.repository.changeTaskDeadline({
+      taskId,
+      newDeadline: parsed.deadline,
+      actorId: actor.id,
+    });
+    await this.dispatchWorkflowNotification(
+      { event: "DEADLINE_CHANGED", task: updated, actor },
+      [task.assigneeId, task.creatorId],
+      false,
+      `DEADLINE_CHANGED:${updated.id}:${updated.updatedAt}`,
+    );
+    return updated;
+  }
+
+  async archiveTask(actor: User, taskId: string, input: unknown = {}): Promise<TaskArchive> {
+    const parsed = ArchiveTaskInputSchema.parse(input);
+    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    if (!canArchiveTask(actorFromUser(actor), taskAccess(task, archive))) {
+      throw new ApplicationError("FORBIDDEN", "Only Head may archive an active task.");
+    }
+    return this.repository.archiveTask({ taskId, actorId: actor.id, reason: parsed.reason });
+  }
+
+  async restoreTask(actor: User, taskId: string): Promise<Task> {
+    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    if (!canRestoreTask(actorFromUser(actor), taskAccess(task, archive))) {
+      throw new ApplicationError("FORBIDDEN", "Only Head may restore an archived task.");
+    }
+    return this.repository.restoreTask({ taskId, actorId: actor.id });
+  }
+
+  async listChangeRequests(actor: User, status?: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED") {
+    if (!isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Only Head may view the team request queue.");
+    }
+    const [deadlineRequests, reassignRequests] = await Promise.all([
+      this.repository.listDeadlineChangeRequests(),
+      this.repository.listReassignRequests(),
+    ]);
+    return {
+      deadlineRequests: status ? deadlineRequests.filter((request) => request.status === status) : deadlineRequests,
+      reassignRequests: status ? reassignRequests.filter((request) => request.status === status) : reassignRequests,
+    };
+  }
+
   async performTaskAction(actor: User, taskId: string, input: unknown): Promise<Task> {
     const action = TaskActionInputSchema.parse(input);
-    const task = await this.requireVisibleTask(actor, taskId);
+    const { task, archive } = await this.requireVisibleTask(actor, taskId);
     const actorContext = actorFromUser(actor);
-    const access = taskAccess(task);
+    const access = taskAccess(task, archive);
+
+    if (archive) {
+      throw new ApplicationError("CONFLICT", "Restore this task before changing its workflow state.");
+    }
 
     if (!canTransition(task.status, action.action)) {
       throw new ApplicationError("CONFLICT", `${action.action} is not valid while task is ${task.status}.`);
@@ -579,6 +791,8 @@ export class MarketingService {
         await this.dispatchWorkflowNotification(
           { event: "TASK_ACCEPTED", task: transitionedTask, actor },
           [task.creatorId],
+          false,
+          `TASK_ACCEPTED:${transitionedTask.id}:${transitionedTask.updatedAt}`,
         );
       }
     } else if (action.action === "SUBMIT_REVIEW") {
@@ -586,22 +800,28 @@ export class MarketingService {
         { event: "REVIEW_REQUESTED", task: transitionedTask, actor },
         [task.creatorId],
         true,
+        `REVIEW_REQUESTED:${transitionedTask.id}:${transitionedTask.updatedAt}`,
       );
     } else if (action.action === "APPROVE") {
       await this.dispatchWorkflowNotification(
         { event: "TASK_COMPLETED", task: transitionedTask, actor },
         [task.assigneeId],
+        false,
+        `TASK_COMPLETED:${transitionedTask.id}:${transitionedTask.updatedAt}`,
       );
     } else if (action.action === "REQUEST_REVISION") {
       await this.dispatchWorkflowNotification(
         { event: "REVISION_REQUESTED", task: transitionedTask, actor, comment: action.reason },
         [task.assigneeId],
+        false,
+        `REVISION_REQUESTED:${transitionedTask.id}:${transitionedTask.updatedAt}`,
       );
     } else if (action.action === "BLOCK") {
       await this.dispatchWorkflowNotification(
         { event: "TASK_BLOCKED", task: transitionedTask, actor, comment: action.reason },
         [task.creatorId],
         true,
+        `TASK_BLOCKED:${transitionedTask.id}:${transitionedTask.updatedAt}`,
       );
     }
 
@@ -611,7 +831,8 @@ export class MarketingService {
   async togglePostingChecklistItem(actor: User, itemId: string) {
     const checklist = await this.repository.getPostingChecklistByItemId(itemId);
     if (!checklist) throw new ApplicationError("NOT_FOUND", "Posting checklist item not found.");
-    const task = await this.requireVisibleTask(actor, checklist.taskId);
+    const { task, archive } = await this.requireVisibleTask(actor, checklist.taskId);
+    if (archive) throw new ApplicationError("CONFLICT", "Restore this task before editing its checklist.");
     if (task.assigneeId !== actor.id) {
       throw new ApplicationError("FORBIDDEN", "Only the assignee may update the posting checklist.");
     }
@@ -621,7 +842,8 @@ export class MarketingService {
 
   async createRecurrence(actor: User, taskId: string, input: unknown, now = new Date()) {
     const parsed = RecurrenceInputSchema.parse(input);
-    const task = await this.requireVisibleTask(actor, taskId);
+    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    if (archive) throw new ApplicationError("CONFLICT", "Restore this task before making it recurring.");
     if (!isHead(actorFromUser(actor)) && task.creatorId !== actor.id) {
       throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may make it recurring.");
     }
@@ -737,7 +959,7 @@ export class MarketingService {
         const creator = await this.repository.getUserById(task.creatorId);
         if (creator) {
           try {
-            const notification = await this.notificationDispatcher.notifyAssignment({ task, creator, assignee });
+            const notification = await this.notifyAssignmentOnce(task, creator, assignee);
             const log = {
               event: notification.status === "SENT"
                 ? "recurring_assignment_notification_sent"
@@ -772,11 +994,15 @@ export class MarketingService {
   }
 
   async getAnalytics(actor: User, windowDays = 30, now = new Date()) {
+    this.requireActiveTeamMember(actor);
     const days = z.number().int().min(1).max(365).parse(windowDays);
-    const [tasks, events, requests, users] = await Promise.all([
-      this.repository.listTasks(), this.repository.listAllTaskEvents(),
-      this.repository.listDeadlineChangeRequests(), this.repository.listUsers(),
+    const [allTasks, archives, events, requests, users] = await Promise.all([
+      this.repository.listTasks(), this.repository.listTaskArchives(),
+      this.repository.listAllTaskEvents(), this.repository.listDeadlineChangeRequests(),
+      this.repository.listUsers(),
     ]);
+    const archivedIds = new Set(archives.map((archive) => archive.taskId));
+    const tasks = allTasks.filter((task) => !archivedIds.has(task.id));
     const isTeamView = isHead(actorFromUser(actor));
     const metrics = calculateAnalytics({
       tasks, events, deadlineRequests: requests, now, windowDays: days,
@@ -796,12 +1022,12 @@ export class MarketingService {
 
   async requestDeadlineChange(actor: User, taskId: string, input: unknown): Promise<DeadlineChangeRequest> {
     const parsed = DeadlineRequestInputSchema.parse(input);
-    const task = await this.requireVisibleTask(actor, taskId);
-    if (!isAssignee(actorFromUser(actor), taskAccess(task))) {
-      throw new ApplicationError("FORBIDDEN", "Only the assignee may request a deadline change.");
+    if (new Date(parsed.requestedDeadline).getTime() <= Date.now()) {
+      throw new ApplicationError("INVALID_INPUT", "Requested deadline must be in the future.");
     }
-    if (["DONE", "CANCELLED"].includes(task.status)) {
-      throw new ApplicationError("CONFLICT", "A terminal task cannot request a new deadline.");
+    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    if (!canRequestDeadlineChange(actorFromUser(actor), taskAccess(task, archive))) {
+      throw new ApplicationError("FORBIDDEN", "Only an ordinary active assignee may request a deadline change; creator and Head use the direct path.");
     }
     const deadlineRequest = await this.repository.createDeadlineChangeRequest({
       taskId,
@@ -811,8 +1037,9 @@ export class MarketingService {
     });
     await this.dispatchWorkflowNotification(
       { event: "DEADLINE_CHANGE_REQUESTED", task, actor, deadlineRequest },
-      [task.creatorId],
+      [],
       true,
+      `DEADLINE_CHANGE_REQUESTED:${deadlineRequest.id}`,
     );
     return deadlineRequest;
   }
@@ -827,12 +1054,15 @@ export class MarketingService {
     if (!request) {
       throw new ApplicationError("NOT_FOUND", "Deadline request not found.");
     }
-    const task = await this.repository.getTask(request.taskId);
+    const [task, archive] = await Promise.all([
+      this.repository.getTask(request.taskId),
+      this.repository.getTaskArchive(request.taskId),
+    ]);
     if (!task) {
       throw new ApplicationError("NOT_FOUND", "Task not found.");
     }
-    if (!canApproveDeadlineRequest(actorFromUser(actor), taskAccess(task))) {
-      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may resolve this request.");
+    if (!canApproveDeadlineRequest(actorFromUser(actor), taskAccess(task, archive))) {
+      throw new ApplicationError("FORBIDDEN", "Only active Head may resolve this request.");
     }
     if (request.status !== "PENDING") {
       throw new ApplicationError("CONFLICT", "Deadline request is already resolved.");
@@ -851,6 +1081,88 @@ export class MarketingService {
         deadlineRequest: resolvedRequest,
       },
       [request.requestedBy, task.assigneeId],
+      false,
+      `DEADLINE_CHANGE_${resolvedRequest.status}:${resolvedRequest.id}`,
+    );
+    return resolvedRequest;
+  }
+
+  async requestReassign(actor: User, taskId: string, input: unknown): Promise<ReassignRequest> {
+    const parsed = ReassignRequestInputSchema.parse(input);
+    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    if (!canRequestReassign(actorFromUser(actor), taskAccess(task, archive))) {
+      throw new ApplicationError("FORBIDDEN", "Only an ordinary active assignee may request reassignment; creator and Head use the direct path.");
+    }
+    const targetAssignee = await this.repository.getUserById(parsed.requestedAssigneeId);
+    if (!targetAssignee?.isActive) {
+      throw new ApplicationError("INVALID_INPUT", "Requested assignee must be an active marketing team member.");
+    }
+    const reassignRequest = await this.repository.createReassignRequest({
+      taskId,
+      requestedBy: actor.id,
+      requestedAssigneeId: targetAssignee.id,
+      reason: parsed.reason,
+    });
+    await this.dispatchWorkflowNotification(
+      { event: "REASSIGN_REQUESTED", task, actor, reassignRequest, targetAssignee },
+      [],
+      true,
+      `REASSIGN_REQUESTED:${reassignRequest.id}`,
+    );
+    return reassignRequest;
+  }
+
+  async requestReassignByUsername(
+    actor: User,
+    taskId: string,
+    requestedAssigneeUsername: string,
+    reason: string,
+  ): Promise<ReassignRequest> {
+    const target = await this.resolveActiveAssigneeByUsername(requestedAssigneeUsername);
+    return this.requestReassign(actor, taskId, { requestedAssigneeId: target.id, reason });
+  }
+
+  async resolveReassignRequest(
+    actor: User,
+    requestId: string,
+    approve: boolean,
+    resolutionNote?: string,
+  ): Promise<ReassignRequest> {
+    const request = await this.repository.getReassignRequest(requestId);
+    if (!request) throw new ApplicationError("NOT_FOUND", "Reassign request not found.");
+    const [task, archive, targetAssignee] = await Promise.all([
+      this.repository.getTask(request.taskId),
+      this.repository.getTaskArchive(request.taskId),
+      this.repository.getUserById(request.requestedAssigneeId),
+    ]);
+    if (!task) throw new ApplicationError("NOT_FOUND", "Task not found.");
+    if (!canApproveDeadlineRequest(actorFromUser(actor), taskAccess(task, archive))) {
+      throw new ApplicationError("FORBIDDEN", "Only active Head may resolve this request.");
+    }
+    if (request.status !== "PENDING") {
+      throw new ApplicationError("CONFLICT", "Reassign request is already resolved.");
+    }
+    if (approve && !targetAssignee?.isActive) {
+      throw new ApplicationError("CONFLICT", "Requested assignee is no longer active.");
+    }
+    const resolvedRequest = await this.repository.resolveReassignRequest({
+      requestId,
+      resolvedBy: actor.id,
+      approve,
+      resolutionNote,
+    });
+    const updatedTask = approve ? { ...task, assigneeId: request.requestedAssigneeId } : task;
+    await this.dispatchWorkflowNotification(
+      {
+        event: approve ? "REASSIGN_APPROVED" : "REASSIGN_REJECTED",
+        task: updatedTask,
+        actor,
+        reassignRequest: resolvedRequest,
+        ...(targetAssignee ? { targetAssignee } : {}),
+      },
+      [request.requestedBy, ...(approve ? [request.requestedAssigneeId] : [])],
+      false,
+      `REASSIGN_${resolvedRequest.status}:${resolvedRequest.id}`,
     );
     return resolvedRequest;
   }
@@ -858,7 +1170,8 @@ export class MarketingService {
   private async dispatchWorkflowNotification(
     notification: Omit<WorkflowNotificationInput, "recipients">,
     directRecipientIds: readonly string[],
-    includeHeads = false,
+    includeHeads: boolean,
+    dedupeKey: string,
   ): Promise<void> {
     try {
       const users = await this.repository.listUsers();
@@ -894,18 +1207,33 @@ export class MarketingService {
         });
       }
 
-      const recipients = [...directRecipients, ...heads];
+      const recipients = [...new Map(
+        [...directRecipients, ...heads]
+          .filter((recipient) => recipient.id !== notification.actor.id)
+          .map((recipient) => [recipient.id, recipient]),
+      ).values()];
       if (recipients.length === 0) return;
+
+      const claimedRecipients: User[] = [];
+      for (const recipient of recipients) {
+        if (await this.repository.claimTaskNotification({ dedupeKey, recipientUserId: recipient.id })) {
+          claimedRecipients.push(recipient);
+        }
+      }
+      if (claimedRecipients.length === 0) return;
 
       let result;
       try {
-        result = await this.notificationDispatcher.notifyWorkflow({ ...notification, recipients });
+        result = await this.notificationDispatcher.notifyWorkflow({ ...notification, recipients: claimedRecipients });
       } catch {
-        const uniqueRecipients = new Map(recipients.map((recipient) => [
+        const uniqueRecipients = new Map(claimedRecipients.map((recipient) => [
           /^\d+$/.test(recipient.telegramUserId) ? `telegram:${recipient.telegramUserId}` : `user:${recipient.id}`,
           recipient,
         ]));
         for (const recipient of uniqueRecipients.values()) {
+          await this.repository.completeTaskNotification({
+            dedupeKey, recipientUserId: recipient.id, status: "FAILED", failureReason: "DISPATCH_FAILED",
+          });
           this.logWorkflowDelivery(notification, {
             status: "FAILED",
             recipientUserId: recipient.id,
@@ -916,6 +1244,12 @@ export class MarketingService {
       }
 
       for (const delivery of result.deliveries) {
+        await this.repository.completeTaskNotification({
+          dedupeKey,
+          recipientUserId: delivery.recipientUserId,
+          status: delivery.status,
+          ...(delivery.status === "FAILED" ? { failureReason: delivery.reason } : {}),
+        });
         this.logWorkflowDelivery(notification, delivery);
       }
     } catch {
@@ -945,14 +1279,23 @@ export class MarketingService {
     else console.warn(JSON.stringify(log));
   }
 
-  private async requireVisibleTask(actor: User, taskId: string): Promise<Task> {
-    const task = await this.repository.getTask(taskId);
+  private async requireVisibleTask(actor: User, taskId: string): Promise<{ task: Task; archive: TaskArchive | null }> {
+    const [task, archive] = await Promise.all([
+      this.repository.getTask(taskId),
+      this.repository.getTaskArchive(taskId),
+    ]);
     if (!task) {
       throw new ApplicationError("NOT_FOUND", "Task not found.");
     }
-    if (!isHead(actorFromUser(actor)) && task.creatorId !== actor.id && task.assigneeId !== actor.id) {
-      throw new ApplicationError("FORBIDDEN", "You cannot access this task.");
+    if (!canViewTask(actorFromUser(actor), taskAccess(task, archive))) {
+      throw new ApplicationError("FORBIDDEN", "You cannot access this archived task.");
     }
-    return task;
+    return { task, archive };
+  }
+
+  private requireActiveTeamMember(actor: User): void {
+    if (!actor.isActive) {
+      throw new ApplicationError("UNAUTHENTICATED", "The user session is no longer active.");
+    }
   }
 }

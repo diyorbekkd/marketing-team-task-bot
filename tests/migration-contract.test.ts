@@ -25,6 +25,10 @@ const autostartMigration = readFileSync(
   new URL("../supabase/migrations/20260914090000_autostart_tasks.sql", import.meta.url),
   "utf8",
 );
+const sprint10bMigration = readFileSync(
+  new URL("../supabase/migrations/20261015132700_sprint_10b_team_permissions_task_management.sql", import.meta.url),
+  "utf8",
+);
 
 describe("fast-track database workflow contract", () => {
   it("locks workflow rows and revalidates lifecycle transitions in the transaction", () => {
@@ -145,5 +149,40 @@ describe("auto-start task creation database contract", () => {
   it("still attaches a posting checklist for a tagged task created through the auto-start path", () => {
     expect(autostartMigration).toContain("#posting");
     expect(autostartMigration).toContain("private.attach_posting_checklist(v_task.id)");
+  });
+});
+
+describe("Sprint 10B team permission database contract", () => {
+  it("keeps archive orthogonal to task status and makes hard delete impossible", () => {
+    expect(sprint10bMigration).toContain("create table public.task_archives");
+    expect(sprint10bMigration).toContain("create trigger tasks_prevent_hard_delete");
+    expect(sprint10bMigration).toContain("create trigger tasks_prevent_archived_update");
+    expect(sprint10bMigration).toContain("'TASK_ARCHIVED'");
+    expect(sprint10bMigration).toContain("'TASK_RESTORED'");
+    expect(sprint10bMigration).not.toContain("ARCHIVED' and");
+  });
+
+  it("uses the same row-locked Head-only request resolvers for both clients", () => {
+    for (const fn of [
+      "resolve_deadline_change_request_with_events",
+      "resolve_reassign_request_with_events",
+    ]) {
+      expect(sprint10bMigration).toContain(`function public.${fn}`);
+    }
+    expect(sprint10bMigration).toContain("for update;");
+    expect(sprint10bMigration).toContain("only active Head may resolve deadline requests");
+    expect(sprint10bMigration).toContain("only active Head may resolve reassign requests");
+    expect(sprint10bMigration).toContain("deadline request was concurrently resolved");
+    expect(sprint10bMigration).toContain("reassign request was concurrently resolved");
+  });
+
+  it("locks down new tables and semantic notification claims", () => {
+    for (const table of ["task_archives", "task_notification_deliveries"]) {
+      expect(sprint10bMigration).toContain(`alter table public.${table} enable row level security`);
+      expect(sprint10bMigration).toContain(
+        `revoke all on table public.${table} from public, anon, authenticated, service_role`,
+      );
+    }
+    expect(sprint10bMigration).toContain("unique (dedupe_key, recipient_user_id)");
   });
 });

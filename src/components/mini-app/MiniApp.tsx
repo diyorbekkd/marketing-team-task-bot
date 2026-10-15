@@ -191,7 +191,7 @@ const FILTER_LABELS: Record<Filter, string> = {
   my: "My Tasks",
   today: "Today",
   overdue: "Overdue",
-  team: "Team",
+  team: "All Tasks",
   review: "Review",
   blocked: "Blocked",
 };
@@ -210,7 +210,8 @@ function isTerminal(status: TaskStatus): boolean {
 }
 
 function scopeForFilter(filter: Filter, isHead: boolean): BackendScope {
-  return filter === "blocked" ? (isHead ? "team" : "my") : filter;
+  void isHead;
+  return filter === "blocked" ? "team" : filter;
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -1147,7 +1148,8 @@ function TasksView({
   onClearMember: () => void;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
-  const primaryFilters: Filter[] = isHead ? ["my", "today", "overdue", "team"] : ["my", "today", "overdue"];
+  void isHead;
+  const primaryFilters: Filter[] = ["my", "today", "overdue", "team"];
   const extraActive = filter === "review" || filter === "blocked" ? filter : null;
 
   return (

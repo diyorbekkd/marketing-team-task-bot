@@ -33,6 +33,8 @@ A user is either **pending** (never activated — `is_active = false`, no `deact
 
 Only Head may activate, deactivate, or reactivate a team member, and Head can never deactivate themself or any other Head account — the only path to removing a Head from the team is a direct database operation outside this product, which matches the existing constraint that at most one user may hold the `HEAD_OF_MARKETING` role and be active at a time.
 
+Every active marketing user can read every non-archived marketing task and all Content OS content. Relationship controls mutation, not visibility: an unrelated teammate is read-only, the creator manages their own task, the assignee performs lifecycle actions and submits change requests, and Head manages every task. Archived tasks are hidden from ordinary views and visible only to active Head.
+
 An active user can use the bot and Mini App, be assigned new tasks, and appears in assignee pickers, current team lists, and workload/analytics. A deactivated user cannot perform bot actions or authenticated Mini App requests (their session and every future Telegram command are rejected before reaching any business logic), cannot be assigned new tasks by any creation path (group shorthand, private bot, Mini App Quick Add, or recurring task configuration/generation), does not receive workflow notifications, deadline reminders, or scheduled reports, and is excluded from current team/workload views. Their historical tasks, audit events, and past report/analytics activity are never rewritten or hidden — only their current membership state changes.
 
 Deactivating a member with open (non-terminal) tasks requires Head to explicitly choose what happens to those tasks: reassign them all to a named active teammate (this also sends that teammate the normal task-assignment notification), cancel them, or keep the historical assignment as-is. There is no silent default that reassigns or orphans work. Any of that member's `ACTIVE` recurring definitions are automatically paused (recorded as `pauseReason: "ASSIGNEE_DEACTIVATED"`) so the scheduler cannot keep generating tasks for someone no longer on the team; Head can later change the recurrence's assignee and resume it. Deactivation never deletes a row — user, task, and recurrence history all remain queryable — so reactivation cannot create a duplicate account.
@@ -69,7 +71,7 @@ Content OS web sessions last 30 days and allow multiple devices. They retain onl
 
 ### Telegram Mini App
 
-The Mini App will eventually include Home, Tasks, Team, Calendar, and Reports. It will provide task lists and details, quick add, Kanban, factual workload counts, overdue/blocked/review queues, calendar, filters, search, reports, and activity history. Employee views are mainly personal; Head views are team-wide.
+The Mini App includes Home, Tasks, Team, and Reports. It provides My Tasks and All Tasks views, task details, quick add, Kanban, factual workload counts, overdue/blocked/review queues, filters, reports, and activity history. Every active employee can open All Tasks; Head additionally has team administration and archived-task access.
 
 Quick Add stays short: title, assignee, and deadline are required; priority and description are optional. Submission is blocked while the team list is still loading (a loading/retry state, never a false "not found"); a team-list load failure shows `"Jamoa ma'lumotlarini yuklab bo'lmadi. Qayta urinib ko'ring."`.
 
@@ -103,9 +105,7 @@ For a task they created, the creator may directly change title, description, pri
 
 ### Assignee
 
-The assignee may change title, description, priority, subtasks, and status through permitted workflow actions. They may later add result or attachment metadata.
-
-The assignee may not directly change the deadline or reassign the task. They must create a request unless they also qualify as the task creator or Head.
+The assignee performs permitted lifecycle/status actions. They may not directly change task content, deadline, or assignee merely because the task is assigned to them. Deadline/reassign changes use a request unless the assignee also qualifies as creator or Head, in which case the stronger direct-management right applies.
 
 ### Head / SUPER_ADMIN
 
@@ -131,11 +131,15 @@ A reviewer may request revision with optional explanatory text. The task moves t
 
 ### Deadline change request
 
-An assignee request contains the current deadline, requested new deadline, and a reason. It is visible to the creator and Head. The creator may approve; Head may approve when needed. One valid approval resolves the request, updates the task deadline, and appends immutable audit events atomically. Rejected requests remain in history. The first resolution wins, preventing duplicate approval.
+An assignee request contains the current deadline, requested new deadline, and a reason. Active Head approves or rejects the shared request from Telegram or Content OS. One valid approval resolves the request, updates the task deadline, and appends immutable audit events atomically. Rejected requests remain in history. The first resolution wins, preventing duplicate approval.
 
 ### Reassignment request
 
-An assignee request contains the requested assignee and a reason. Creator or Head may approve it. Creator may directly reassign their own task; Head may directly reassign any task. Requests, decisions, and direct reassignments remain auditable.
+An assignee request contains the requested assignee and a reason. Active Head approves or rejects the same underlying row from Telegram or Content OS. Creator may directly reassign their own task; Head may directly reassign any task. Requests, decisions, and direct reassignments remain auditable and first-resolution-wins.
+
+### Archive and restore
+
+Creators cancel work through the normal workflow. Head's remove action is a soft archive, never a task delete. Archive metadata is stored separately from workflow status, so restore returns the same task ID, status, Content OS links, task events, and revisions. Ordinary lists exclude archived tasks; only active Head can query archived tasks or restore them. PostgreSQL rejects hard deletes and rejects operational updates while a task remains archived.
 
 ## Immutable activity history
 
@@ -148,6 +152,7 @@ Important mutations append an immutable task event containing task, actor, event
 - `TASK_BLOCKED`, `TASK_UNBLOCKED`
 - `REVIEW_REQUESTED`, `REVISION_REQUESTED`, `TASK_COMPLETED`
 - `TASK_CANCELLED`, `TASK_REOPENED`
+- `TASK_ARCHIVED`, `TASK_RESTORED`
 
 Analytics must use history where historical state matters rather than attempting to infer everything from the current `tasks` row.
 

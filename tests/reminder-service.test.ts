@@ -32,6 +32,7 @@ function task(overrides: Partial<Task> = {}): Task {
 function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepository {
   return {
     listTasks: vi.fn(async () => [task()]),
+    listTaskArchives: vi.fn(async () => []),
     listUsers: vi.fn(async () => [head, creator, assignee]),
     claimReminderDelivery: vi.fn(async () => true),
     completeReminderDelivery: vi.fn(async () => undefined),
@@ -59,6 +60,21 @@ describe("deadline reminder delivery", () => {
 
   it("does not remind on a CANCELLED task", async () => {
     const repo = repository({ listTasks: vi.fn(async () => [task({ status: "CANCELLED", cancelledAt: "2026-09-09T00:00:00Z" })]) });
+    const notifier = dispatcher();
+    const result = await new ReminderService(repo, notifier).deliver(NOW);
+    expect(result.tasksChecked).toBe(0);
+    expect(notifier.notifyReminder).not.toHaveBeenCalled();
+  });
+
+  it("does not remind on an archived open task", async () => {
+    const repo = repository({
+      listTaskArchives: vi.fn(async () => [{
+        taskId: task().id,
+        archivedAt: "2026-09-10T12:00:00.000Z",
+        archivedBy: head.id,
+        reason: "No longer operational",
+      }]),
+    });
     const notifier = dispatcher();
     const result = await new ReminderService(repo, notifier).deliver(NOW);
     expect(result.tasksChecked).toBe(0);

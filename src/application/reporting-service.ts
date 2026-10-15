@@ -160,10 +160,12 @@ export class ReportingService {
   constructor(private readonly repository: MarketingRepository, private readonly dispatcher: ReportDispatcher) {}
 
   async deliver(type: ScheduledReportType, now = new Date()) {
-    const [users, tasks, events, requests] = await Promise.all([
-      this.repository.listUsers(), this.repository.listTasks(), this.repository.listAllTaskEvents(),
-      this.repository.listDeadlineChangeRequests(),
+    const [users, allTasks, archives, events, requests] = await Promise.all([
+      this.repository.listUsers(), this.repository.listTasks(), this.repository.listTaskArchives(),
+      this.repository.listAllTaskEvents(), this.repository.listDeadlineChangeRequests(),
     ]);
+    const archivedIds = new Set(archives.map((archive) => archive.taskId));
+    const tasks = allTasks.filter((task) => !archivedIds.has(task.id));
     const recipients = activeUsers(users);
     const notOnboarded = users.filter((user) => user.isActive && !recipients.includes(user)).length;
     if (notOnboarded > 0) {

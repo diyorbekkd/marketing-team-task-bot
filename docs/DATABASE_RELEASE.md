@@ -6,11 +6,13 @@ The Task Bot repository is the sole production owner of the shared Supabase migr
 
 Content OS may retain source/reference migrations, but those files are not pushed independently to the shared database. Every future shared-database migration version must enter Task Bot's canonical manifest before release. Run `npm run db:check-manifest` in CI and before any database release; it rejects duplicate or unexpected versions and verifies the seven imported Content OS files by SHA-256.
 
-The canonical release inventory is the 20-file order enforced by `scripts/check-migration-manifest.mjs`: eight already-live Task Bot migrations, Content OS 00–05, three Task Bot Sprint 9 migrations, Content OS 06, the Task Bot compatibility migration, then the Sprint 10A Telegram web-auth migration.
+The canonical release inventory is the 21-file order enforced by `scripts/check-migration-manifest.mjs`: eight already-live Task Bot migrations, Content OS 00–05, three Task Bot Sprint 9 migrations, Content OS 06, the Task Bot compatibility migration, the Sprint 10A Telegram web-auth migration, then the Sprint 10B team-permissions/task-management migration.
 
 Sprint 9F freezes the release candidate in `docs/SPRINT_9F_RELEASE_MANIFEST.md`, records all 19 checksums in `docs/SPRINT_9F_MIGRATIONS.sha256`, and defines the gated production procedure in `docs/SPRINT_9F_PRODUCTION_RUNBOOK.md`. Database readiness does not clear the separate Content OS platform-auth gate.
 
 Sprint 10A supersedes that 19-file database candidate with the 20-file inventory in `docs/SPRINT_10A_MIGRATIONS.sha256`. The expected live ledger remains eight rows before release and becomes 20 rows afterward; the normal dry-run must therefore show exactly 12 pending migrations. Sprint 10A replaces the abandoned Sites identity dependency with Telegram-approved server sessions, but no migration may be applied live until a separately approved production run.
+
+Sprint 10B supersedes that candidate with the 21-file inventory in `docs/SPRINT_10B_MIGRATIONS.sha256`. The expected live ledger remains eight rows before release and becomes 21 rows afterward; the normal dry-run must therefore show exactly 13 pending migrations. No Sprint 10B migration may be applied live until the separately approved production run.
 
 ## Release flow
 

@@ -3,7 +3,7 @@ import { getMarketingService } from "@/server/application";
 import { requireRequestActor } from "@/server/auth/request-actor";
 import { errorResponse } from "@/server/http/errors";
 
-const ScopeSchema = z.enum(["my", "team", "today", "overdue", "review"]);
+const ScopeSchema = z.enum(["my", "all", "team", "today", "overdue", "review", "archived"]);
 
 export async function GET(request: Request) {
   try {

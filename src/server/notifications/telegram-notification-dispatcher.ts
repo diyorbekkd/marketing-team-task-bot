@@ -73,7 +73,7 @@ function openTaskButton(appUrl: string) {
 }
 
 function workflowMessage(input: WorkflowNotificationInput, appUrl: string): TelegramNotificationMessage {
-  const { actor, deadlineRequest, event, task } = input;
+  const { actor, deadlineRequest, event, reassignRequest, targetAssignee, task } = input;
 
   switch (event) {
     case "DEADLINE_CHANGE_REQUESTED": {
@@ -118,6 +118,59 @@ function workflowMessage(input: WorkflowNotificationInput, appUrl: string): Tele
     case "DEADLINE_CHANGE_REJECTED":
       return {
         text: ["❌ Deadline so‘rovi rad etildi", "", `Task: ${task.title}`].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "DEADLINE_CHANGED":
+      return {
+        text: ["📅 Task deadline changed", "", `Task: ${task.title}`, `New deadline: ${formatDeadline(task.deadline)}`].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "REASSIGN_REQUESTED": {
+      if (!reassignRequest || !targetAssignee) throw new Error("Reassign request context is required.");
+      return {
+        text: [
+          "👤 Reassignment request",
+          "",
+          `Task: ${task.title}`,
+          `Requested by: ${userLabel(actor)}`,
+          `New assignee: ${userLabel(targetAssignee)}`,
+          "",
+          "Reason:",
+          reassignRequest.reason,
+        ].join("\n"),
+        replyMarkup: {
+          inline_keyboard: [
+            [{ text: "✅ Approve", callback_data: `reassign:${reassignRequest.id}:APPROVE` }],
+            [{ text: "❌ Reject", callback_data: `reassign:${reassignRequest.id}:REJECT` }],
+            openTaskButton(appUrl),
+          ],
+        },
+      };
+    }
+    case "REASSIGN_APPROVED":
+      return {
+        text: [
+          "✅ Reassignment approved",
+          "",
+          `Task: ${task.title}`,
+          ...(targetAssignee ? [`New assignee: ${userLabel(targetAssignee)}`] : []),
+        ].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "REASSIGN_REJECTED":
+      return {
+        text: ["❌ Reassignment request rejected", "", `Task: ${task.title}`].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "TASK_REASSIGNED":
+      return {
+        text: [
+          "👤 Task reassigned",
+          "",
+          `Task: ${task.title}`,
+          ...(targetAssignee ? [`New assignee: ${userLabel(targetAssignee)}`] : []),
+          `Deadline: ${formatDeadline(task.deadline)}`,
+        ].join("\n"),
         replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
       };
     case "REVIEW_REQUESTED":
