@@ -1,5 +1,9 @@
 # Architecture
 
+## Shared database ownership
+
+Task Bot is the sole production migration owner for the database shared with Content OS. The complete ordered manifest lives in `supabase/migrations`; only this repository may run production `supabase db push`. Content OS migration copies in this manifest stay byte-identical to their source. See `docs/DATABASE_RELEASE.md` for the manifest guard, normal release flow, and rollback policy.
+
 ## Shape of the system
 
 Marketing Team Task Bot is one Next.js application backed by one Supabase PostgreSQL database. It is deliberately a modular monolith.

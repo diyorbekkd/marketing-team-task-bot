@@ -73,6 +73,14 @@ Each sprint is intentionally bounded. Later-sprint work should not leak into an 
 - Complete security and RLS review, rate limits, webhook operational controls, monitoring, backups, restore drills, and failure handling.
 - Add end-to-end tests, accessibility checks, deployment runbooks, and production readiness documentation.
 
+## Sprint 9E — Shared database release blockers
+
+- Task Bot is the sole owner and production push location for the shared Supabase migration history.
+- Import Content OS migrations 00–06 byte-for-byte into Task Bot's chronological manifest and guard the exact 19-version order and hashes.
+- Replace manually raised business-rule `40001` errors in effective functions with non-retryable `PT409`, without catching or remapping real PostgreSQL serialization failures.
+- Rehearse the normal eight-live-row to 19-row flow on PostgreSQL 17 with the pinned Supabase CLI; `--include-all`, history repair, and manual ledger changes are not valid release steps.
+- Before traffic, a failed transactional migration may be corrected and retried. After traffic, use fix-forward or PITR for catastrophic recovery; repository down files and migration-history manipulation are not production rollback tools.
+
 ## Fast-track next product phase — authorized 2026-09-09
 
 The user explicitly reordered and activated this scope after the production MVP: daily summaries, weekly summary, `#posting` checklist, recurring tasks, then workload/bottleneck analytics. It is delivered as one compatible increment on `fast-track/mvp`; Telegram's positional task format remains unchanged.

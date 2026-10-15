@@ -1,38 +1,30 @@
 # Current sprint
 
-## Fast-track MVP vertical slice
+## Sprint 9E — Task Bot release blockers
 
-- Branch: `fast-track/mvp` (to be created after the Sprint 0 closeout commit)
-- Base: `sprint-0/foundation`
-- Objective: Produce a usable end-to-end Telegram and Mini App task workflow today. Missing live verification blocks only the affected external check, not implementation.
+- Branch: `codex/sprint-9b-hardening`
+- Starting HEAD: `a9ed78a`
+- Objective: remove retryable SQLSTATEs from expected Task Bot refusals and make Task Bot the sole owner of the complete shared Supabase migration manifest.
+- Scope: Task Bot only; Content OS read-only; no push, deploy, live migration, or production credentials.
 
-## Tasks
+## Status
 
-| Task | Owner | Dependencies | Likely files | Parallel safe | Acceptance criteria | Tests |
-| --- | --- | --- | --- | --- | --- | --- |
-| P0 data, identity, permissions | Codex | Sprint 0 | Domain, server, migrations, API | false | Verified actor boundary and repository-backed shared services work with fakes and Supabase adapter | Permission/identity/repository tests |
-| P1 Telegram onboarding/task creation | Codex | P0 | Telegram adapters, application services | false | Private onboarding and group shorthand create audited tasks | Parser/handler/service tests |
-| P2 core lifecycle and requests | Codex | P0/P1 | Domain/services/migrations | false | Accept, block, review, revision, completion, and deadline request paths enforce permissions/audit | Workflow/concurrency tests |
-| P3 Mini App | Codex; Claude Sonnet only after contracts stabilize | P0–P2 | `src/app`, isolated UI components | true only with explicit UI-only ownership | Authenticated task views, Kanban, detail, and Quick Add use shared APIs | Component/API smoke tests |
-| P4 live integration/deployment | Codex | P0–P3 | Configuration/deployment | false | Live connections attempted safely; unavailable operations recorded as pending | Health/webhook/data smoke tests |
-| P5 reminders | Codex | P4 | Scheduler/service | false | Idempotent due reminders implemented if time remains | Timing/idempotency tests |
+Local release preparation is complete and `DB_RELEASE = GO` for the reviewed manifest:
 
-## Current status
+- Expected application refusals now use `PT409`; genuine PostgreSQL `40001` serialization failures remain distinct.
+- Real PostgREST 12.2.3 verification: two illegal transitions each returned HTTP 409 with code `PT409` and the stable message; request latency was 48 ms / 4 ms, aggregate rollback delta was 1 (no loop), no authenticator connection remained active, and task state did not change.
+- The application maps `PT409` to `CONFLICT` and maps a real `40001` to `INTEGRATION_UNAVAILABLE`.
+- The canonical Task Bot manifest contains exactly 19 ordered migrations. Content OS 00–06 copies match the source SHA-256 values byte-for-byte.
+- PostgreSQL 17.11 + repo-pinned Supabase CLI 2.116.0 rehearsal established the eight-row live baseline with normal `db push`, listed the 11 remaining migrations with normal `db push --dry-run`, applied them to the disposable database, reached the exact 19-row ledger, then reported no pending migrations.
+- No `--include-all`, history repair, or manual migration-ledger insertion was used.
+- SQL transition, Content OS contract, privilege, and `#posting` suites passed. Catalog: 27 Content OS tables, RLS-disabled 0, policies 0, dangerous ambient service-role privileges 0, effective manually authored `40001` functions 0.
+- Full application gate: manifest guard PASS; lint PASS; typecheck PASS; 275/275 tests PASS (35 files); production build PASS; `git diff --check` PASS.
+- Content OS was not edited by this work. Its branch advanced externally from the expected `13ddf29` to clean `ceb5f52`; the seven source migration hashes did not change.
 
-- P0–P4: implemented, deployed, and live-verified.
-- Production workflow-notification hotfix: implemented, committed (`77b2c4b`), reviewed, and deployed to production. Live human-originated verification of the deadline-request and review notification round trips is still pending (see `.ai/PROJECT_STATE.md`).
-- Telegram group-creation UX hotfix: safe no-mention positional parsing implemented, committed (`77b2c4b`), reviewed, deployed, and **live-verified with a real human group message** (task `74360fff…` created end to end: classifier → auth → assignee resolution → single task/audit event → group confirmation → notification `SENT`).
-- Practical MVP audit + Mini App redesign: `docs/MVP_AUDIT.md` covers Telegram group, private bot, Mini App, business logic, date/time, reliability, and code quality. No P0s; P1s and useful P2s fixed. Mini App rebuilt with a blue SaaS visual system, a new Home dashboard, a Team workload tab, and bottom navigation, with no backend/API changes. Committed `2b37acc` and deployed to production.
-- Live Supabase: all five migrations applied and access boundary verified; reachability reverified post-deploy.
-- Production: `https://marketing-team-task-bot.vercel.app`; encrypted Vercel environment is complete; deployed commit `2b37acc`.
-- Telegram: webhook/menu verified with zero pending updates and no last error; real Head `/start` onboarding succeeded.
-- End-to-end: controlled group restriction/task creation, real outbound notifications, Supabase persistence, signed Mini App APIs, deadline approval, lifecycle, audit, and revision checks pass (prior deployment); the new positional syntax is now also live-verified. The ordinary-conversation non-trigger check, the deadline-request/review notification round trips, and an interactive click-through of the redesigned Mini App have not yet been exercised on this deployment by a real human — see `.ai/PROJECT_STATE.md` "Remaining tasks".
-- Independent review: General `PASS_WITH_NOTES` and final Opus security `PASS_WITH_NOTES`, both with no Critical/High findings; the two Low findings from the final Opus pass were fixed pre-commit. The audit/redesign changed no authorization or business logic, so no additional security review was run over it.
-- P5: optional and not started.
+## Release rules
 
-## Definition of Done
-
-- P0–P4 vertical slice is complete locally and all available live checks pass.
-- External checks that genuinely cannot run are marked `PENDING_LIVE_VERIFICATION` without blocking other work.
-- Permission, identity-forgery, workflow, audit, and request-resolution tests pass.
-- Lint, typecheck, tests, build, secret scan, and final Opus security review pass without unresolved Critical/High findings.
+- Production `supabase db push` runs only from Task Bot's complete manifest.
+- Before traffic, retry a corrected failed transactional migration.
+- After traffic, prefer fix-forward; use PITR only for a catastrophic recovery.
+- Never run the combined Content OS down script in production or manipulate migration history to simulate rollback.
+- This sprint did not push, deploy, or apply anything to live Supabase.
