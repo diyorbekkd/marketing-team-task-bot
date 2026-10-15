@@ -1,12 +1,9 @@
 # Content OS → task-bot server-to-server auth
 
-Handoff spec for the Content OS side (`ibox-content-funnel`) to implement a
-real signing client against this repo's server-to-server auth path. This
-document describes the **contract only** — nothing here is enabled in
-production. See `CONTENT_OS_SERVICE_AUTH_ENABLED` in `.env.example` and
-`src/server/auth/external-actor-resolver.ts`'s `SchemaNotReadyExternalActorResolver`
-for the two independent gates that currently block every request on this
-path, by design, until Codex's identity-link schema exists.
+Server-to-server contract used by Content OS to call Task Bot's authoritative
+HTTP task paths. Nothing is enabled in production by this document;
+`CONTENT_OS_SERVICE_AUTH_ENABLED` still defaults to `false` and the shared
+secret remains server-only.
 
 ## Why this exists
 
@@ -25,8 +22,8 @@ real team member its request identity resolves to.
 | Header | Value |
 |---|---|
 | `x-content-os-timestamp` | Unix seconds, integer, as a string |
-| `x-content-os-actor-provider` | Fixed string identifying the calling system, e.g. `"content-os"` |
-| `x-content-os-actor-subject` | Content OS's own identity claim for the acting user — its SIWC `oai-authenticated-user-id`, **not** a `public.users.id` |
+| `x-content-os-actor-provider` | Fixed string `CONTENT_OS_TELEGRAM_SESSION` |
+| `x-content-os-actor-subject` | The `public.users.id` returned by validation of the current Content OS Telegram web session |
 | `x-content-os-signature` | Lowercase hex-encoded HMAC-SHA256, 64 characters |
 
 All four must be present. A request missing any of them is rejected as
@@ -61,9 +58,15 @@ Implementation reference: `src/server/auth/content-os-signature.ts` (`signConten
 - There is no separate replay-cache/nonce check yet. The 60-second window plus (once wired) `TaskCreationIdempotencyStore` for creates is the current defense; a real anti-replay store is Codex's decision once the DB contract lands (see `src/application/ports/task-creation-idempotency-store.ts`).
 - Sign immediately before sending. Do not sign ahead of time and queue the request — a queued request will very likely land outside the 60-second window.
 
-## Actor resolution — do not assume `public.users.id`
+## Actor resolution
 
-`x-content-os-actor-subject` is **never** treated as a `public.users.id`. It is looked up via `ExternalActorResolver.resolve({ provider, externalSubject })` (`src/server/auth/external-actor-resolver.ts`), which is expected to be backed by Codex's `external_identity_links` (or equivalent) table mapping `(provider, externalSubject) → public.users.id`. Until that table and a real resolver exist, `SchemaNotReadyExternalActorResolver` — the only production-wired implementation — always fails closed with `EXTERNAL_IDENTITY_NOT_LINKED`. Content OS should not attempt to guess or pre-map this on its own side; the mapping is owned here.
+Content OS first validates its opaque `content_os_session` through the
+Task Bot-owned `content_os_auth_validate_session` RPC. That result contains
+the current active `public.users.id`; Content OS signs that id as the subject.
+Task Bot accepts only provider `CONTENT_OS_TELEGRAM_SESSION`, validates that
+the subject is a UUID, reloads the current `public.users` row, and rechecks
+`is_active`. Legacy `OPENAI_SIWC`, malformed, missing, and inactive identities
+all fail closed.
 
 The resolved actor must also be `is_active`; an inactive linked actor is rejected the same as an unlinked one.
 
@@ -84,9 +87,12 @@ Deliberately generic: the response body never distinguishes *why* a signed reque
 
 Once past auth, every route's **existing, unchanged** success/error semantics apply — see the wire-contract audit for `POST /api/tasks`, `POST /api/tasks/{id}/actions`, etc. Nothing about response shapes changes for a service-authenticated request; the resolved actor is passed to the exact same `MarketingService` methods as a cookie-authenticated one.
 
-## What still blocks this path in production today
+## Production gates
 
 1. `CONTENT_OS_SERVICE_AUTH_ENABLED` defaults to `false`.
-2. Even if enabled, `SchemaNotReadyExternalActorResolver` always throws — no real actor can ever be resolved until Codex's identity-link schema and a real resolver land.
-3. `POST /api/tasks` still has no create-idempotency enforcement for this path (`TaskCreationIdempotencyStore` is an interface only, wired nowhere) — a network retry from a future Content OS caller could double-create a task exactly as it could from the Mini App today. Do not treat CREATE as safe to enable even after (1) and (2) are resolved, until this is addressed.
-4. A resolved service-auth actor still cannot perform an action outside their real permissions (assignee-only, creator/Head-only, etc.) — there is no privilege escalation via this path, by construction (`ContentOsRequestActorProvider` returns a plain `public.users` actor to the exact same, unmodified permission checks every other caller goes through).
+2. Both applications must be configured with the same server-only shared
+   secret and the approved Task Bot origin; neither value is browser-visible.
+3. A resolved service-auth actor still cannot perform an action outside their
+   current relationship/role permissions. The provider returns a plain,
+   freshly loaded `public.users` actor to the same `MarketingService` checks
+   used by Telegram and the Mini App.

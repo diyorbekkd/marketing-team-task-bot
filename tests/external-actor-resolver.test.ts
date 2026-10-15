@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { ExternalIdentityNotLinkedError, SchemaNotReadyExternalActorResolver } from "../src/server/auth/external-actor-resolver";
+import { describe, expect, it, vi } from "vitest";
+import {
+  CONTENT_OS_TELEGRAM_SESSION_PROVIDER,
+  ContentOsTelegramSessionActorResolver,
+  ExternalIdentityNotLinkedError,
+  SchemaNotReadyExternalActorResolver,
+} from "../src/server/auth/external-actor-resolver";
 import { FixtureExternalActorResolver } from "./stubs/fixture-external-actor-resolver";
 import type { User } from "../src/domain/models";
 
@@ -15,10 +20,36 @@ const ACTIVE_USER: User = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 };
 
-describe("SchemaNotReadyExternalActorResolver (the only production-wired resolver today)", () => {
+describe("SchemaNotReadyExternalActorResolver (legacy fail-closed resolver)", () => {
   it("always fails closed -- no provider/externalSubject can ever resolve", async () => {
     const resolver = new SchemaNotReadyExternalActorResolver();
     await expect(resolver.resolve({ provider: "content-os", externalSubject: "anything" })).rejects.toBeInstanceOf(ExternalIdentityNotLinkedError);
+  });
+});
+
+describe("ContentOsTelegramSessionActorResolver", () => {
+  it("resolves only the fixed signed Telegram-session provider to the current public.users row", async () => {
+    const users = { getUserById: vi.fn(async () => ACTIVE_USER) };
+    const resolver = new ContentOsTelegramSessionActorResolver(users);
+    await expect(resolver.resolve({
+      provider: CONTENT_OS_TELEGRAM_SESSION_PROVIDER,
+      externalSubject: ACTIVE_USER.id,
+    })).resolves.toEqual(ACTIVE_USER);
+    expect(users.getUserById).toHaveBeenCalledWith(ACTIVE_USER.id);
+  });
+
+  it("rejects a legacy provider, malformed id, or missing user without querying/fabricating identity", async () => {
+    const users = { getUserById: vi.fn(async () => null) };
+    const resolver = new ContentOsTelegramSessionActorResolver(users);
+    await expect(resolver.resolve({ provider: "OPENAI_SIWC", externalSubject: ACTIVE_USER.id }))
+      .rejects.toBeInstanceOf(ExternalIdentityNotLinkedError);
+    await expect(resolver.resolve({ provider: CONTENT_OS_TELEGRAM_SESSION_PROVIDER, externalSubject: "not-a-user-id" }))
+      .rejects.toBeInstanceOf(ExternalIdentityNotLinkedError);
+    expect(users.getUserById).not.toHaveBeenCalled();
+    await expect(resolver.resolve({
+      provider: CONTENT_OS_TELEGRAM_SESSION_PROVIDER,
+      externalSubject: "10000000-0000-4000-8000-000000000099",
+    })).rejects.toBeInstanceOf(ExternalIdentityNotLinkedError);
   });
 });
 

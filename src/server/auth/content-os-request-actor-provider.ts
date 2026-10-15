@@ -10,9 +10,10 @@ import {
   ContentOsSignatureError,
   verifyContentOsSignature,
 } from "./content-os-signature";
-import { ExternalIdentityNotLinkedError, SchemaNotReadyExternalActorResolver } from "./external-actor-resolver";
+import { ContentOsTelegramSessionActorResolver, ExternalIdentityNotLinkedError } from "./external-actor-resolver";
 import type { ExternalActorResolver } from "./external-actor-resolver";
 import type { RequestActorProvider, RequestActorResolution } from "./request-actor-provider";
+import { SupabaseMarketingRepository } from "@/server/repositories/supabase-marketing-repository";
 
 /**
  * Server-to-server provider for signed Content OS requests. Fully inert
@@ -25,15 +26,15 @@ import type { RequestActorProvider, RequestActorResolution } from "./request-act
  * through, since a service request with a bad signature is a security
  * event, not an "try the next auth method" situation.
  *
- * Two independent gates stand between this class and ever returning a real
- * actor in production today: the config flag (default false) and the
- * injected ExternalActorResolver, which is SchemaNotReadyExternalActorResolver
- * (always fails closed) unless a caller explicitly injects something else --
- * something only tests do.
+ * The config flag defaults false. When explicitly enabled, the default
+ * resolver accepts only the fixed Content OS Telegram-session provider and
+ * resolves its signed public.users id through the current repository row.
  */
 export class ContentOsRequestActorProvider implements RequestActorProvider {
   constructor(
-    private readonly externalActorResolver: ExternalActorResolver = new SchemaNotReadyExternalActorResolver(),
+    private readonly externalActorResolver: ExternalActorResolver = new ContentOsTelegramSessionActorResolver(
+      new SupabaseMarketingRepository(),
+    ),
     private readonly getConfig: typeof getContentOsServiceAuthConfig = getContentOsServiceAuthConfig,
     private readonly now: () => Date = () => new Date(),
   ) {}

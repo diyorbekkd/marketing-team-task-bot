@@ -64,6 +64,12 @@ All new public tables have RLS enabled. `public`, `anon`, `authenticated`, and `
 - `POST /api/tasks/:id/restore`
 - `GET /api/requests?status=PENDING|APPROVED|REJECTED|CANCELLED` (Head only)
 
+Content OS calls these routes through the existing HMAC service boundary with
+provider `CONTENT_OS_TELEGRAM_SESSION`. Its signed subject is the current
+`public.users.id` obtained from the Task Bot-owned Telegram web-session RPC;
+Task Bot reloads and revalidates that user before applying the same service
+permissions and notification workflow as Telegram.
+
 ## Telegram and notification behavior
 
 Deadline and reassign request buttons call the same service methods and database RPCs as Content OS. Reassign request callbacks use `reassign:<request-id>:APPROVE|REJECT`; deadline callbacks retain `deadline:<request-id>:APPROVE|REJECT`. A second callback after either channel resolved the row receives the normal conflict response and cannot append another event.

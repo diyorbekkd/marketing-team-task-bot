@@ -16,6 +16,7 @@
 - Added semantic notification claims in `task_notification_deliveries` and retained the existing Telegram dispatcher.
 - Added Telegram reassign-request creation and Head approve/reject callbacks using the same service/RPC paths as Content OS.
 - Added Task Bot HTTP contracts for all/list/archive/request/direct-change operations.
+- Wired the signed Content OS service boundary to the current Telegram web-session actor (`CONTENT_OS_TELEGRAM_SESSION` + `public.users.id`) so Content OS reaches these same HTTP/service/notification paths without trusting browser identity or the retired SIWC mapping.
 - PostgreSQL 17 from-scratch 21-migration apply, permission/archive/catalog suite, and true concurrent deadline/reassign resolution suite pass.
 
 ## Gates after Phase A verification
@@ -42,6 +43,6 @@ Phase A is fully verified. Do not touch Content OS until this state is locally c
 - `scripts/test-team-permissions-concurrency.sql`
 - `scripts/test-team-permissions.mjs`
 
-Final Phase A gate: 303/303 tests pass across 36 files; lint, typecheck, production build, manifest/hash guard, and `git diff --check` pass. PostgreSQL 17 passes a clean 21-migration apply, permission/archive/catalog checks, and true concurrent deadline/reassign resolution. A normal pinned Supabase CLI rehearsal established the exact 20-row baseline, reported only migration 21 pending, applied it without `--include-all`, repair, or ledger editing, and finished at 21 rows with an empty dry-run. Sprint 10A auth lifecycle/concurrency regression passes on that final schema.
+Final Phase A gate: 305/305 tests pass across 36 files; lint, typecheck, production build, manifest/hash guard, and `git diff --check` pass. PostgreSQL 17 passes a clean 21-migration apply, permission/archive/catalog checks, and true concurrent deadline/reassign resolution. A normal pinned Supabase CLI rehearsal established the exact 20-row baseline, reported only migration 21 pending, applied it without `--include-all`, repair, or ledger editing, and finished at 21 rows with an empty dry-run. Sprint 10A auth lifecycle/concurrency regression passes on that final schema.
 
 The production database still has the prior eight-row ledger. Nothing in Sprint 10B has been pushed, deployed, applied live, or run with production credentials/data.

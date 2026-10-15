@@ -14,8 +14,8 @@ import type { User } from "../src/domain/models";
 const SECRET = "test-content-os-service-secret-value";
 const NOW = new Date("2026-09-22T12:00:00.000Z");
 const NOW_SECONDS = Math.floor(NOW.getTime() / 1000);
-const PROVIDER = "content-os";
-const SUBJECT = "siwc-user-abc123";
+const PROVIDER = "CONTENT_OS_TELEGRAM_SESSION";
+const SUBJECT = "10000000-0000-4000-8000-000000000001";
 
 const ACTIVE_ACTOR: User = {
   id: "10000000-0000-4000-8000-000000000001",
