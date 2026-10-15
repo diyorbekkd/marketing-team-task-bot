@@ -7,7 +7,7 @@ Task Bot remains the authoritative migration and mutation owner. Content OS and 
 1. Every active marketing user can view every non-archived marketing task.
 2. Every active marketing user can view all Content OS content through trusted server reads.
 3. Every active marketing user can create a task for any active marketing user.
-4. A task creator directly manages content, assignee, and deadline on their own task.
+4. A manual Task Bot creator directly manages content, assignee, and deadline on their own task. Sprint 10D removes generic creator privileges from every task with Content OS runtime provenance.
 5. An ordinary assignee uses `reassign_requests` and `deadline_change_requests` unless they are also the creator.
 6. Active Head directly manages every task.
 7. Only active Head resolves change requests.
@@ -21,7 +21,7 @@ Task Bot remains the authoritative migration and mutation owner. Content OS and 
 The transport-independent TypeScript predicates are in `src/domain/permissions.ts`:
 
 - `canViewTask`: active team member and non-archived task; archived tasks require active Head.
-- `canEditTask`: active creator or active Head, and task is not archived.
+- `canEditTask`: active manual-task creator or active Head, and task is not archived.
 - `canDirectReassign`: `canEditTask` plus non-terminal workflow state.
 - `canDirectChangeDeadline`: `canEditTask` plus non-terminal workflow state.
 - `canRequestReassign`: active ordinary assignee, not creator/Head, non-terminal, non-archived.
@@ -74,7 +74,7 @@ permissions and notification workflow as Telegram.
 
 Deadline and reassign request buttons call the same service methods and database RPCs as Content OS. Reassign request callbacks use `reassign:<request-id>:APPROVE|REJECT`; deadline callbacks retain `deadline:<request-id>:APPROVE|REJECT`. A second callback after either channel resolved the row receives the normal conflict response and cannot append another event.
 
-Assignment, reassignment, deadline, request, review, revision, approval, and blocked notifications use the existing `NotificationDispatcher`. Before dispatch, the service claims a semantic key in `task_notification_deliveries`. A duplicate webhook, concurrent response retry, or second transport cannot acquire the same recipient/event claim and therefore cannot resend it.
+Assignment notifications retain their existing path. Sprint 10D upgrades meaningful workflow notifications to a durable outbox in `task_notification_deliveries`: the task-event transaction inserts one immutable `(task_event_id, recipient_user_id)` intent; the existing `NotificationDispatcher` sends it after commit with leases, bounded retries/backoff, `SENT`, and terminal `FAILED` state. See `docs/SPRINT_10D_WORKFLOW_AUTH_HARDENING.md` for the precise at-least-once guarantee and Telegram response-loss limitation.
 
 ## Verification
 

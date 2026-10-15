@@ -33,7 +33,7 @@ A user is either **pending** (never activated — `is_active = false`, no `deact
 
 Only Head may activate, deactivate, or reactivate a team member, and Head can never deactivate themself or any other Head account — the only path to removing a Head from the team is a direct database operation outside this product, which matches the existing constraint that at most one user may hold the `HEAD_OF_MARKETING` role and be active at a time.
 
-Every active marketing user can read every non-archived marketing task and all Content OS content. Relationship controls mutation, not visibility: an unrelated teammate is read-only, the creator manages their own task, the assignee performs lifecycle actions and submits change requests, and Head manages every task. Archived tasks are hidden from ordinary views and visible only to active Head.
+Every active marketing user can read every non-archived marketing task and all Content OS content. Relationship controls mutation, not visibility: an unrelated teammate is read-only, the creator manages their own manual Task Bot task, the assignee performs lifecycle actions and submits change requests, and Head manages every task. A Content OS task is identified by stable `content_task_runtime` provenance and never inherits generic creator privileges merely because `tasks.creator_id` matches. Archived tasks are hidden from ordinary views and visible only to active Head.
 
 An active user can use the bot and Mini App, be assigned new tasks, and appears in assignee pickers, current team lists, and workload/analytics. A deactivated user cannot perform bot actions or authenticated Mini App requests (their session and every future Telegram command are rejected before reaching any business logic), cannot be assigned new tasks by any creation path (group shorthand, private bot, Mini App Quick Add, or recurring task configuration/generation), does not receive workflow notifications, deadline reminders, or scheduled reports, and is excluded from current team/workload views. Their historical tasks, audit events, and past report/analytics activity are never rewritten or hidden — only their current membership state changes.
 
@@ -65,7 +65,7 @@ To avoid treating group conversation as work, positional input is considered onl
 
 A private message to the bot supports the exact same task-creation format as the group — positional or labeled, single or bulk (`---`-separated) — through the identical shared parser and creation workflow. The sender must be an active, onboarded team member; an inactive or unrecognized sender is rejected without becoming active and without creating anything. Because a private chat is a dedicated conversation rather than shared group traffic, its parse-error messages may be more detailed than the group's. `/start` and button-callback payloads are never parsed as task text. Private chat also handles onboarding, task-action commands (`/accept`, `/block`, `/revision`, `/deadline`), and callback-driven workflow actions.
 
-The same existing bot approves Content OS web login. A private `/start contentos_<challenge-id>` deep link is separate from onboarding: it never creates or activates a user. An existing active member sees an explicit “Content OS ga kirishni tasdiqlash” prompt with Tasdiqlash and Bekor qilish buttons. The authenticated Telegram callback sender is the only identity used for approval. Unknown, pending, inactive, expired, cancelled, consumed, and malformed requests receive one generic refusal and cannot be approved.
+The same existing bot approves Content OS web login. A private `/start contentos_<challenge-id>` deep link is separate from onboarding: it never creates or activates a user. An existing active member sees an explicit “Content OS ga kirishni tasdiqlash” prompt, the same six-digit human confirmation code shown by the browser, and Tasdiqlash/Bekor qilish buttons. The code is not an authentication secret; the challenge UUID, browser verifier proof, one-time redemption, and authenticated Telegram callback sender remain authoritative. Unknown, pending, inactive, expired, cancelled, consumed, and malformed requests receive one generic refusal and cannot be approved. A server-derived privacy-preserving rate key limits creation to five per 15 minutes and three outstanding challenges; retained challenge rows are cleaned under the documented 24-hour/seven-day policy.
 
 Content OS web sessions last 30 days and allow multiple devices. They retain only an opaque token in an HttpOnly browser cookie; the database stores its SHA-256 hash. Session validation joins the current `public.users` row on every request, so deactivation denies access immediately and a role change is visible on the next request. Deactivation permanently revokes existing sessions; reactivation requires a fresh login.
 
@@ -101,7 +101,7 @@ Permissions are enforced by shared server-side business logic, not only by UI co
 
 ### Creator
 
-For a task they created, the creator may directly change title, description, priority, deadline, assignee, subtasks, and permitted workflow state.
+For a manual Task Bot task they created, the creator may directly change title, description, priority, deadline, assignee, subtasks, and permitted workflow state. Generic creator privileges never apply to a Content OS task.
 
 ### Assignee
 
@@ -125,7 +125,7 @@ The assignee may mark a task `BLOCKED` with a required free-text reason. The sys
 
 ### Review and revision
 
-The assignee submits completed work to `REVIEW`. The task creator or Head may approve it; one approval is sufficient and moves the task to `DONE`.
+The assignee submits completed manual work to `REVIEW`. The manual-task creator or Head may approve it; one approval is sufficient and moves the task to `DONE`. A Content OS `HEAD_REVIEW` is controlled only by its active assigned reviewer or active Head. A Content OS `BLOG` cannot use generic completion: the dedicated transaction completes/resubmits the Blog while creating or resuming exactly one provenance-linked Head Review.
 
 A reviewer may request revision with optional explanatory text. The task moves to `REVISION`, and the revision record remains in history. The assignee can resume work and submit it for review again. Revision count is calculated from retained records/events.
 
@@ -139,7 +139,7 @@ An assignee request contains the requested assignee and a reason. Active Head ap
 
 ### Archive and restore
 
-Creators cancel work through the normal workflow. Head's remove action is a soft archive, never a task delete. Archive metadata is stored separately from workflow status, so restore returns the same task ID, status, Content OS links, task events, and revisions. Ordinary lists exclude archived tasks; only active Head can query archived tasks or restore them. PostgreSQL rejects hard deletes and rejects operational updates while a task remains archived.
+Manual-task creators cancel work through the normal workflow; Content OS creator identity grants no generic cancellation right. Head's remove action is a soft archive, never a task delete. Archive metadata is stored separately from workflow status, so restore returns the same task ID, status, Content OS links, task events, and revisions. Archive transactionally cancels and audits all pending deadline/reassign requests, and restore never resurrects them. Head cannot archive either side of an active provenance-linked Blog/Head Review cycle, including revision; once the review is terminal, normal Head archive behavior applies. An archived Blog cannot be approved through its review. Ordinary lists exclude archived tasks; only active Head can query archived tasks or restore them. PostgreSQL rejects hard deletes and rejects operational updates while a task remains archived.
 
 ## Immutable activity history
 
@@ -161,6 +161,8 @@ Membership changes append a separate, equally immutable `user_events` record (ac
 ## Notifications and reports
 
 A new task's assignment notification states the title, creator, deadline, priority, and `Status: In Progress`, with an Open Task button; it never offers Accept (see Lifecycle rules). When a bulk batch assigns more than one task to the same person, they receive one combined message listing all of their new tasks instead of one notification per task; a batch that spreads across several different people still sends one notification per person.
+
+Meaningful workflow notifications are inserted as durable outbox intents in the same transaction as their immutable task event, then sent through the existing Telegram dispatcher. Workers lease rows, retry transient failures with bounded backoff, and record `SENT` or attempt-five `FAILED`. Exact business retries reuse the same event/recipient intent; later legitimate events notify independently. Delivery is at-least-once: Telegram provides no sender idempotency key, so a crash after Telegram accepts a message but before `SENT` is recorded may produce one duplicate on lease recovery.
 
 Deadline reminders fire for every active (non-`DONE`/`CANCELLED`) task at five thresholds relative to its deadline: 24 hours before, 3 hours before, at the deadline, 1 hour overdue, and 24 hours overdue. Before/at-deadline reminders go to the assignee only; the two overdue reminders escalate to the assignee, creator, and Head (deduplicated, so a creator who is also Head or the assignee receives one message, not two). Delivery is idempotent per `(task_id, deadline, reminder_type)` — a cron sweep that runs every few minutes, or runs twice, never resends a reminder that already went out for that exact deadline value. Changing a task's deadline starts a fresh reminder cycle for the new value; delivery history for the old deadline is untouched and does not block the new one. A threshold that passed more than a few hours before the sweep first sees it is treated as missed rather than fired retroactively, so deploying this feature (or recovering from a scheduler gap) does not burst-notify on old deadlines.
 

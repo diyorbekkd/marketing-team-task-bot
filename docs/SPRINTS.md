@@ -107,6 +107,16 @@ Each sprint is intentionally bounded. Later-sprint work should not leak into an 
 - Keep Task Bot as canonical migration owner. The Sprint 10B manifest has 21 migrations and rehearses the normal eight-row-to-21-row path without `--include-all`, repair, or manual ledger changes.
 - Work strictly sequentially: commit/clean Task Bot, then commit/clean Content OS, then run the seven-flow disposable cross-repository rehearsal. Do not push, deploy, use production credentials, or apply live migrations. Production release remains `HOLD`.
 
+## Sprint 10D — Task Bot workflow and auth hardening
+
+- Restrict generic creator management to manual tasks; Content OS runtime provenance makes its workflow-specific permissions authoritative, including reviewer/Head-only `HEAD_REVIEW` control.
+- Close generic Blog completion and provide one atomic, idempotent `BLOG` completion/resubmission RPC that guarantees exactly one provenance-linked Head Review.
+- Add a six-digit cross-channel login confirmation code, server-derived rate-key contract, five-per-15-minute and three-outstanding bounds, and bounded challenge cleanup/retention.
+- Upgrade meaningful workflow notifications to a durable task-event outbox with leases, retry/backoff, `SENT`, and attempt-five dead-letter state through the existing Telegram dispatcher.
+- Cancel/audit pending task-change requests during archive, serialize request/archive races, and prevent archiving either side of an active Blog/Head Review cycle.
+- Keep Task Bot as canonical migration owner. The Sprint 10D manifest has 22 migrations and rehearses the normal eight-row-to-22-row path without `--include-all`, repair, or manual ledger changes.
+- Modify only Task Bot. Do not push, deploy, use production credentials, or apply live migrations. Production release remains `HOLD`.
+
 ## Fast-track next product phase — authorized 2026-09-09
 
 The user explicitly reordered and activated this scope after the production MVP: daily summaries, weekly summary, `#posting` checklist, recurring tasks, then workload/bottleneck analytics. It is delivered as one compatible increment on `fast-track/mvp`; Telegram's positional task format remains unchanged.
