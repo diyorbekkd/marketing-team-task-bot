@@ -105,6 +105,24 @@ function notificationWarning(): string {
   return "⚠️ Task saqlandi, lekin assignee'ga private xabar yuborilmadi. Assignee botga private chatda /start yuborsin.";
 }
 
+const CONTENT_OS_LOGIN_UNAVAILABLE = "Kirish so‘rovi mavjud emas yoki amal qilish muddati tugagan.";
+
+function contentOsLoginConfirmation(challengeId: string): Omit<TelegramOutgoingMessage, "chatId"> {
+  return {
+    text: [
+      "Content OS ga kirishni tasdiqlash",
+      "",
+      "Bu so‘rovni faqat o‘zingiz boshlagan bo‘lsangiz tasdiqlang.",
+    ].join("\n"),
+    replyMarkup: {
+      inline_keyboard: [[
+        { text: "Tasdiqlash", callback_data: `contentos-login:approve:${challengeId}` },
+        { text: "Bekor qilish", callback_data: `contentos-login:cancel:${challengeId}` },
+      ]],
+    },
+  };
+}
+
 function postingChecklistMessage(taskId: string, checklist: PostingChecklist): {
   text: string;
   replyMarkup: TelegramOutgoingMessage["replyMarkup"];
@@ -212,6 +230,9 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
   return async function handle(update: TelegramUpdate): Promise<TelegramHandlerResult> {
     try {
       if (update.callback_query?.data) {
+        const contentOsLoginMatch = update.callback_query.data.match(
+          /^contentos-login:(approve|cancel):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+        );
         const checklistMatch = update.callback_query.data.match(/^check:([0-9a-f-]{36})$/i);
         const taskMatch = update.callback_query.data.match(
           /^task:([0-9a-f-]{36}):(ACCEPT|SUBMIT_REVIEW|APPROVE|REQUEST_REVISION|RESUME)$/i,
@@ -219,8 +240,27 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
         const deadlineMatch = update.callback_query.data.match(
           /^deadline:([0-9a-f-]{36}):(APPROVE|REJECT)$/i,
         );
-        if (!taskMatch && !deadlineMatch && !checklistMatch) {
+        if (!taskMatch && !deadlineMatch && !checklistMatch && !contentOsLoginMatch) {
           return { messages: [], callbackQueryId: update.callback_query.id };
+        }
+
+        if (contentOsLoginMatch) {
+          const [, action, challengeId] = contentOsLoginMatch;
+          const succeeded = action.toLowerCase() === "approve"
+            ? await service.approveContentOsLogin(String(update.callback_query.from.id), challengeId)
+            : await service.cancelContentOsLogin(String(update.callback_query.from.id), challengeId);
+          const successText = action.toLowerCase() === "approve"
+            ? "Content OS kirishi tasdiqlandi. Brauzerga qayting."
+            : "Content OS kirish so‘rovi bekor qilindi.";
+          return {
+            callbackQueryId: update.callback_query.id,
+            messages: update.callback_query.message
+              ? [{
+                  chatId: update.callback_query.message.chat.id,
+                  text: succeeded ? successText : CONTENT_OS_LOGIN_UNAVAILABLE,
+                }]
+              : [],
+          };
         }
 
         const actor = await service.requireActorByTelegramId(String(update.callback_query.from.id));
@@ -280,6 +320,21 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
       const firstWord = text.split(/\s+/, 1)[0]?.split("@", 1)[0]?.toLowerCase() ?? "";
 
       if (firstWord === "/start" && message.chat.type === "private") {
+        const contentOsLoginMatch = text.match(
+          /^\/start(?:@[a-z0-9_]+)?\s+contentos_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i,
+        );
+        if (contentOsLoginMatch || /^\/start(?:@[a-z0-9_]+)?\s+contentos_/i.test(text)) {
+          const challengeId = contentOsLoginMatch?.[1];
+          const mayConfirm = challengeId
+            ? await service.canConfirmContentOsLogin(String(message.from.id), challengeId)
+            : false;
+          if (!mayConfirm || !challengeId) {
+            return { messages: [{ chatId: message.chat.id, text: CONTENT_OS_LOGIN_UNAVAILABLE }] };
+          }
+          const confirmation = contentOsLoginConfirmation(challengeId);
+          return { messages: [{ chatId: message.chat.id, ...confirmation }] };
+        }
+
         const user = await service.onboardTelegram(
           {
             telegramUserId: String(message.from.id),

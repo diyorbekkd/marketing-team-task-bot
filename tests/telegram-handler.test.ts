@@ -51,6 +51,9 @@ function serviceMock(overrides: Record<string, unknown> = {}) {
   return {
     onboardTelegram: vi.fn(async () => actor),
     requireActorByTelegramId: vi.fn(async () => actor),
+    canConfirmContentOsLogin: vi.fn(async () => true),
+    approveContentOsLogin: vi.fn(async () => true),
+    cancelContentOsLogin: vi.fn(async () => true),
     createTaskForUsername: vi.fn(async () => ({ task, assignee, notification: { status: "SENT" as const } })),
     createTasksBulk: vi.fn(async () => []),
     performTaskAction: vi.fn(async () => ({ ...task, status: "IN_PROGRESS" })),
@@ -94,6 +97,77 @@ describe("Telegram MVP handler", () => {
       "42",
     );
     expect(result.messages[0]?.text).toContain("HEAD_OF_MARKETING");
+  });
+
+  it("keeps Content OS deep-link login separate from normal onboarding", async () => {
+    const service = serviceMock();
+    const challengeId = "30000000-0000-4000-8000-000000000001";
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 101,
+      message: {
+        message_id: 101,
+        chat: { id: 42, type: "private" },
+        from: { id: 42, is_bot: false, first_name: "Team", last_name: "Lead" },
+        text: `/start contentos_${challengeId}`,
+      },
+    }));
+
+    expect(service.canConfirmContentOsLogin).toHaveBeenCalledWith("42", challengeId);
+    expect(service.onboardTelegram).not.toHaveBeenCalled();
+    expect(result.messages[0]?.text).toContain("Content OS ga kirishni tasdiqlash");
+    expect(result.messages[0]?.replyMarkup?.inline_keyboard[0]?.map((button) => button.text))
+      .toEqual(["Tasdiqlash", "Bekor qilish"]);
+  });
+
+  it("uses one generic denial for an unavailable challenge or ineligible Telegram user", async () => {
+    const service = serviceMock({ canConfirmContentOsLogin: vi.fn(async () => false) });
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 102,
+      message: {
+        message_id: 102,
+        chat: { id: 99, type: "private" },
+        from: { id: 99, is_bot: false, first_name: "Unknown" },
+        text: "/start contentos_30000000-0000-4000-8000-000000000001",
+      },
+    }));
+
+    expect(service.onboardTelegram).not.toHaveBeenCalled();
+    expect(result.messages[0]?.text).toBe("Kirish so‘rovi mavjud emas yoki amal qilish muddati tugagan.");
+  });
+
+  it("approves a Content OS challenge using only the Telegram callback sender", async () => {
+    const service = serviceMock();
+    const challengeId = "30000000-0000-4000-8000-000000000001";
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 103,
+      callback_query: {
+        id: "content-os-approve",
+        from: { id: 43, is_bot: false, first_name: "Editor" },
+        data: `contentos-login:approve:${challengeId}`,
+        message: { message_id: 103, chat: { id: 43, type: "private" } },
+      },
+    }));
+
+    expect(service.approveContentOsLogin).toHaveBeenCalledWith("43", challengeId);
+    expect(service.requireActorByTelegramId).not.toHaveBeenCalled();
+    expect(result.messages[0]?.text).toContain("Brauzerga qayting");
+  });
+
+  it("cancels a Content OS challenge from the authenticated Telegram callback", async () => {
+    const service = serviceMock();
+    const challengeId = "30000000-0000-4000-8000-000000000001";
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 104,
+      callback_query: {
+        id: "content-os-cancel",
+        from: { id: 43, is_bot: false, first_name: "Editor" },
+        data: `contentos-login:cancel:${challengeId}`,
+        message: { message_id: 104, chat: { id: 43, type: "private" } },
+      },
+    }));
+
+    expect(service.cancelContentOsLogin).toHaveBeenCalledWith("43", challengeId);
+    expect(result.messages[0]?.text).toContain("bekor qilindi");
   });
 
   it("creates an idempotent group task through the notification-aware service", async () => {
