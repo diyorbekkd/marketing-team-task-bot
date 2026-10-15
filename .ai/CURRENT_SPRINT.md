@@ -1,30 +1,34 @@
 # Current sprint
 
-## Sprint 9E — Task Bot release blockers
+## Sprint 9F — Release candidate freeze
 
 - Branch: `codex/sprint-9b-hardening`
-- Starting HEAD: `a9ed78a`
-- Objective: remove retryable SQLSTATEs from expected Task Bot refusals and make Task Bot the sole owner of the complete shared Supabase migration manifest.
-- Scope: Task Bot only; Content OS read-only; no push, deploy, live migration, or production credentials.
+- Frozen Task Bot application/database SHA: `3a3becab5cd21cf2a6a2947e3e4de861ea6b0f4c`
+- Frozen Content OS SHA: `ceb5f52184f1886948ebb8a7f6b4196b6de6f42a`
+- Scope: release-control documentation only; no application or database behavior changes.
+- Prohibited: push, deploy, live migration, production credentials, or setting `CONTENT_OS_IDENTITY_TRUST`.
 
 ## Status
 
-Local release preparation is complete and `DB_RELEASE = GO` for the reviewed manifest:
+```text
+DB_RELEASE = GO
+APPLICATION_RELEASE = BLOCKED_ON_PLATFORM_AUTH
+PRODUCTION_RELEASE = HOLD
+CONTENT_OS_IDENTITY_TRUST = UNSET
+```
 
-- Expected application refusals now use `PT409`; genuine PostgreSQL `40001` serialization failures remain distinct.
-- Real PostgREST 12.2.3 verification: two illegal transitions each returned HTTP 409 with code `PT409` and the stable message; request latency was 48 ms / 4 ms, aggregate rollback delta was 1 (no loop), no authenticator connection remained active, and task state did not change.
-- The application maps `PT409` to `CONFLICT` and maps a real `40001` to `INTEGRATION_UNAVAILABLE`.
-- The canonical Task Bot manifest contains exactly 19 ordered migrations. Content OS 00–06 copies match the source SHA-256 values byte-for-byte.
-- PostgreSQL 17.11 + repo-pinned Supabase CLI 2.116.0 rehearsal established the eight-row live baseline with normal `db push`, listed the 11 remaining migrations with normal `db push --dry-run`, applied them to the disposable database, reached the exact 19-row ledger, then reported no pending migrations.
-- No `--include-all`, history repair, or manual migration-ledger insertion was used.
-- SQL transition, Content OS contract, privilege, and `#posting` suites passed. Catalog: 27 Content OS tables, RLS-disabled 0, policies 0, dangerous ambient service-role privileges 0, effective manually authored `40001` functions 0.
-- Full application gate: manifest guard PASS; lint PASS; typecheck PASS; 275/275 tests PASS (35 files); production build PASS; `git diff --check` PASS.
-- Content OS was not edited by this work. Its branch advanced externally from the expected `13ddf29` to clean `ceb5f52`; the seven source migration hashes did not change.
+- Both repositories were clean at their frozen full SHAs.
+- The canonical 19-migration Task Bot manifest is frozen with a SHA-256 checksum for every file.
+- Content OS migrations 00–06 remain byte-identical to the canonical Task Bot copies.
+- Expected production ledger is exactly eight rows before the database release and exactly 19 afterward.
+- The production runbook requires normal pinned-CLI `db push`, the exact 11-file dry-run, final ledger/catalog/privilege verification, and forbids `--include-all`, repair, or manual ledger editing.
+- Application release remains blocked until the OpenAI Sites platform owner provides the written identity-header and sole-ingress guarantee for the frozen Site.
+- All release and execution approval boxes remain unchecked. This sprint does not mark the candidate production-ready.
 
-## Release rules
+## Release artifacts
 
-- Production `supabase db push` runs only from Task Bot's complete manifest.
-- Before traffic, retry a corrected failed transactional migration.
-- After traffic, prefer fix-forward; use PITR only for a catastrophic recovery.
-- Never run the combined Content OS down script in production or manipulate migration history to simulate rollback.
-- This sprint did not push, deploy, or apply anything to live Supabase.
+- `docs/SPRINT_9F_RELEASE_MANIFEST.md`
+- `docs/SPRINT_9F_MIGRATIONS.sha256`
+- `docs/SPRINT_9F_PRODUCTION_RUNBOOK.md`
+
+Documentation commits after the frozen Task Bot SHA are release-control artifacts only; application and database artifacts must still be built from the frozen SHA.

@@ -8,6 +8,8 @@ Content OS may retain source/reference migrations, but those files are not pushe
 
 The canonical release inventory is the 19-file order enforced by `scripts/check-migration-manifest.mjs`: eight already-live Task Bot migrations, Content OS 00–05, three Task Bot Sprint 9 migrations, Content OS 06, then the final Task Bot compatibility migration.
 
+Sprint 9F freezes the release candidate in `docs/SPRINT_9F_RELEASE_MANIFEST.md`, records all 19 checksums in `docs/SPRINT_9F_MIGRATIONS.sha256`, and defines the gated production procedure in `docs/SPRINT_9F_PRODUCTION_RUNBOOK.md`. Database readiness does not clear the separate Content OS platform-auth gate.
+
 ## Release flow
 
 Use the repository-pinned Supabase CLI. Against the target database, first run:

@@ -81,6 +81,14 @@ Each sprint is intentionally bounded. Later-sprint work should not leak into an 
 - Rehearse the normal eight-live-row to 19-row flow on PostgreSQL 17 with the pinned Supabase CLI; `--include-all`, history repair, and manual ledger changes are not valid release steps.
 - Before traffic, a failed transactional migration may be corrected and retried. After traffic, use fix-forward or PITR for catastrophic recovery; repository down files and migration-history manipulation are not production rollback tools.
 
+## Sprint 9F — Release candidate freeze
+
+- Freeze Task Bot application/database source at `3a3becab5cd21cf2a6a2947e3e4de861ea6b0f4c` and Content OS source at `ceb5f52184f1886948ebb8a7f6b4196b6de6f42a`.
+- Record SHA-256 for every canonical migration and reverify Content OS 00–06 byte identity.
+- Provide an exact production runbook and explicit, initially unchecked human approvals for precheck, database, application, smoke, and recovery stages.
+- Preserve `DB_RELEASE = GO`, `APPLICATION_RELEASE = BLOCKED_ON_PLATFORM_AUTH`, and `PRODUCTION_RELEASE = HOLD`; keep `CONTENT_OS_IDENTITY_TRUST` unset until the external platform guarantee is documented and separately approved.
+- Make no application/database behavior change and perform no push, deploy, or live migration.
+
 ## Fast-track next product phase — authorized 2026-09-09
 
 The user explicitly reordered and activated this scope after the production MVP: daily summaries, weekly summary, `#posting` checklist, recurring tasks, then workload/bottleneck analytics. It is delivered as one compatible increment on `fast-track/mvp`; Telegram's positional task format remains unchanged.
