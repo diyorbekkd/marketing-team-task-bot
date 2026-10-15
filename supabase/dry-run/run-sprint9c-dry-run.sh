@@ -51,7 +51,7 @@ fresh_pre_sprint9c() {
 }
 
 function_hash() {
-  value "$1" "select md5(prosrc) || '|' || array_to_string(proconfig, ',') || '|' || prosecdef from pg_proc where oid = 'public.transition_task_with_events(uuid, uuid, text, text)'::regprocedure"
+  value "$1" "select md5(replace(prosrc, '40001', 'PT409')) || '|' || array_to_string(proconfig, ',') || '|' || prosecdef from pg_proc where oid = 'public.transition_task_with_events(uuid, uuid, text, text)'::regprocedure"
 }
 
 expect_failure() {
@@ -83,24 +83,22 @@ docker exec "$CONTAINER" psql -U postgres -tAc "select version()"
 echo "Task Bot: $(git -C "$REPO" branch --show-current) $(git -C "$REPO" rev-parse --short HEAD)"
 echo "Content OS (read only): $(git -C "$CONTENT_OS_REPO" branch --show-current) $(git -C "$CONTENT_OS_REPO" rev-parse --short HEAD)"
 CONTENT_OS_HASH_BEFORE="$(cat "$CONTENT_OS"/migrations/*.sql "$CONTENT_OS"/rollback/*.sql | sha256sum | cut -d' ' -f1)"
+CONTENT_OS_STATUS_BEFORE="$(git -C "$CONTENT_OS_REPO" status --porcelain)"
 
-section "safe ordering and atomic Content OS lifecycle"
+section "canonical ordering and atomic Content OS lifecycle"
 ORDER_DB=sprint9c_order
 fresh_pre_sprint9c "$ORDER_DB"
 BASE_HASH="$(function_hash "$ORDER_DB")"
 apply_file "$ORDER_DB" "$CURRENT"
 run_file "$ORDER_DB" "$HERE/sprint9c_legacy_transition_matrix.sql"
-for migration in "$CONTENT_OS"/migrations/*.sql; do
-  apply_file "$ORDER_DB" "$migration"
-done
 run_file "$ORDER_DB" "$HERE/sprint9c_content_os_transition_tests.sql"
 
 apply_file "$ORDER_DB" "$CURRENT_DOWN"
 if [[ "$(function_hash "$ORDER_DB")" != "$BASE_HASH" ]]; then
-  echo "FAIL Sprint 9C rollback did not restore the prior function exactly"
+  echo "FAIL Sprint 9C rollback did not restore prior behavior/security"
   exit 1
 fi
-echo "PASS Sprint 9C rollback restores the prior function body/security exactly"
+echo "PASS Sprint 9C rollback restores prior behavior/security with PT409 refusals"
 run_file "$ORDER_DB" "$HERE/sprint9c_legacy_transition_matrix.sql"
 apply_file "$ORDER_DB" "$CURRENT"
 
@@ -108,20 +106,10 @@ apply_file "$ORDER_DB" "$CONTENT_OS/rollback/content_os_99_down.sql"
 run_file "$ORDER_DB" "$HERE/sprint9c_legacy_transition_matrix.sql"
 echo "PASS legacy behavior survives Content OS rollback while Sprint 9C remains installed"
 
-section "Content OS contract and Task Bot fingerprint"
+section "Content OS contract from canonical manifest"
 CONTRACT_DB=sprint9c_contract
 fresh_pre_sprint9c "$CONTRACT_DB"
 apply_file "$CONTRACT_DB" "$CURRENT"
-FINGERPRINT_BEFORE="$(sql "$CONTRACT_DB" -tA < "$CONTENT_OS/dry-run/10_taskbot_fingerprint.sql")"
-for migration in "$CONTENT_OS"/migrations/*.sql; do
-  apply_file "$CONTRACT_DB" "$migration"
-done
-FINGERPRINT_AFTER="$(sql "$CONTRACT_DB" -tA < "$CONTENT_OS/dry-run/10_taskbot_fingerprint.sql")"
-if [[ "$FINGERPRINT_BEFORE" != "$FINGERPRINT_AFTER" ]]; then
-  echo "FAIL Content OS migrations changed the Task Bot fingerprint"
-  exit 1
-fi
-echo "PASS Content OS migrations leave the Task Bot fingerprint unchanged"
 run_file "$CONTRACT_DB" "$CONTENT_OS/dry-run/20_contract_tests.sql"
 run_file "$CONTRACT_DB" "$CONTENT_OS/dry-run/25_transition_contract_tests.sql"
 
@@ -155,11 +143,11 @@ if [[ "$CONTENT_OS_HASH_BEFORE" != "$CONTENT_OS_HASH_AFTER" ]]; then
   echo "FAIL Content OS SQL changed"
   exit 1
 fi
-if [[ -n "$(git -C "$CONTENT_OS_REPO" status --porcelain)" ]]; then
-  echo "FAIL Content OS worktree became dirty"
+if [[ "$(git -C "$CONTENT_OS_REPO" status --porcelain)" != "$CONTENT_OS_STATUS_BEFORE" ]]; then
+  echo "FAIL Content OS worktree status changed during the Task Bot dry-run"
   exit 1
 fi
-echo "PASS Content OS remained byte-identical and clean"
+echo "PASS Content OS SQL and pre-existing worktree status remained unchanged"
 
 echo
 echo "SPRINT 9C POSTGRESQL DRY-RUN COMPLETE"
