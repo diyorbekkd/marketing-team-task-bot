@@ -1,6 +1,6 @@
 -- Rollback for 20261014130332_content_os_task_transition_compatibility.sql.
--- NOT a migration. Restores the previous transition function byte-for-byte
--- from 20260909090000_next_product_phase.sql and clears the Sprint 9C comment.
+-- NOT a migration. Restores the previous transition behavior while retaining
+-- the non-retryable PT409 business-refusal contract, then clears the comment.
 -- Existing task state and append-only history are intentionally untouched.
 
 create or replace function public.transition_task_with_events(
@@ -33,7 +33,7 @@ begin
     or (v_old_status = 'REVIEW' and p_new_status in ('DONE', 'REVISION', 'CANCELLED'))
     or (v_old_status = 'REVISION' and p_new_status in ('IN_PROGRESS', 'BLOCKED', 'REVIEW', 'CANCELLED'))
     or (v_old_status in ('DONE', 'CANCELLED') and p_new_status = 'ASSIGNED')
-  ) then raise exception 'task status changed concurrently' using errcode = '40001'; end if;
+  ) then raise exception 'task status changed concurrently' using errcode = 'PT409'; end if;
   if p_new_status = 'BLOCKED' and nullif(btrim(p_reason), '') is null then
     raise exception 'blocked reason is required' using errcode = '22023';
   end if;

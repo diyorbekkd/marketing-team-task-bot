@@ -18,6 +18,9 @@
 -- failure on either task or any audit insert rolls back the whole operation;
 -- a response-loss retry sees the already-reached Blog status and is a no-op.
 -- No task is created by this function.
+-- Expected business refusals use PostgREST's non-retryable PT409 code. A real
+-- database-raised 40001 remains untouched and can still be treated as a
+-- transient serialization failure by infrastructure/callers.
 --
 -- Schema-order safety is intentional: the OUTER Content OS condition tests
 -- only to_regprocedure(). Content OS functions are planned/called only in a
@@ -78,7 +81,7 @@ begin
     and to_regprocedure('public.content_os_completion_allowed(uuid)') is not null then
     if public.content_os_is_task(p_task_id)
       and not public.content_os_completion_allowed(p_task_id) then
-      raise exception 'task status changed concurrently' using errcode = '40001';
+      raise exception 'task status changed concurrently' using errcode = 'PT409';
     end if;
   end if;
 
@@ -92,13 +95,13 @@ begin
     if public.content_os_is_task(p_task_id) then
       if p_new_status = 'DONE' then
         if public.content_os_requires_review(p_task_id) then
-          raise exception 'task status changed concurrently' using errcode = '40001';
+          raise exception 'task status changed concurrently' using errcode = 'PT409';
         end if;
         if v_task.assignee_id <> p_actor_id then
           raise exception 'only the assignee may complete this Content OS task' using errcode = '42501';
         end if;
         if not public.content_os_completion_allowed(p_task_id) then
-          raise exception 'task status changed concurrently' using errcode = '40001';
+          raise exception 'task status changed concurrently' using errcode = 'PT409';
         end if;
         if exists (
           select 1 from public.task_checklists c
@@ -122,7 +125,7 @@ begin
           limit 1;
 
           if v_review_task_id is null then
-            raise exception 'source Blog revision has no Head Review provenance' using errcode = '40001';
+            raise exception 'source Blog revision has no Head Review provenance' using errcode = 'PT409';
           end if;
 
           select * into v_review_task
@@ -133,7 +136,7 @@ begin
           if not found
             or v_review_task.status <> 'BLOCKED'
             or not public.content_os_is_source_blog_for_head_review(p_task_id, v_review_task_id) then
-            raise exception 'Head Review state changed concurrently' using errcode = '40001';
+            raise exception 'Head Review state changed concurrently' using errcode = 'PT409';
           end if;
 
           v_review_new_status := 'ASSIGNED';
@@ -159,7 +162,7 @@ begin
         if not found
           or v_review_task.status <> 'IN_PROGRESS'
           or not public.content_os_revision_allowed(p_task_id, p_actor_id, v_review_task_id) then
-          raise exception 'Head Review state changed concurrently' using errcode = '40001';
+          raise exception 'Head Review state changed concurrently' using errcode = 'PT409';
         end if;
 
         v_review_new_status := 'BLOCKED';
@@ -169,7 +172,7 @@ begin
     end if;
   end if;
 
-  if not v_allowed then raise exception 'task status changed concurrently' using errcode = '40001'; end if;
+  if not v_allowed then raise exception 'task status changed concurrently' using errcode = 'PT409'; end if;
   if p_new_status = 'BLOCKED' and nullif(btrim(p_reason), '') is null then
     raise exception 'blocked reason is required' using errcode = '22023';
   end if;
@@ -249,3 +252,38 @@ $$;
 
 comment on function public.transition_task_with_events(uuid, uuid, text, text) is
   'Task lifecycle transition with audit events. Legacy matrix for every task; Content OS predicates permit assignee-only direct completion for non-review-required tasks and provenance-gated Blog revision. Blog revision atomically parks the same Head Review as BLOCKED; Blog resubmission atomically restores it as ASSIGNED.';
+
+-- The first eight migrations are already live and therefore immutable. Their
+-- PL/pgSQL bodies used a manually raised serialization_failure for ordinary
+-- business refusals. Normalize only those explicit raises in currently
+-- effective Task Bot functions. Engine-generated serialization failures are
+-- not caught or rewritten and retain SQLSTATE 40001.
+do $normalize_task_bot_business_errors$
+declare
+  v_function record;
+  v_definition text;
+begin
+  for v_function in
+    select p.oid
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+    where n.nspname in ('public', 'private')
+      and p.prosrc ~* 'errcode[[:space:]]*=[[:space:]]*''40001'''
+    order by n.nspname, p.proname, pg_catalog.pg_get_function_identity_arguments(p.oid)
+  loop
+    v_definition := pg_catalog.pg_get_functiondef(v_function.oid);
+    v_definition := replace(v_definition, '40001', 'PT409');
+    execute v_definition;
+  end loop;
+
+  if exists (
+    select 1
+    from pg_catalog.pg_proc p
+    join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+    where n.nspname in ('public', 'private')
+      and p.prosrc ~* 'errcode[[:space:]]*=[[:space:]]*''40001'''
+  ) then
+    raise exception 'Task Bot business SQLSTATE normalization was incomplete';
+  end if;
+end
+$normalize_task_bot_business_errors$;

@@ -6,11 +6,11 @@ import type {
   MarketingRepository,
   TelegramIdentityInput,
 } from "@/application/ports/marketing-repository";
-import { ApplicationError } from "@/application/errors";
 import type { TeamRole } from "@/domain/permissions";
 import type { TaskStatus } from "@/domain/task";
 import type { ReminderType } from "@/domain/reminders";
 import { canonicalTelegramUsername } from "@/domain/telegram-username";
+import { mapDataError } from "@/server/repositories/database-errors";
 import type {
   DeadlineChangeRequest,
   PostingChecklist,
@@ -217,19 +217,7 @@ function rpcRecord(data: unknown): unknown {
 }
 
 function throwDataError(error: Readonly<{ code?: string; message: string }> | null, fallback: string): never {
-  if (error?.code === "23505" || error?.code === "40001") {
-    throw new ApplicationError("CONFLICT", "This operation conflicts with a newer or existing record.");
-  }
-  if (error?.code === "PGRST116" || error?.code === "P0002") {
-    throw new ApplicationError("NOT_FOUND", fallback);
-  }
-  if (error?.code === "42501") {
-    throw new ApplicationError("FORBIDDEN", "The database rejected this operation.");
-  }
-  if (error?.code === "22023" || error?.code === "23514") {
-    throw new ApplicationError("INVALID_INPUT", "The database rejected invalid input.");
-  }
-  throw new ApplicationError("INTEGRATION_UNAVAILABLE", fallback);
+  throw mapDataError(error, fallback);
 }
 
 export class SupabaseMarketingRepository implements MarketingRepository {

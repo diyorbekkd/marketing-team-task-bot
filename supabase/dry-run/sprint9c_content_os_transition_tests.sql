@@ -218,7 +218,7 @@ select sprint9c.ok(sprint9c.try_transition(sprint9c.id('normal_wrong_actor'), sp
   'normal Content OS direct completion rejects the wrong actor');
 select sprint9c.ok(sprint9c.try_transition(sprint9c.id('normal'), sprint9c.id('author'), 'DONE') = 'OK',
   'normal Content OS task completes IN_PROGRESS -> DONE by its assignee');
-select sprint9c.ok(sprint9c.try_transition(sprint9c.id('review_required'), sprint9c.id('author'), 'DONE') = '40001',
+select sprint9c.ok(sprint9c.try_transition(sprint9c.id('review_required'), sprint9c.id('author'), 'DONE') = 'PT409',
   'review-required Content OS task has no direct DONE shortcut');
 select sprint9c.ok(sprint9c.try_transition(sprint9c.id('review_required'), sprint9c.id('author'), 'REVIEW') = 'OK',
   'review-required Content OS task keeps IN_PROGRESS -> REVIEW');
@@ -283,7 +283,7 @@ select sprint9c.ok(
   (select count(*) from public.task_revisions where task_id = sprint9c.id('blog')) = 1
   and (select count(*) from public.task_events where task_id = sprint9c.id('head_review') and event_type = 'TASK_BLOCKED') = 1,
   'revision retry creates no duplicate history');
-select sprint9c.ok(sprint9c.try_transition(sprint9c.id('head_review'), sprint9c.id('reviewer'), 'DONE') = '40001',
+select sprint9c.ok(sprint9c.try_transition(sprint9c.id('head_review'), sprint9c.id('reviewer'), 'DONE') = 'PT409',
   'Head Review cannot complete while its source Blog is in REVISION');
 reset role;
 
@@ -291,11 +291,11 @@ reset role;
 -- approved BLOCKED state above.
 select sprint9c.force('head_review', 'IN_PROGRESS');
 set role service_role;
-select sprint9c.ok(sprint9c.try_transition(sprint9c.id('head_review'), sprint9c.id('reviewer'), 'DONE') = '40001',
+select sprint9c.ok(sprint9c.try_transition(sprint9c.id('head_review'), sprint9c.id('reviewer'), 'DONE') = 'PT409',
   'content_os_completion_allowed blocks an IN_PROGRESS Head Review while Blog is REVISION');
 select sprint9c.ok(sprint9c.try_transition(sprint9c.id('head_review'), sprint9c.id('reviewer'), 'REVIEW') = 'OK',
   'misrouted Head Review can still enter the legacy REVIEW state');
-select sprint9c.ok(sprint9c.try_transition(sprint9c.id('head_review'), sprint9c.id('reviewer'), 'DONE') = '40001',
+select sprint9c.ok(sprint9c.try_transition(sprint9c.id('head_review'), sprint9c.id('reviewer'), 'DONE') = 'PT409',
   'content_os_completion_allowed also blocks legacy REVIEW -> DONE while Blog is REVISION');
 reset role;
 select sprint9c.force('head_review', 'BLOCKED');

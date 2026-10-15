@@ -77,10 +77,20 @@ describe("Sprint 9C finalized Content OS transitions", () => {
     expect(sql).toContain("case when v_review_new_status = 'BLOCKED' then 'TASK_BLOCKED' else 'TASK_UNBLOCKED' end");
   });
 
-  it("restores the pre-Sprint function exactly on rollback", () => {
+  it("restores pre-Sprint behavior while retaining the non-retryable rejection code", () => {
     const start = nextPhase.indexOf("create or replace function public.transition_task_with_events(");
-    const previous = nextPhase.slice(start, nextPhase.indexOf("create function public.toggle_posting_checklist_item")).trimEnd();
+    const previous = nextPhase
+      .slice(start, nextPhase.indexOf("create function public.toggle_posting_checklist_item"))
+      .replaceAll("40001", "PT409")
+      .trimEnd();
     expect(rollback).toContain(previous);
+  });
+
+  it("normalizes only manually raised business conflicts and keeps true 40001 failures distinct", () => {
+    expect(sql).toContain("using errcode = 'PT409'");
+    expect(sql).toContain("p.prosrc ~* 'errcode[[:space:]]*=[[:space:]]*''40001'''");
+    expect(sql).toContain("pg_catalog.pg_get_functiondef(v_function.oid)");
+    expect(sql).not.toContain("exception when serialization_failure");
   });
 
   it("does not expose these integration-only transitions through ordinary Task Bot actions", () => {

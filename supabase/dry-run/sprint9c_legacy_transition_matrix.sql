@@ -94,7 +94,7 @@ begin
         or (from_status = 'REVIEW' and to_status in ('DONE', 'REVISION', 'CANCELLED'))
         or (from_status = 'REVISION' and to_status in ('IN_PROGRESS', 'BLOCKED', 'REVIEW', 'CANCELLED'))
         or (from_status in ('DONE', 'CANCELLED') and to_status = 'ASSIGNED')
-        then 'OK' else '40001' end;
+        then 'OK' else 'PT409' end;
       insert into sprint9c_legacy.results values (
         p_actor_key,
         from_status,

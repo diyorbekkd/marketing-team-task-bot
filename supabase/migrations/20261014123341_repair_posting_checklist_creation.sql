@@ -32,7 +32,7 @@ begin
 
   if v_checklist_id is null then
     raise exception 'posting checklist conflict could not be resolved'
-      using errcode = '40001';
+      using errcode = 'PT409';
   end if;
 
   insert into public.task_checklist_items (checklist_id, label, position)
