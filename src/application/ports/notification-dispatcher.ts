@@ -24,20 +24,23 @@ export interface BulkAssignmentNotificationInput {
   readonly assignee: User;
 }
 
-export type WorkflowNotificationEvent =
-  | "DEADLINE_CHANGE_REQUESTED"
-  | "DEADLINE_CHANGE_APPROVED"
-  | "DEADLINE_CHANGE_REJECTED"
-  | "DEADLINE_CHANGED"
-  | "REASSIGN_REQUESTED"
-  | "REASSIGN_APPROVED"
-  | "REASSIGN_REJECTED"
-  | "TASK_REASSIGNED"
-  | "REVIEW_REQUESTED"
-  | "TASK_ACCEPTED"
-  | "TASK_COMPLETED"
-  | "REVISION_REQUESTED"
-  | "TASK_BLOCKED";
+export const WORKFLOW_NOTIFICATION_EVENTS = [
+  "DEADLINE_CHANGE_REQUESTED",
+  "DEADLINE_CHANGE_APPROVED",
+  "DEADLINE_CHANGE_REJECTED",
+  "DEADLINE_CHANGED",
+  "REASSIGN_REQUESTED",
+  "REASSIGN_APPROVED",
+  "REASSIGN_REJECTED",
+  "TASK_REASSIGNED",
+  "REVIEW_REQUESTED",
+  "TASK_ACCEPTED",
+  "TASK_COMPLETED",
+  "REVISION_REQUESTED",
+  "TASK_BLOCKED",
+] as const;
+
+export type WorkflowNotificationEvent = (typeof WORKFLOW_NOTIFICATION_EVENTS)[number];
 
 export interface WorkflowNotificationInput {
   readonly event: WorkflowNotificationEvent;

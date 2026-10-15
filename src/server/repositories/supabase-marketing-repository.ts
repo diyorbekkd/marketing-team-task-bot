@@ -2,12 +2,14 @@ import "server-only";
 
 import { z } from "zod";
 import type {
-  ContentOsLoginChallengeStatus,
+  ContentOsLoginChallenge,
   ContentOsLoginDecision,
   CreateTaskRecord,
   MarketingRepository,
+  TaskNotificationOutboxEntry,
   TelegramIdentityInput,
 } from "@/application/ports/marketing-repository";
+import { WORKFLOW_NOTIFICATION_EVENTS } from "@/application/ports/notification-dispatcher";
 import type { TeamRole } from "@/domain/permissions";
 import type { TaskStatus } from "@/domain/task";
 import { TaskEventTypeSchema } from "@/domain/task-events";
@@ -145,10 +147,20 @@ const RecurringDefinitionRowSchema = z.object({
 
 const ContentOsLoginChallengeStatusSchema = z.object({
   status: z.enum(["PENDING", "APPROVED", "CONSUMED", "CANCELLED", "EXPIRED", "UNAVAILABLE"]),
+  display_code: z.string().regex(/^\d{6}$/).nullable(),
 });
 
 const ContentOsLoginDecisionSchema = z.object({
   status: z.enum(["APPROVED", "CANCELLED", "DENIED", "EXPIRED", "UNAVAILABLE"]),
+});
+
+const TaskNotificationOutboxRowSchema = z.object({
+  id: z.string().uuid(),
+  task_event_id: z.string().uuid(),
+  event_type: z.enum(WORKFLOW_NOTIFICATION_EVENTS),
+  recipient_user_id: z.string().uuid(),
+  payload: z.record(z.string(), z.unknown()),
+  attempts: z.number().int().min(1).max(5),
 });
 
 function mapUser(input: unknown): User {
@@ -356,12 +368,13 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return mapUser(rpcRecord(data));
   }
 
-  async getContentOsLoginChallengeStatus(challengeId: string): Promise<ContentOsLoginChallengeStatus> {
+  async getContentOsLoginChallengeStatus(challengeId: string): Promise<ContentOsLoginChallenge> {
     const { data, error } = await this.client.rpc("content_os_auth_get_challenge_status", {
       p_challenge_id: challengeId,
     });
     if (error || !data) throwDataError(error, "Unable to inspect Content OS login request.");
-    return ContentOsLoginChallengeStatusSchema.parse(rpcRecord(data)).status;
+    const row = ContentOsLoginChallengeStatusSchema.parse(rpcRecord(data));
+    return { status: row.status, displayCode: row.display_code };
   }
 
   async approveContentOsLoginChallenge(input: {
@@ -408,6 +421,14 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     const { data, error } = await this.client.from("tasks").select("*").eq("id", taskId).maybeSingle();
     if (error) throwDataError(error, "Unable to load task.");
     return data ? mapTask(data) : null;
+  }
+
+  async getContentTaskTypeCode(taskId: string): Promise<string | null> {
+    const { data, error } = await this.client.rpc("content_os_task_type_code", {
+      p_task_id: taskId,
+    });
+    if (error) throwDataError(error, "Unable to inspect task provenance.");
+    return z.string().min(1).nullable().parse(data);
   }
 
   async listTasks(): Promise<Task[]> {
@@ -496,6 +517,16 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       .order("created_at");
     if (error) throwDataError(error, "Unable to load task history.");
     return (data ?? []).map(mapEvent);
+  }
+
+  async getTaskEvent(eventId: string): Promise<TaskEvent | null> {
+    const { data, error } = await this.client
+      .from("task_events")
+      .select("*")
+      .eq("id", eventId)
+      .maybeSingle();
+    if (error) throwDataError(error, "Unable to load task event.");
+    return data ? mapEvent(data) : null;
   }
 
   async listAllTaskEvents(): Promise<TaskEvent[]> {
@@ -635,6 +666,43 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       completed_at: new Date().toISOString(),
     }).eq("dedupe_key", input.dedupeKey).eq("recipient_user_id", input.recipientUserId);
     if (error) throwDataError(error, "Unable to complete task notification.");
+  }
+
+  async claimTaskNotificationOutbox(input: {
+    workerId: string;
+    limit: number;
+  }): Promise<readonly TaskNotificationOutboxEntry[]> {
+    const { data, error } = await this.client.rpc("claim_task_notification_outbox", {
+      p_worker_id: input.workerId,
+      p_limit: input.limit,
+    });
+    if (error) throwDataError(error, "Unable to claim notification outbox rows.");
+    return (data ?? []).map((value) => {
+      const row = TaskNotificationOutboxRowSchema.parse(value);
+      return {
+        id: row.id,
+        taskEventId: row.task_event_id,
+        eventType: row.event_type,
+        recipientUserId: row.recipient_user_id,
+        payload: row.payload,
+        attempts: row.attempts,
+      };
+    });
+  }
+
+  async completeTaskNotificationOutbox(input: {
+    deliveryId: string;
+    workerId: string;
+    succeeded: boolean;
+    error?: string;
+  }): Promise<void> {
+    const { error } = await this.client.rpc("complete_task_notification_outbox", {
+      p_delivery_id: input.deliveryId,
+      p_worker_id: input.workerId,
+      p_succeeded: input.succeeded,
+      p_error: input.error ?? null,
+    });
+    if (error) throwDataError(error, "Unable to complete notification outbox row.");
   }
 
   async getRecurringDefinitionForTask(taskId: string): Promise<RecurringDefinition | null> {

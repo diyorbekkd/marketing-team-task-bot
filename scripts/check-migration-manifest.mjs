@@ -27,6 +27,7 @@ export const EXPECTED_MIGRATIONS = [
   "20261014130332_content_os_task_transition_compatibility.sql",
   "20261015121850_content_os_telegram_web_auth.sql",
   "20261015132700_sprint_10b_team_permissions_task_management.sql",
+  "20261015151900_sprint_10d_workflow_auth_notification_hardening.sql",
 ];
 
 export const IMPORTED_CONTENT_OS_HASHES = new Map([
@@ -61,6 +62,7 @@ export const EXPECTED_MIGRATION_HASHES = new Map([
   ["20261014130332_content_os_task_transition_compatibility.sql", "882702534f916c29d8816b2bdf76b716b129694181d1d6092bc9f091bba64b77"],
   ["20261015121850_content_os_telegram_web_auth.sql", "b2901041e7f7a0b5fd32ecdfb83107d614d226624eb7e0f5ebb0e5534b14ce6e"],
   ["20261015132700_sprint_10b_team_permissions_task_management.sql", "f925b3c8d35fffb2b759b0474759384b302f16eec0e5fbf492b6889f52529e0a"],
+  ["20261015151900_sprint_10d_workflow_auth_notification_hardening.sql", "173af606da0cde3d04f43a0cf279e9560f49f7dc0a25f241cda0406827af0e87"],
 ]);
 
 export function checkMigrationManifest(migrationsDir = join(ROOT, "supabase", "migrations")) {

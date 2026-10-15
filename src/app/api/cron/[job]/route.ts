@@ -4,7 +4,14 @@ import { isAuthorizedCronRequest } from "@/server/auth/cron";
 import { ConfigurationError } from "@/server/config";
 import { errorResponse } from "@/server/http/errors";
 
-const JobSchema = z.enum(["daily-morning", "daily-evening", "weekly", "recurring", "reminders"]);
+const JobSchema = z.enum([
+  "daily-morning",
+  "daily-evening",
+  "weekly",
+  "recurring",
+  "reminders",
+  "notifications",
+]);
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +19,9 @@ export async function GET(request: Request, context: { params: Promise<{ job: st
   try {
     if (!isAuthorizedCronRequest(request)) return Response.json({ error: "Unauthorized." }, { status: 401 });
     const job = JobSchema.parse((await context.params).job);
-    const result = job === "recurring"
+    const result = job === "notifications"
+      ? await getMarketingService().deliverTaskNotificationOutbox()
+      : job === "recurring"
       ? await getMarketingService().generateDueRecurringTasks()
       : job === "reminders"
         ? await getReminderService().deliver()

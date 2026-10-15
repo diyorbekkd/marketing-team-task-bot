@@ -3,6 +3,7 @@ import {
   assertCanChangeDeadline,
   canChangeDeadline,
   canArchiveTask,
+  canCancelTask,
   canRequestDeadlineChange,
   canRequestReassign,
   canRestoreTask,
@@ -76,6 +77,25 @@ describe("task permission foundation", () => {
     expect(canReassignTask(head, task)).toBe(true);
     expect(canReviewTask(head, task)).toBe(true);
     expect(canEditTask(head, task, "assignee")).toBe(true);
+  });
+
+  it("does not derive generic creator rights from Content OS creator_id", () => {
+    const blog = { ...task, assigneeId: creator.userId, contentTaskTypeCode: "BLOG" };
+    expect(canEditTask(creator, blog, "title")).toBe(false);
+    expect(canChangeDeadline(creator, blog)).toBe(false);
+    expect(canReassignTask(creator, blog)).toBe(false);
+    expect(canReviewTask(creator, blog)).toBe(false);
+    expect(canCancelTask(creator, blog)).toBe(false);
+    expect(canRequestDeadlineChange(creator, blog)).toBe(true);
+    expect(canRequestReassign(creator, blog)).toBe(true);
+  });
+
+  it("gives a Head Review authority only to its assignee and active Head", () => {
+    const headReview = { ...task, contentTaskTypeCode: "HEAD_REVIEW" };
+    expect(canReviewTask(creator, headReview)).toBe(false);
+    expect(canReviewTask(assignee, headReview)).toBe(true);
+    expect(canReviewTask(head, headReview)).toBe(true);
+    expect(canReviewTask(unrelatedMember, headReview)).toBe(false);
   });
 
   it("denies a team member unrelated to the task", () => {

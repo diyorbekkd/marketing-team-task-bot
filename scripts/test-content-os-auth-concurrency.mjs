@@ -57,7 +57,7 @@ try {
 
   redeemChallenge = query(`
     set role service_role;
-    select challenge_id from public.content_os_auth_create_challenge(${sqlLiteral(verifierHash)});
+    select challenge_id from public.content_os_auth_create_challenge(${sqlLiteral(verifierHash)}, ${sqlLiteral("e".repeat(64))});
   `).split("\n").at(-1);
   query(`
     set role service_role;
@@ -79,7 +79,7 @@ try {
 
   approvalChallenge = query(`
     set role service_role;
-    select challenge_id from public.content_os_auth_create_challenge(${sqlLiteral("d".repeat(64))});
+    select challenge_id from public.content_os_auth_create_challenge(${sqlLiteral("d".repeat(64))}, ${sqlLiteral("f".repeat(64))});
   `).split("\n").at(-1);
   const approvalResults = await Promise.all([
     queryAsync(`set role service_role; select status from public.content_os_auth_approve_challenge(${sqlLiteral(approvalChallenge)}::uuid, ${telegramOne});`),

@@ -96,8 +96,17 @@ type TaskNotificationDeliveryRow = {
   id: string;
   dedupe_key: string;
   recipient_user_id: string;
-  status: "CLAIMED" | "SENT" | "FAILED";
+  status: "PENDING" | "SENDING" | "SENT" | "FAILED";
   failure_reason: string | null;
+  task_event_id: string | null;
+  event_type: string | null;
+  payload: Json;
+  attempts: number;
+  next_attempt_at: string;
+  lease_expires_at: string | null;
+  worker_id: string | null;
+  sent_at: string | null;
+  last_error: string | null;
   created_at: string;
   completed_at: string | null;
 }
@@ -302,12 +311,12 @@ export interface Database {
         Returns: TaskRow;
       };
       content_os_auth_create_challenge: {
-        Args: { p_verifier_hash: string };
-        Returns: { challenge_id: string; status: string; expires_at: string }[];
+        Args: { p_verifier_hash: string; p_rate_key_hash: string };
+        Returns: { challenge_id: string; status: string; expires_at: string; display_code: string }[];
       };
       content_os_auth_get_challenge_status: {
         Args: { p_challenge_id: string };
-        Returns: { status: string; expires_at: string | null }[];
+        Returns: { status: string; expires_at: string | null; display_code: string | null }[];
       };
       content_os_auth_approve_challenge: {
         Args: { p_challenge_id: string; p_telegram_user_id: string };
@@ -342,6 +351,30 @@ export interface Database {
       content_os_auth_revoke_session: {
         Args: { p_session_token_hash: string };
         Returns: boolean;
+      };
+      content_os_task_type_code: {
+        Args: { p_task_id: string };
+        Returns: string | null;
+      };
+      claim_task_notification_outbox: {
+        Args: { p_worker_id: string; p_limit: number };
+        Returns: {
+          id: string;
+          task_event_id: string;
+          event_type: string;
+          recipient_user_id: string;
+          payload: Json;
+          attempts: number;
+        }[];
+      };
+      complete_task_notification_outbox: {
+        Args: {
+          p_delivery_id: string;
+          p_worker_id: string;
+          p_succeeded: boolean;
+          p_error: string | null;
+        };
+        Returns: TaskNotificationDeliveryRow;
       };
     };
     Enums: Record<never, never>;

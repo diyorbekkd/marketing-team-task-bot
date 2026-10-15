@@ -3,15 +3,16 @@ import type { ActorContext, TeamRole } from "@/domain/permissions";
 import {
   canApproveDeadlineRequest,
   canArchiveTask,
+  canCancelTask,
   canDirectChangeDeadline,
   canDirectReassign,
   canEditTask,
   canRequestDeadlineChange,
   canRequestReassign,
+  canReviewTask,
   canRestoreTask,
   canViewTask,
   isAssignee,
-  isCreator,
   isHead,
 } from "@/domain/permissions";
 import type { DeadlineChangeRequest, ReassignRequest, Task, TaskArchive, User } from "@/domain/models";
@@ -95,12 +96,17 @@ function actorFromUser(user: User): ActorContext {
   return { userId: user.id, role: user.role, isActive: user.isActive };
 }
 
-function taskAccess(task: Task, archive: TaskArchive | null = null) {
+function taskAccess(
+  task: Task,
+  archive: TaskArchive | null = null,
+  contentTaskTypeCode: string | null = null,
+) {
   return {
     creatorId: task.creatorId,
     assigneeId: task.assigneeId,
     status: task.status,
     isArchived: archive !== null,
+    contentTaskTypeCode,
   };
 }
 
@@ -137,12 +143,12 @@ export class MarketingService {
    * becomes an account-enumeration oracle. Approval itself is revalidated and
    * locked by PostgreSQL when the authenticated Telegram callback arrives.
    */
-  async canConfirmContentOsLogin(telegramUserId: string, challengeId: string): Promise<boolean> {
-    const [user, status] = await Promise.all([
+  async contentOsLoginConfirmationCode(telegramUserId: string, challengeId: string): Promise<string | null> {
+    const [user, challenge] = await Promise.all([
       this.repository.getUserByTelegramId(telegramUserId),
       this.repository.getContentOsLoginChallengeStatus(challengeId),
     ]);
-    return Boolean(user?.isActive) && status === "PENDING";
+    return user?.isActive && challenge.status === "PENDING" ? challenge.displayCode : null;
   }
 
   async approveContentOsLogin(telegramUserId: string, challengeId: string): Promise<boolean> {
@@ -648,9 +654,9 @@ export class MarketingService {
 
   async editTask(actor: User, taskId: string, input: unknown): Promise<Task> {
     const parsed = EditTaskInputSchema.parse(input);
-    const { task, archive } = await this.requireVisibleTask(actor, taskId);
-    if (!canEditTask(actorFromUser(actor), taskAccess(task, archive))) {
-      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may edit task content.");
+    const { task, archive, contentTaskTypeCode } = await this.requireVisibleTask(actor, taskId);
+    if (!canEditTask(actorFromUser(actor), taskAccess(task, archive, contentTaskTypeCode))) {
+      throw new ApplicationError("FORBIDDEN", "Only Head or the creator of a manual task may edit task content.");
     }
     return this.repository.updateTaskContent({
       taskId,
@@ -663,9 +669,9 @@ export class MarketingService {
 
   async directReassignTask(actor: User, taskId: string, input: unknown): Promise<Task> {
     const parsed = DirectReassignInputSchema.parse(input);
-    const { task, archive } = await this.requireVisibleTask(actor, taskId);
-    if (!canDirectReassign(actorFromUser(actor), taskAccess(task, archive))) {
-      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may directly reassign this task.");
+    const { task, archive, contentTaskTypeCode } = await this.requireVisibleTask(actor, taskId);
+    if (!canDirectReassign(actorFromUser(actor), taskAccess(task, archive, contentTaskTypeCode))) {
+      throw new ApplicationError("FORBIDDEN", "Only Head or the creator of a manual task may directly reassign this task.");
     }
     const newAssignee = await this.repository.getUserById(parsed.assigneeId);
     if (!newAssignee?.isActive) {
@@ -687,9 +693,9 @@ export class MarketingService {
 
   async directChangeDeadline(actor: User, taskId: string, input: unknown): Promise<Task> {
     const parsed = DirectDeadlineInputSchema.parse(input);
-    const { task, archive } = await this.requireVisibleTask(actor, taskId);
-    if (!canDirectChangeDeadline(actorFromUser(actor), taskAccess(task, archive))) {
-      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may directly change this deadline.");
+    const { task, archive, contentTaskTypeCode } = await this.requireVisibleTask(actor, taskId);
+    if (!canDirectChangeDeadline(actorFromUser(actor), taskAccess(task, archive, contentTaskTypeCode))) {
+      throw new ApplicationError("FORBIDDEN", "Only Head or the creator of a manual task may directly change this deadline.");
     }
     if (new Date(parsed.deadline).getTime() <= Date.now()) {
       throw new ApplicationError("INVALID_INPUT", "New deadline must be in the future.");
@@ -710,16 +716,16 @@ export class MarketingService {
 
   async archiveTask(actor: User, taskId: string, input: unknown = {}): Promise<TaskArchive> {
     const parsed = ArchiveTaskInputSchema.parse(input);
-    const { task, archive } = await this.requireVisibleTask(actor, taskId);
-    if (!canArchiveTask(actorFromUser(actor), taskAccess(task, archive))) {
+    const { task, archive, contentTaskTypeCode } = await this.requireVisibleTask(actor, taskId);
+    if (!canArchiveTask(actorFromUser(actor), taskAccess(task, archive, contentTaskTypeCode))) {
       throw new ApplicationError("FORBIDDEN", "Only Head may archive an active task.");
     }
     return this.repository.archiveTask({ taskId, actorId: actor.id, reason: parsed.reason });
   }
 
   async restoreTask(actor: User, taskId: string): Promise<Task> {
-    const { task, archive } = await this.requireVisibleTask(actor, taskId);
-    if (!canRestoreTask(actorFromUser(actor), taskAccess(task, archive))) {
+    const { task, archive, contentTaskTypeCode } = await this.requireVisibleTask(actor, taskId);
+    if (!canRestoreTask(actorFromUser(actor), taskAccess(task, archive, contentTaskTypeCode))) {
       throw new ApplicationError("FORBIDDEN", "Only Head may restore an archived task.");
     }
     return this.repository.restoreTask({ taskId, actorId: actor.id });
@@ -741,9 +747,9 @@ export class MarketingService {
 
   async performTaskAction(actor: User, taskId: string, input: unknown): Promise<Task> {
     const action = TaskActionInputSchema.parse(input);
-    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    const { task, archive, contentTaskTypeCode } = await this.requireVisibleTask(actor, taskId);
     const actorContext = actorFromUser(actor);
-    const access = taskAccess(task, archive);
+    const access = taskAccess(task, archive, contentTaskTypeCode);
 
     if (archive) {
       throw new ApplicationError("CONFLICT", "Restore this task before changing its workflow state.");
@@ -755,11 +761,18 @@ export class MarketingService {
 
     const assigneeAction = ["ACCEPT", "BLOCK", "RESUME", "SUBMIT_REVIEW"].includes(action.action);
     const reviewerAction = ["APPROVE", "REQUEST_REVISION"].includes(action.action);
-    if (assigneeAction && !isAssignee(actorContext, access)) {
+    const headReviewHeadAction = contentTaskTypeCode === "HEAD_REVIEW" && isHead(actorContext);
+    if (assigneeAction && !isAssignee(actorContext, access) && !headReviewHeadAction) {
       throw new ApplicationError("FORBIDDEN", "Only the assignee may perform this action.");
     }
-    if (reviewerAction && !isHead(actorContext) && !isCreator(actorContext, access)) {
-      throw new ApplicationError("FORBIDDEN", "Only the creator or Head may review this task.");
+    if (reviewerAction && !canReviewTask(actorContext, access)) {
+      throw new ApplicationError("FORBIDDEN", "You do not have review authority for this task.");
+    }
+    if (action.action === "APPROVE" && contentTaskTypeCode === "BLOG") {
+      throw new ApplicationError(
+        "CONFLICT",
+        "Content OS Blog completion must use the atomic Blog/Head Review flow.",
+      );
     }
 
     if (action.action === "SUBMIT_REVIEW") {
@@ -768,8 +781,8 @@ export class MarketingService {
         throw new ApplicationError("INVALID_INPUT", "Complete every posting checklist item before sending to review.");
       }
     }
-    if (action.action === "CANCEL" && !isHead(actorContext) && !isCreator(actorContext, access)) {
-      throw new ApplicationError("FORBIDDEN", "Only the creator or Head may cancel this task.");
+    if (action.action === "CANCEL" && !canCancelTask(actorContext, access)) {
+      throw new ApplicationError("FORBIDDEN", "Only Head or the creator of a manual task may cancel it.");
     }
     if (action.action === "REOPEN" && !isHead(actorContext)) {
       throw new ApplicationError("FORBIDDEN", "Only Head may reopen a task.");
@@ -842,10 +855,10 @@ export class MarketingService {
 
   async createRecurrence(actor: User, taskId: string, input: unknown, now = new Date()) {
     const parsed = RecurrenceInputSchema.parse(input);
-    const { task, archive } = await this.requireVisibleTask(actor, taskId);
+    const { task, archive, contentTaskTypeCode } = await this.requireVisibleTask(actor, taskId);
     if (archive) throw new ApplicationError("CONFLICT", "Restore this task before making it recurring.");
-    if (!isHead(actorFromUser(actor)) && task.creatorId !== actor.id) {
-      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may make it recurring.");
+    if (!canEditTask(actorFromUser(actor), taskAccess(task, archive, contentTaskTypeCode))) {
+      throw new ApplicationError("FORBIDDEN", "Only Head or the creator of a manual task may make it recurring.");
     }
     if (await this.repository.getRecurringDefinitionForTask(taskId)) {
       throw new ApplicationError("CONFLICT", "This task already has a recurring definition.");
@@ -1025,8 +1038,8 @@ export class MarketingService {
     if (new Date(parsed.requestedDeadline).getTime() <= Date.now()) {
       throw new ApplicationError("INVALID_INPUT", "Requested deadline must be in the future.");
     }
-    const { task, archive } = await this.requireVisibleTask(actor, taskId);
-    if (!canRequestDeadlineChange(actorFromUser(actor), taskAccess(task, archive))) {
+    const { task, archive, contentTaskTypeCode } = await this.requireVisibleTask(actor, taskId);
+    if (!canRequestDeadlineChange(actorFromUser(actor), taskAccess(task, archive, contentTaskTypeCode))) {
       throw new ApplicationError("FORBIDDEN", "Only an ordinary active assignee may request a deadline change; creator and Head use the direct path.");
     }
     const deadlineRequest = await this.repository.createDeadlineChangeRequest({
@@ -1089,8 +1102,8 @@ export class MarketingService {
 
   async requestReassign(actor: User, taskId: string, input: unknown): Promise<ReassignRequest> {
     const parsed = ReassignRequestInputSchema.parse(input);
-    const { task, archive } = await this.requireVisibleTask(actor, taskId);
-    if (!canRequestReassign(actorFromUser(actor), taskAccess(task, archive))) {
+    const { task, archive, contentTaskTypeCode } = await this.requireVisibleTask(actor, taskId);
+    if (!canRequestReassign(actorFromUser(actor), taskAccess(task, archive, contentTaskTypeCode))) {
       throw new ApplicationError("FORBIDDEN", "Only an ordinary active assignee may request reassignment; creator and Head use the direct path.");
     }
     const targetAssignee = await this.repository.getUserById(parsed.requestedAssigneeId);
@@ -1167,12 +1180,152 @@ export class MarketingService {
     return resolvedRequest;
   }
 
+  /**
+   * Leases and delivers durable notification intents written by the same
+   * database transaction as their task event. Telegram has no idempotency key,
+   * so a process crash after Telegram accepts a message but before SENT is
+   * recorded can still produce one duplicate on lease recovery. Every other
+   * retry is collapsed to the single semantic outbox row.
+   */
+  async deliverTaskNotificationOutbox(limit = 50): Promise<{
+    claimed: number;
+    sent: number;
+    retryScheduled: number;
+    deadLettered: number;
+  }> {
+    const claim = this.repository.claimTaskNotificationOutbox;
+    const complete = this.repository.completeTaskNotificationOutbox;
+    const getEvent = this.repository.getTaskEvent;
+    if (!claim || !complete || !getEvent) {
+      return { claimed: 0, sent: 0, retryScheduled: 0, deadLettered: 0 };
+    }
+
+    const workerId = globalThis.crypto.randomUUID();
+    const entries = await claim.call(this.repository, { workerId, limit });
+    let sent = 0;
+    let retryScheduled = 0;
+    let deadLettered = 0;
+
+    for (const entry of entries) {
+      try {
+        const [event, recipient] = await Promise.all([
+          getEvent.call(this.repository, entry.taskEventId),
+          this.repository.getUserById(entry.recipientUserId),
+        ]);
+        const resolvedTask = event ? await this.repository.getTask(event.taskId) : null;
+        if (!event || !resolvedTask || !event.actorId) {
+          throw new Error("OUTBOX_REFERENCE_MISSING");
+        }
+        const actor = await this.repository.getUserById(event.actorId);
+        if (!actor) throw new Error("OUTBOX_ACTOR_MISSING");
+
+        if (!recipient?.isActive) {
+          await complete.call(this.repository, {
+            deliveryId: entry.id,
+            workerId,
+            succeeded: true,
+          });
+          console.info(JSON.stringify({
+            event: "workflow_notification_skipped",
+            workflowEvent: entry.eventType,
+            taskId: resolvedTask.id,
+            recipientUserId: entry.recipientUserId,
+            reason: "RECIPIENT_INACTIVE_OR_MISSING",
+          }));
+          sent += 1;
+          continue;
+        }
+
+        const requestId = typeof event.metadata.requestId === "string"
+          ? event.metadata.requestId
+          : null;
+        const deadlineRequest = requestId && entry.eventType.startsWith("DEADLINE_CHANGE_")
+          ? await this.repository.getDeadlineChangeRequest(requestId)
+          : null;
+        const reassignRequest = requestId && entry.eventType.startsWith("REASSIGN_")
+          ? await this.repository.getReassignRequest(requestId)
+          : null;
+        const targetAssigneeId = reassignRequest?.requestedAssigneeId
+          ?? (entry.eventType === "TASK_REASSIGNED" && typeof event.newValue === "string"
+            ? event.newValue
+            : null);
+        const targetAssignee = targetAssigneeId
+          ? await this.repository.getUserById(targetAssigneeId)
+          : null;
+        const taskForNotification = entry.eventType === "DEADLINE_CHANGED"
+          && typeof event.newValue === "string"
+          ? { ...resolvedTask, deadline: event.newValue }
+          : resolvedTask;
+
+        const notification: WorkflowNotificationInput = {
+          event: entry.eventType,
+          task: taskForNotification,
+          actor,
+          recipients: [recipient],
+          ...(deadlineRequest ? { deadlineRequest } : {}),
+          ...(reassignRequest ? { reassignRequest } : {}),
+          ...(targetAssignee ? { targetAssignee } : {}),
+          ...(typeof event.metadata.reason === "string"
+            ? { comment: event.metadata.reason }
+            : {}),
+        };
+        const result = await this.notificationDispatcher.notifyWorkflow(notification);
+        const delivery = result.deliveries.find((item) => item.recipientUserId === recipient.id);
+        const succeeded = delivery?.status === "SENT";
+
+        await complete.call(this.repository, {
+          deliveryId: entry.id,
+          workerId,
+          succeeded,
+          ...(!succeeded ? { error: delivery?.reason ?? "DELIVERY_FAILED" } : {}),
+        });
+        this.logWorkflowDelivery(notification, delivery ?? {
+          status: "FAILED",
+          recipientUserId: recipient.id,
+          reason: "DELIVERY_RESULT_MISSING",
+        });
+        if (succeeded) sent += 1;
+        else if (entry.attempts >= 5) deadLettered += 1;
+        else retryScheduled += 1;
+      } catch {
+        await complete.call(this.repository, {
+          deliveryId: entry.id,
+          workerId,
+          succeeded: false,
+          error: "DISPATCH_FAILED",
+        });
+        console.warn(JSON.stringify({
+          event: entry.attempts >= 5
+            ? "workflow_notification_dead_lettered"
+            : "workflow_notification_retry_scheduled",
+          workflowEvent: entry.eventType,
+          recipientUserId: entry.recipientUserId,
+          attempt: entry.attempts,
+          reason: "DISPATCH_FAILED",
+        }));
+        if (entry.attempts >= 5) deadLettered += 1;
+        else retryScheduled += 1;
+      }
+    }
+
+    return { claimed: entries.length, sent, retryScheduled, deadLettered };
+  }
+
   private async dispatchWorkflowNotification(
     notification: Omit<WorkflowNotificationInput, "recipients">,
     directRecipientIds: readonly string[],
     includeHeads: boolean,
     dedupeKey: string,
   ): Promise<void> {
+    if (
+      this.repository.claimTaskNotificationOutbox
+      && this.repository.completeTaskNotificationOutbox
+      && this.repository.getTaskEvent
+    ) {
+      await this.deliverTaskNotificationOutbox();
+      return;
+    }
+
     try {
       const users = await this.repository.listUsers();
       const usersById = new Map(users.map((user) => [user.id, user]));
@@ -1279,18 +1432,23 @@ export class MarketingService {
     else console.warn(JSON.stringify(log));
   }
 
-  private async requireVisibleTask(actor: User, taskId: string): Promise<{ task: Task; archive: TaskArchive | null }> {
-    const [task, archive] = await Promise.all([
+  private async requireVisibleTask(actor: User, taskId: string): Promise<{
+    task: Task;
+    archive: TaskArchive | null;
+    contentTaskTypeCode: string | null;
+  }> {
+    const [task, archive, contentTaskTypeCode] = await Promise.all([
       this.repository.getTask(taskId),
       this.repository.getTaskArchive(taskId),
+      this.repository.getContentTaskTypeCode?.(taskId) ?? Promise.resolve(null),
     ]);
     if (!task) {
       throw new ApplicationError("NOT_FOUND", "Task not found.");
     }
-    if (!canViewTask(actorFromUser(actor), taskAccess(task, archive))) {
+    if (!canViewTask(actorFromUser(actor), taskAccess(task, archive, contentTaskTypeCode))) {
       throw new ApplicationError("FORBIDDEN", "You cannot access this archived task.");
     }
-    return { task, archive };
+    return { task, archive, contentTaskTypeCode };
   }
 
   private requireActiveTeamMember(actor: User): void {

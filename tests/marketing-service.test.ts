@@ -15,6 +15,8 @@ const ids = {
   unrelated: "10000000-0000-4000-8000-000000000004",
   task: "20000000-0000-4000-8000-000000000001",
   request: "30000000-0000-4000-8000-000000000001",
+  event: "40000000-0000-4000-8000-000000000001",
+  delivery: "50000000-0000-4000-8000-000000000001",
 } as const;
 
 function user(id: string, role: User["role"], overrides: Partial<User> = {}): User {
@@ -139,7 +141,10 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
       const found = [head, creator, assignee, unrelated].find((candidate) => candidate.id === userId);
       return { ...(found ?? assignee), isActive: true, deactivatedAt: null };
     }),
-    getContentOsLoginChallengeStatus: vi.fn(async () => "PENDING" as const),
+    getContentOsLoginChallengeStatus: vi.fn(async () => ({
+      status: "PENDING" as const,
+      displayCode: "123456",
+    })),
     approveContentOsLoginChallenge: vi.fn(async () => "APPROVED" as const),
     cancelContentOsLoginChallenge: vi.fn(async () => "CANCELLED" as const),
     reassignTask: vi.fn(async ({ taskId, newAssigneeId }) => task({ id: taskId, assigneeId: newAssigneeId })),
@@ -238,17 +243,22 @@ describe("MarketingService MVP permissions", () => {
   it("offers Content OS confirmation only for a pending challenge and an active existing user", async () => {
     const repo = repository({
       getUserByTelegramId: vi.fn(async () => creator),
-      getContentOsLoginChallengeStatus: vi.fn(async () => "PENDING" as const),
+      getContentOsLoginChallengeStatus: vi.fn(async () => ({
+        status: "PENDING" as const,
+        displayCode: "123456",
+      })),
     });
     const service = new MarketingService(repo, notifier());
 
-    await expect(service.canConfirmContentOsLogin(creator.telegramUserId, ids.request)).resolves.toBe(true);
+    await expect(service.contentOsLoginConfirmationCode(creator.telegramUserId, ids.request))
+      .resolves.toBe("123456");
 
     vi.mocked(repo.getUserByTelegramId).mockResolvedValue(null);
-    await expect(service.canConfirmContentOsLogin("9999", ids.request)).resolves.toBe(false);
+    await expect(service.contentOsLoginConfirmationCode("9999", ids.request)).resolves.toBeNull();
 
     vi.mocked(repo.getUserByTelegramId).mockResolvedValue({ ...creator, isActive: false });
-    await expect(service.canConfirmContentOsLogin(creator.telegramUserId, ids.request)).resolves.toBe(false);
+    await expect(service.contentOsLoginConfirmationCode(creator.telegramUserId, ids.request))
+      .resolves.toBeNull();
   });
 
   it("maps database-owned Content OS login decisions without trusting browser identity", async () => {
@@ -1253,6 +1263,41 @@ describe("MarketingService MVP permissions", () => {
       expect(notifications.notifyWorkflow).toHaveBeenCalledWith(expect.objectContaining({ event: "REASSIGN_APPROVED" }));
     });
 
+    it("isolates Content OS tasks from creator management and keeps Head Review authority scoped", async () => {
+      const blog = task({ status: "IN_PROGRESS", assigneeId: creator.id });
+      const blogRepo = repository({
+        getTask: vi.fn(async () => blog),
+        getContentTaskTypeCode: vi.fn(async () => "BLOG"),
+      });
+      const blogService = new MarketingService(blogRepo, notifier());
+
+      await expect(blogService.editTask(creator, blog.id, {
+        title: "No", description: null, priority: "normal",
+      })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(blogService.directReassignTask(creator, blog.id, { assigneeId: unrelated.id }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(blogService.directChangeDeadline(creator, blog.id, {
+        deadline: "2027-11-01T10:00:00.000Z",
+      })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(blogService.performTaskAction(creator, blog.id, { action: "CANCEL" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+
+      const review = task({ status: "REVIEW", creatorId: creator.id, assigneeId: assignee.id });
+      const reviewRepo = repository({
+        getTask: vi.fn(async () => review),
+        getContentTaskTypeCode: vi.fn(async () => "HEAD_REVIEW"),
+      });
+      const reviewService = new MarketingService(reviewRepo, notifier());
+      await expect(reviewService.performTaskAction(creator, review.id, { action: "APPROVE" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      await reviewService.performTaskAction(assignee, review.id, { action: "APPROVE" });
+      expect(reviewRepo.transitionTask).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: review.id,
+        actorId: assignee.id,
+        newStatus: "DONE",
+      }));
+    });
+
     it("archives and restores the same task only through Head", async () => {
       const current = task({ status: "IN_PROGRESS" });
       const archive = {
@@ -1316,6 +1361,102 @@ describe("MarketingService MVP permissions", () => {
       await service.performTaskAction(assignee, current.id, { action: "SUBMIT_REVIEW" });
       expect(notifications.notifyWorkflow).toHaveBeenCalledTimes(1);
       expect(repo.completeTaskNotification).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries a transient outbox failure and marks the later worker attempt sent", async () => {
+      const current = task({ status: "IN_PROGRESS" });
+      const claim = vi.fn()
+        .mockResolvedValueOnce([{
+          id: ids.delivery,
+          taskEventId: ids.event,
+          eventType: "DEADLINE_CHANGED" as const,
+          recipientUserId: assignee.id,
+          payload: { taskEventId: ids.event },
+          attempts: 1,
+        }])
+        .mockResolvedValueOnce([{
+          id: ids.delivery,
+          taskEventId: ids.event,
+          eventType: "DEADLINE_CHANGED" as const,
+          recipientUserId: assignee.id,
+          payload: { taskEventId: ids.event },
+          attempts: 2,
+        }])
+        .mockResolvedValueOnce([]);
+      const complete = vi.fn(async () => undefined);
+      const repo = repository({
+        getTask: vi.fn(async () => current),
+        getTaskEvent: vi.fn(async () => ({
+          id: ids.event,
+          taskId: current.id,
+          actorId: creator.id,
+          actorKind: "USER" as const,
+          eventType: "DEADLINE_CHANGED" as const,
+          oldValue: current.deadline,
+          newValue: "2027-11-02T10:00:00.000Z",
+          metadata: { mode: "DIRECT" },
+          createdAt: "2026-10-15T15:00:00.000Z",
+        })),
+        claimTaskNotificationOutbox: claim,
+        completeTaskNotificationOutbox: complete,
+      });
+      const notifications = notifier({
+        notifyWorkflow: vi.fn()
+          .mockResolvedValueOnce({
+            deliveries: [{ recipientUserId: assignee.id, status: "FAILED", reason: "DELIVERY_FAILED" }],
+          })
+          .mockResolvedValueOnce({
+            deliveries: [{ recipientUserId: assignee.id, status: "SENT" }],
+          }),
+      });
+      const service = new MarketingService(repo, notifications);
+
+      await expect(service.deliverTaskNotificationOutbox()).resolves.toMatchObject({ retryScheduled: 1 });
+      await expect(service.deliverTaskNotificationOutbox()).resolves.toMatchObject({ sent: 1 });
+      await expect(service.deliverTaskNotificationOutbox()).resolves.toMatchObject({ claimed: 0 });
+      expect(notifications.notifyWorkflow).toHaveBeenCalledTimes(2);
+      expect(complete).toHaveBeenNthCalledWith(1, expect.objectContaining({ succeeded: false }));
+      expect(complete).toHaveBeenNthCalledWith(2, expect.objectContaining({ succeeded: true }));
+    });
+
+    it("dead-letters only after the fifth bounded outbox attempt", async () => {
+      const current = task({ status: "REVIEW" });
+      const complete = vi.fn(async () => undefined);
+      const repo = repository({
+        getTask: vi.fn(async () => current),
+        getTaskEvent: vi.fn(async () => ({
+          id: ids.event,
+          taskId: current.id,
+          actorId: creator.id,
+          actorKind: "USER" as const,
+          eventType: "REVIEW_REQUESTED" as const,
+          oldValue: "IN_PROGRESS",
+          newValue: "REVIEW",
+          metadata: {},
+          createdAt: "2026-10-15T15:00:00.000Z",
+        })),
+        claimTaskNotificationOutbox: vi.fn(async () => [{
+          id: ids.delivery,
+          taskEventId: ids.event,
+          eventType: "REVIEW_REQUESTED" as const,
+          recipientUserId: assignee.id,
+          payload: { taskEventId: ids.event },
+          attempts: 5,
+        }]),
+        completeTaskNotificationOutbox: complete,
+      });
+      const service = new MarketingService(repo, notifier({
+        notifyWorkflow: vi.fn(async () => ({
+          deliveries: [{
+            recipientUserId: assignee.id,
+            status: "FAILED" as const,
+            reason: "DELIVERY_FAILED" as const,
+          }],
+        })),
+      }));
+
+      await expect(service.deliverTaskNotificationOutbox()).resolves.toMatchObject({ deadLettered: 1 });
+      expect(complete).toHaveBeenCalledWith(expect.objectContaining({ succeeded: false }));
     });
   });
 });

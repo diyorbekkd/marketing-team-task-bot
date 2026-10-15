@@ -13,6 +13,8 @@ declare
   v_challenge_three uuid;
   v_approved_before_deactivation uuid;
   v_status text;
+  v_display_code text;
+  v_status_display_code text;
   v_session_id uuid;
   v_session_two_id uuid;
   v_session_three_id uuid;
@@ -63,7 +65,7 @@ begin
   ) then raise exception 'session table persists role authority'; end if;
 
   foreach v_function in array array[
-    'public.content_os_auth_create_challenge(text)'::regprocedure,
+    'public.content_os_auth_create_challenge(text,text)'::regprocedure,
     'public.content_os_auth_get_challenge_status(uuid)'::regprocedure,
     'public.content_os_auth_approve_challenge(uuid,bigint)'::regprocedure,
     'public.content_os_auth_cancel_challenge(uuid,bigint)'::regprocedure,
@@ -89,37 +91,43 @@ begin
   select count(*) into v_task_count from public.tasks;
 
   -- Challenge ids are random UUIDs and separate browser tabs do not alias.
-  select challenge_id into v_challenge
-  from public.content_os_auth_create_challenge(v_verifier_hash);
+  select challenge_id, display_code into v_challenge, v_display_code
+  from public.content_os_auth_create_challenge(v_verifier_hash, v_verifier_hash);
   select challenge_id into v_challenge_two
-  from public.content_os_auth_create_challenge(repeat('1', 64));
+  from public.content_os_auth_create_challenge(repeat('1', 64), repeat('1', 64));
   if v_challenge = v_challenge_two
-    or v_challenge::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' then
+    or v_challenge::text !~ '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or v_display_code !~ '^[0-9]{6}$' then
     raise exception 'challenge ids are not independent random UUIDv4 values';
+  end if;
+  select display_code into v_status_display_code
+  from public.content_os_auth_get_challenge_status(v_challenge);
+  if v_status_display_code <> v_display_code then
+    raise exception 'browser and Telegram status contracts returned different display codes';
   end if;
 
   -- Unknown, pending, and inactive Telegram identities all fail closed.
   select challenge_id into v_challenge_three
-  from public.content_os_auth_create_challenge(repeat('2', 64));
+  from public.content_os_auth_create_challenge(repeat('2', 64), repeat('2', 64));
   select status into v_status
   from public.content_os_auth_approve_challenge(v_challenge_three, 919999999);
   if v_status <> 'DENIED' then raise exception 'unknown user approval was not denied'; end if;
 
   select challenge_id into v_challenge_three
-  from public.content_os_auth_create_challenge(repeat('3', 64));
+  from public.content_os_auth_create_challenge(repeat('3', 64), repeat('3', 64));
   select status into v_status
   from public.content_os_auth_approve_challenge(v_challenge_three, 910000002);
   if v_status <> 'DENIED' then raise exception 'pending user approval was not denied'; end if;
 
   select challenge_id into v_challenge_three
-  from public.content_os_auth_create_challenge(repeat('4', 64));
+  from public.content_os_auth_create_challenge(repeat('4', 64), repeat('4', 64));
   select status into v_status
   from public.content_os_auth_approve_challenge(v_challenge_three, 910000003);
   if v_status <> 'DENIED' then raise exception 'inactive user approval was not denied'; end if;
 
   -- Expiry and cancellation are terminal for approval/redeem.
   select challenge_id into v_challenge_three
-  from public.content_os_auth_create_challenge(repeat('5', 64));
+  from public.content_os_auth_create_challenge(repeat('5', 64), repeat('5', 64));
   update private.content_os_login_challenges
   set created_at = statement_timestamp() - interval '20 minutes',
       expires_at = statement_timestamp() - interval '10 minutes'
@@ -129,7 +137,7 @@ begin
   if v_status <> 'EXPIRED' then raise exception 'expired challenge was not denied'; end if;
 
   select challenge_id into v_challenge_three
-  from public.content_os_auth_create_challenge(repeat('6', 64));
+  from public.content_os_auth_create_challenge(repeat('6', 64), repeat('6', 64));
   select status into v_status
   from public.content_os_auth_cancel_challenge(v_challenge_three, 910000001);
   if v_status <> 'CANCELLED' then raise exception 'challenge cancellation failed'; end if;
@@ -199,7 +207,7 @@ begin
 
   -- Expired sessions fail closed.
   select challenge_id into v_challenge_three
-  from public.content_os_auth_create_challenge(repeat('9', 64));
+  from public.content_os_auth_create_challenge(repeat('9', 64), repeat('9', 64));
   perform public.content_os_auth_approve_challenge(v_challenge_three, 910000001);
   select status, session_id into v_status, v_session_three_id
   from public.content_os_auth_redeem_challenge(v_challenge_three, repeat('9', 64), v_session_three_hash);
@@ -213,7 +221,7 @@ begin
   -- Deactivation immediately revokes every live session and cancels an
   -- approved challenge. Reactivation does not revive either one.
   select challenge_id into v_approved_before_deactivation
-  from public.content_os_auth_create_challenge(repeat('0', 64));
+  from public.content_os_auth_create_challenge(repeat('0', 64), repeat('0', 64));
   perform public.content_os_auth_approve_challenge(v_approved_before_deactivation, 910000001);
   update public.users
   set is_active = false, deactivated_at = statement_timestamp()
@@ -229,7 +237,7 @@ begin
   if v_status <> 'INVALID' then raise exception 'reactivation revived an old session'; end if;
 
   select challenge_id into v_challenge_three
-  from public.content_os_auth_create_challenge(repeat('7', 64));
+  from public.content_os_auth_create_challenge(repeat('7', 64), repeat('7', 64));
   perform public.content_os_auth_approve_challenge(v_challenge_three, 910000001);
   select status into v_status
   from public.content_os_auth_redeem_challenge(v_challenge_three, repeat('7', 64), v_session_four_hash);

@@ -107,12 +107,17 @@ function notificationWarning(): string {
 
 const CONTENT_OS_LOGIN_UNAVAILABLE = "Kirish so‘rovi mavjud emas yoki amal qilish muddati tugagan.";
 
-function contentOsLoginConfirmation(challengeId: string): Omit<TelegramOutgoingMessage, "chatId"> {
+function contentOsLoginConfirmation(
+  challengeId: string,
+  displayCode: string,
+): Omit<TelegramOutgoingMessage, "chatId"> {
   return {
     text: [
       "Content OS ga kirishni tasdiqlash",
       "",
-      "Bu so‘rovni faqat o‘zingiz boshlagan bo‘lsangiz tasdiqlang.",
+      `Brauzerdagi kod bilan bir xil bo‘lsa tasdiqlang: ${displayCode}`,
+      "",
+      "Bu kod kirish siri emas. So‘rovni faqat o‘zingiz boshlagan bo‘lsangiz tasdiqlang.",
     ].join("\n"),
     replyMarkup: {
       inline_keyboard: [[
@@ -345,13 +350,13 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
         );
         if (contentOsLoginMatch || /^\/start(?:@[a-z0-9_]+)?\s+contentos_/i.test(text)) {
           const challengeId = contentOsLoginMatch?.[1];
-          const mayConfirm = challengeId
-            ? await service.canConfirmContentOsLogin(String(message.from.id), challengeId)
-            : false;
-          if (!mayConfirm || !challengeId) {
+          const displayCode = challengeId
+            ? await service.contentOsLoginConfirmationCode(String(message.from.id), challengeId)
+            : null;
+          if (!displayCode || !challengeId) {
             return { messages: [{ chatId: message.chat.id, text: CONTENT_OS_LOGIN_UNAVAILABLE }] };
           }
-          const confirmation = contentOsLoginConfirmation(challengeId);
+          const confirmation = contentOsLoginConfirmation(challengeId, displayCode);
           return { messages: [{ chatId: message.chat.id, ...confirmation }] };
         }
 

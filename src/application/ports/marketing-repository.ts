@@ -14,6 +14,7 @@ import type {
   TaskEvent,
   User,
 } from "@/domain/models";
+import type { WorkflowNotificationEvent } from "./notification-dispatcher";
 
 export interface TelegramIdentityInput {
   readonly telegramUserId: string;
@@ -28,6 +29,20 @@ export type ContentOsLoginChallengeStatus =
   | "CANCELLED"
   | "EXPIRED"
   | "UNAVAILABLE";
+
+export interface ContentOsLoginChallenge {
+  readonly status: ContentOsLoginChallengeStatus;
+  readonly displayCode: string | null;
+}
+
+export interface TaskNotificationOutboxEntry {
+  readonly id: string;
+  readonly taskEventId: string;
+  readonly eventType: WorkflowNotificationEvent;
+  readonly recipientUserId: string;
+  readonly payload: Readonly<Record<string, unknown>>;
+  readonly attempts: number;
+}
 
 export type ContentOsLoginDecision =
   | "APPROVED"
@@ -61,7 +76,7 @@ export interface MarketingRepository {
   deactivateUser(input: { userId: string; actorId: string }): Promise<User>;
   reactivateUser(input: { userId: string; actorId: string }): Promise<User>;
 
-  getContentOsLoginChallengeStatus(challengeId: string): Promise<ContentOsLoginChallengeStatus>;
+  getContentOsLoginChallengeStatus(challengeId: string): Promise<ContentOsLoginChallenge>;
   approveContentOsLoginChallenge(input: {
     challengeId: string;
     telegramUserId: string;
@@ -73,6 +88,8 @@ export interface MarketingRepository {
 
   createTask(input: CreateTaskRecord): Promise<Task>;
   getTask(taskId: string): Promise<Task | null>;
+  /** Stable pinned Content OS Task Type code, or null for a manual task. */
+  getContentTaskTypeCode?(taskId: string): Promise<string | null>;
   listTasks(): Promise<Task[]>;
   getTaskArchive(taskId: string): Promise<TaskArchive | null>;
   listTaskArchives(): Promise<TaskArchive[]>;
@@ -94,6 +111,7 @@ export interface MarketingRepository {
   archiveTask(input: { taskId: string; actorId: string; reason?: string }): Promise<TaskArchive>;
   restoreTask(input: { taskId: string; actorId: string }): Promise<Task>;
   listTaskEvents(taskId: string): Promise<TaskEvent[]>;
+  getTaskEvent?(eventId: string): Promise<TaskEvent | null>;
   listAllTaskEvents(): Promise<TaskEvent[]>;
   getPostingChecklist(taskId: string): Promise<PostingChecklist | null>;
   getPostingChecklistByItemId(itemId: string): Promise<PostingChecklist | null>;
@@ -135,6 +153,17 @@ export interface MarketingRepository {
     recipientUserId: string;
     status: "SENT" | "FAILED";
     failureReason?: string;
+  }): Promise<void>;
+
+  claimTaskNotificationOutbox?(input: {
+    workerId: string;
+    limit: number;
+  }): Promise<readonly TaskNotificationOutboxEntry[]>;
+  completeTaskNotificationOutbox?(input: {
+    deliveryId: string;
+    workerId: string;
+    succeeded: boolean;
+    error?: string;
   }): Promise<void>;
 
   getRecurringDefinitionForTask(taskId: string): Promise<RecurringDefinition | null>;

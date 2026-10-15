@@ -51,7 +51,7 @@ function serviceMock(overrides: Record<string, unknown> = {}) {
   return {
     onboardTelegram: vi.fn(async () => actor),
     requireActorByTelegramId: vi.fn(async () => actor),
-    canConfirmContentOsLogin: vi.fn(async () => true),
+    contentOsLoginConfirmationCode: vi.fn(async () => "123456"),
     approveContentOsLogin: vi.fn(async () => true),
     cancelContentOsLogin: vi.fn(async () => true),
     createTaskForUsername: vi.fn(async () => ({ task, assignee, notification: { status: "SENT" as const } })),
@@ -112,15 +112,16 @@ describe("Telegram MVP handler", () => {
       },
     }));
 
-    expect(service.canConfirmContentOsLogin).toHaveBeenCalledWith("42", challengeId);
+    expect(service.contentOsLoginConfirmationCode).toHaveBeenCalledWith("42", challengeId);
     expect(service.onboardTelegram).not.toHaveBeenCalled();
     expect(result.messages[0]?.text).toContain("Content OS ga kirishni tasdiqlash");
+    expect(result.messages[0]?.text).toContain("Brauzerdagi kod bilan bir xil bo‘lsa tasdiqlang: 123456");
     expect(result.messages[0]?.replyMarkup?.inline_keyboard[0]?.map((button) => button.text))
       .toEqual(["Tasdiqlash", "Bekor qilish"]);
   });
 
   it("uses one generic denial for an unavailable challenge or ineligible Telegram user", async () => {
-    const service = serviceMock({ canConfirmContentOsLogin: vi.fn(async () => false) });
+    const service = serviceMock({ contentOsLoginConfirmationCode: vi.fn(async () => null) });
     const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
       update_id: 102,
       message: {

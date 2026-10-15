@@ -31,6 +31,9 @@ export interface TaskAccessContext {
   readonly assigneeId: string;
   readonly status: TaskStatus;
   readonly isArchived: boolean;
+  /** Null/undefined means a manual Task Bot task. A stable Content OS Task
+   * Type code means generic creator privileges must not apply. */
+  readonly contentTaskTypeCode?: string | null;
 }
 
 export type EditableTaskField =
@@ -64,7 +67,9 @@ export function canEditTask(
   _field?: EditableTaskField,
 ): boolean {
   void _field;
-  return canViewTask(actor, task) && !task.isArchived && (isHead(actor) || isCreator(actor, task));
+  return canViewTask(actor, task)
+    && !task.isArchived
+    && (isHead(actor) || (!task.contentTaskTypeCode && isCreator(actor, task)));
 }
 
 export function canDirectChangeDeadline(actor: ActorContext, task: TaskAccessContext): boolean {
@@ -84,7 +89,7 @@ export function canRequestDeadlineChange(actor: ActorContext, task: TaskAccessCo
     && !task.isArchived
     && !["DONE", "CANCELLED"].includes(task.status)
     && isAssignee(actor, task)
-    && !isCreator(actor, task)
+    && (Boolean(task.contentTaskTypeCode) || !isCreator(actor, task))
     && !isHead(actor);
 }
 
@@ -110,7 +115,18 @@ export function canReassignTask(actor: ActorContext, task: TaskAccessContext): b
 }
 
 export function canReviewTask(actor: ActorContext, task: TaskAccessContext): boolean {
-  return canViewTask(actor, task) && !task.isArchived && (isHead(actor) || isCreator(actor, task));
+  if (!canViewTask(actor, task) || task.isArchived) return false;
+  if (isHead(actor)) return true;
+  if (task.contentTaskTypeCode) {
+    return task.contentTaskTypeCode === "HEAD_REVIEW" && isAssignee(actor, task);
+  }
+  return isCreator(actor, task);
+}
+
+export function canCancelTask(actor: ActorContext, task: TaskAccessContext): boolean {
+  return canViewTask(actor, task)
+    && !task.isArchived
+    && (isHead(actor) || (!task.contentTaskTypeCode && isCreator(actor, task)));
 }
 
 export class PermissionDeniedError extends Error {
@@ -124,7 +140,7 @@ export class PermissionDeniedError extends Error {
 
 export function assertCanChangeDeadline(actor: ActorContext, task: TaskAccessContext): void {
   if (!canChangeDeadline(actor, task)) {
-    throw new PermissionDeniedError("Only the task creator or Head may directly change the deadline.");
+    throw new PermissionDeniedError("Only Head or the creator of a manual task may directly change the deadline.");
   }
 }
 import type { TaskStatus } from "./task";
