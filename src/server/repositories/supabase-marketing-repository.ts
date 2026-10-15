@@ -10,6 +10,7 @@ import type {
 } from "@/application/ports/marketing-repository";
 import type { TeamRole } from "@/domain/permissions";
 import type { TaskStatus } from "@/domain/task";
+import { TaskEventTypeSchema } from "@/domain/task-events";
 import type { ReminderType } from "@/domain/reminders";
 import { canonicalTelegramUsername } from "@/domain/telegram-username";
 import { mapDataError } from "@/server/repositories/database-errors";
@@ -70,14 +71,7 @@ const EventRowSchema = z.object({
   task_id: z.string().uuid(),
   actor_id: z.string().uuid().nullable(),
   actor_kind: z.enum(["USER", "SYSTEM"]),
-  event_type: z.enum([
-    "TASK_CREATED", "TASK_ACCEPTED", "STATUS_CHANGED", "TITLE_CHANGED", "DESCRIPTION_CHANGED",
-    "PRIORITY_CHANGED", "DEADLINE_CHANGE_REQUESTED", "DEADLINE_CHANGE_APPROVED",
-    "DEADLINE_CHANGE_REJECTED", "DEADLINE_CHANGED", "REASSIGN_REQUESTED", "REASSIGN_APPROVED",
-    "REASSIGN_REJECTED", "ASSIGNEE_CHANGED", "TASK_BLOCKED", "TASK_UNBLOCKED", "REVIEW_REQUESTED",
-    "REVISION_REQUESTED", "TASK_COMPLETED", "TASK_CANCELLED", "TASK_REOPENED",
-    "POSTING_CHECKLIST_CREATED", "POSTING_CHECKLIST_ITEM_TOGGLED", "RECURRING_TASK_GENERATED",
-  ]),
+  event_type: TaskEventTypeSchema,
   old_value: z.unknown(),
   new_value: z.unknown(),
   metadata: z.record(z.string(), z.unknown()),

@@ -29,6 +29,10 @@ const sprint10bMigration = readFileSync(
   new URL("../supabase/migrations/20261015132700_sprint_10b_team_permissions_task_management.sql", import.meta.url),
   "utf8",
 );
+const supabaseRepository = readFileSync(
+  new URL("../src/server/repositories/supabase-marketing-repository.ts", import.meta.url),
+  "utf8",
+);
 
 describe("fast-track database workflow contract", () => {
   it("locks workflow rows and revalidates lifecycle transitions in the transaction", () => {
@@ -153,6 +157,11 @@ describe("auto-start task creation database contract", () => {
 });
 
 describe("Sprint 10B team permission database contract", () => {
+  it("maps database events through the canonical domain enum so new archive/request events remain readable", () => {
+    expect(supabaseRepository).toContain('import { TaskEventTypeSchema } from "@/domain/task-events"');
+    expect(supabaseRepository).toContain("event_type: TaskEventTypeSchema");
+  });
+
   it("keeps archive orthogonal to task status and makes hard delete impossible", () => {
     expect(sprint10bMigration).toContain("create table public.task_archives");
     expect(sprint10bMigration).toContain("create trigger tasks_prevent_hard_delete");
