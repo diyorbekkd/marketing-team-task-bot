@@ -23,9 +23,23 @@ export async function runCloudflareScheduledCron(
   execute: (job: ScheduledJob) => Promise<unknown> = runScheduledJob,
 ) {
   const completed: ScheduledJob[] = [];
+  const failures: { job: ScheduledJob; error: unknown }[] = [];
   for (const job of jobsForCloudflareCron(cron)) {
-    await execute(job);
-    completed.push(job);
+    try {
+      await execute(job);
+      completed.push(job);
+    } catch (error) {
+      failures.push({ job, error });
+    }
   }
+
+  if (failures.length === 1) throw failures[0].error;
+  if (failures.length > 1) {
+    throw new AggregateError(
+      failures.map(({ error }) => error),
+      `Cloudflare scheduled jobs failed: ${failures.map(({ job }) => job).join(", ")}`,
+    );
+  }
+
   return completed;
 }
