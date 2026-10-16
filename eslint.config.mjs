@@ -6,5 +6,13 @@ import nextTypeScript from "eslint-config-next/typescript";
 export default defineConfig([
   ...fixupConfigRules(nextVitals),
   ...fixupConfigRules(nextTypeScript),
-  globalIgnores([".next/**", "coverage/**", "supabase/.temp/**"]),
+  globalIgnores([
+    ".next/**",
+    ".vinext/**",
+    ".wrangler/**",
+    "coverage/**",
+    "dist/**",
+    "supabase/.temp/**",
+    "worker-configuration.d.ts",
+  ]),
 ]);

@@ -26,7 +26,7 @@ export async function resolveRequestActor(
     // (only ContentOsRequestActorProvider does) never consumes the stream
     // for another provider or for the route handler's own later
     // `await request.json()` on the original, un-cloned `request`.
-    const resolution = await provider.resolve(request.clone());
+    const resolution = await provider.resolve(request.clone() as Request);
     if (resolution) return resolution;
   }
   throw new ApplicationError("UNAUTHENTICATED", "Telegram authentication is required.");

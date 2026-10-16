@@ -312,7 +312,7 @@ async function apiFetch<T>(
 ): Promise<{ data: T | null; error: string | null }> {
   try {
     const res = await fetch(url, { credentials: "same-origin", ...opts });
-    const json = await res.json();
+    const json = await res.json() as { error?: string };
     if (!res.ok) {
       return { data: null, error: json.error ?? `HTTP ${res.status}` };
     }
