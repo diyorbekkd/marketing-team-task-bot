@@ -13,7 +13,7 @@
     "SUPABASE_PROJECT_REF": "yuznbaaoonyqonhiywkt",
     "SUPABASE_URL": "https://yuznbaaoonyqonhiywkt.supabase.co",
     "APP_TIMEZONE": "Asia/Tashkent",
-    "CONTENT_OS_SERVICE_AUTH_ENABLED": "false"
+    "CONTENT_OS_SERVICE_AUTH_ENABLED": "true"
   },
   "triggers": {
     "crons": [

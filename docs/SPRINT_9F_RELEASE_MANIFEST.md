@@ -1,6 +1,6 @@
-# Sprint 9F release candidate manifest
+# Production release candidate manifest
 
-Frozen on 2026-10-15. This manifest identifies deployable application and database source commits; later documentation-only commits do not change the frozen candidate.
+Originally frozen in Sprint 9F on 2026-10-15 and reconciled to the final Sprint 10E-FIX canonical database release on 2026-10-16. This manifest identifies deployable application and database source commits; later documentation and staging-only commits do not change the frozen production candidate.
 
 ## Release decision
 
@@ -17,7 +17,7 @@ This candidate is not approved for production release. `CONTENT_OS_IDENTITY_TRUS
 
 | Component | Branch | Exact release SHA | Clean at freeze |
 | --- | --- | --- | --- |
-| Task Bot | `codex/sprint-9b-hardening` | `3a3becab5cd21cf2a6a2947e3e4de861ea6b0f4c` | Yes |
+| Task Bot | `codex/sprint-9b-hardening` | `3bd2ca73cd810b09fcee850271a6e29acb63dcd6` | Yes |
 | Content OS | `sprint-9b/persistence-bridge` | `ceb5f52184f1886948ebb8a7f6b4196b6de6f42a` | Yes |
 
 Task Bot is the sole production owner of the shared Supabase migration ledger. Production database commands run only from the Task Bot release SHA and its canonical `supabase/migrations` directory.
@@ -45,12 +45,16 @@ Task Bot is the sole production owner of the shared Supabase migration ledger. P
 | 17 | `20261014123341` | `20261014123341_repair_posting_checklist_creation.sql` | `5fe50745cd22db15416fa4176ddb07d16dc131cf339c2aa47ebc951e76f16e6f` |
 | 18 | `20261014130000` | `20261014130000_content_os_06_transition_contract.sql` | `5a08a8fe37ffaeaf7559f614531d19000a80d98754004230c8d72948fce90992` |
 | 19 | `20261014130332` | `20261014130332_content_os_task_transition_compatibility.sql` | `882702534f916c29d8816b2bdf76b716b129694181d1d6092bc9f091bba64b77` |
+| 20 | `20261015121850` | `20261015121850_content_os_telegram_web_auth.sql` | `b2901041e7f7a0b5fd32ecdfb83107d614d226624eb7e0f5ebb0e5534b14ce6e` |
+| 21 | `20261015132700` | `20261015132700_sprint_10b_team_permissions_task_management.sql` | `f925b3c8d35fffb2b759b0474759384b302f16eec0e5fbf492b6889f52529e0a` |
+| 22 | `20261015151900` | `20261015151900_sprint_10d_workflow_auth_notification_hardening.sql` | `173af606da0cde3d04f43a0cf279e9560f49f7dc0a25f241cda0406827af0e87` |
+| 23 | `20261015164349` | `20261015164349_sprint_10e_final_blocker_closure.sql` | `cf417cd6a505e5e5d375c95b45af36a2fdd702585bc1a08d56bbe67b490f3c62` |
 
-The same checksums are stored in standard `sha256sum -c` format in `docs/SPRINT_9F_MIGRATIONS.sha256`.
+The same checksums are stored in standard `sha256sum -c` format in `docs/SPRINT_10E_FIX_MIGRATIONS.sha256`.
 
 ## Expected production ledger
 
-Before release, `supabase_migrations.schema_migrations` must contain exactly the first eight versions above, in order. After the database release, it must contain exactly all 19 versions above, in order. Any missing, additional, duplicate, renamed, or reordered version is drift and stops the release.
+Before release, `supabase_migrations.schema_migrations` must contain exactly the first eight versions above, in order. After the database release, it must contain exactly all 23 versions above, in order. The normal dry-run must therefore show exactly the final 15 versions as pending. Any missing, additional, duplicate, renamed, or reordered version is drift and stops the release.
 
 ## Content OS copy identity
 
@@ -58,7 +62,7 @@ Content OS source migrations 00–06 at the frozen Content OS SHA are byte-ident
 
 ## Release controls
 
-- Run `npm run db:check-manifest` and `sha256sum -c docs/SPRINT_9F_MIGRATIONS.sha256` before any database command.
+- Run `npm run db:check-manifest` and, from `supabase/migrations`, run `sha256sum -c ../../docs/SPRINT_10E_FIX_MIGRATIONS.sha256` before any database command.
 - Use the repository-pinned Supabase CLI `2.116.0`.
 - Never use `--include-all`, migration-history repair, or manual ledger edits.
 - Follow `docs/SPRINT_9F_PRODUCTION_RUNBOOK.md`; none of its approval boxes are pre-approved by this freeze.

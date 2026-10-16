@@ -4,11 +4,13 @@
 
 This migration adds a Cloudflare Workers staging target through vinext. Vercel remains the fallback target. It does not deploy, configure Telegram, contact either Supabase project, change database schema, or change Task Bot business rules. Content OS is outside this change.
 
-The Worker is named `ibox-task-bot-staging`, uses `workers.dev`, has preview URLs disabled, and defines no production route or custom domain. Its public URL must have this shape:
+The externally provisioned Worker is named `ibox-task-bot-staging`, uses `workers.dev`, has preview URLs disabled (`preview_urls=false`), and defines no production route or custom domain. Its staging origin is:
 
 ```text
-https://ibox-task-bot-staging.<cloudflare-account-subdomain>.workers.dev
+https://ibox-task-bot-staging.lively-river-afba.workers.dev
 ```
+
+The staging Supabase project ref is `yuznbaaoonyqonhiywkt`. These are staging facts only; they do not authorize a production route, production database, or production Telegram identity.
 
 The fetch and scheduled handlers fail closed unless all of these are true:
 
@@ -45,33 +47,37 @@ The existing six Vercel cron entries remain unchanged. Cloudflare combines the t
 
 ## Environment inventory
 
-No value below has been written to Cloudflare. Before an authorized staging deploy, configure the missing values without copying production credentials.
+No secret value is stored in this repository or reproduced in this handoff. Provisioning status below records owner-supplied external facts only; this release-finalization task does not read, write, or rotate any remote secret.
 
 | Name | Phase/classification | Cloudflare staging requirement |
 | --- | --- | --- |
 | `DEPLOYMENT_ENVIRONMENT` | runtime non-secret guard | committed as exact `staging` |
 | `SUPABASE_PROJECT_REF` | runtime non-secret guard | committed as exact staging ref |
 | `SUPABASE_URL` | runtime non-secret | committed as exact staging URL |
-| `APP_URL` | runtime non-secret | required; exact staging Worker URL |
+| `APP_URL` | runtime non-secret | must equal `https://ibox-task-bot-staging.lively-river-afba.workers.dev` |
 | `APP_TIMEZONE` | runtime non-secret | committed as `Asia/Tashkent` |
 | `SUPABASE_PUBLISHABLE_KEY` | runtime publishable key | required; staging project only |
-| `SUPABASE_SECRET_KEY` | runtime secret | required; staging project only |
-| `TELEGRAM_BOT_TOKEN` | runtime secret | required; staging bot identity only |
-| `TELEGRAM_WEBHOOK_SECRET` | runtime secret | required; staging webhook only |
-| `TELEGRAM_GROUP_ID` | runtime restricted config | required; staging/test chat only |
-| `HEAD_TELEGRAM_USER_ID` | runtime restricted config | required; staging test identity only |
-| `CRON_SECRET` | runtime secret | required only to retain the Vercel-style HTTP cron fallback routes |
-| `CONTENT_OS_SERVICE_AUTH_ENABLED` | runtime non-secret feature flag | committed as `false` for isolation |
-| `CONTENT_OS_SERVICE_SECRET` | runtime secret | omit while Content OS service auth is disabled |
+| `SUPABASE_SECRET_KEY` | runtime secret | owner-supplied later; staging project only |
+| `TELEGRAM_BOT_TOKEN` | runtime secret | owner-supplied later; staging bot identity only |
+| `TELEGRAM_WEBHOOK_SECRET` | runtime secret | already provisioned in Cloudflare; value not recorded |
+| `TELEGRAM_GROUP_ID` | runtime restricted config | owner-supplied later as needed; staging/test chat only |
+| `HEAD_TELEGRAM_USER_ID` | runtime restricted config | owner-supplied later as needed; staging test identity only |
+| `CRON_SECRET` | runtime secret | already provisioned in Cloudflare; retained only for Vercel-style HTTP cron fallback routes |
+| `CONTENT_OS_SERVICE_AUTH_ENABLED` | runtime non-secret feature flag | committed as `true` only in this staging Worker config |
+| `CONTENT_OS_SERVICE_SECRET` | runtime secret | already provisioned in Cloudflare; value not recorded |
 | `CLOUDFLARE_ACCOUNT_ID` | deploy-time restricted config | needed for non-interactive deployment, not a Worker binding |
 | `CLOUDFLARE_API_TOKEN` | deploy-time secret | needed for non-interactive deployment, not a Worker binding |
 
 Legacy `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` remain accepted by existing application configuration but are not recommended for the new staging target.
 
+The remaining owner-supplied release inputs are `SUPABASE_SECRET_KEY`, `TELEGRAM_BOT_TOKEN`, and the Telegram staging identity IDs needed for the selected test chat and Head actor. Production values must not be reused.
+
+Signed Content OS service auth is intentionally enabled only by the staging-specific `wrangler.jsonc`. The shared configuration parser still defaults the feature to disabled everywhere else and fails closed if the flag is true without `CONTENT_OS_SERVICE_SECRET`; ordinary cookie/session authentication and all business authorization checks remain unchanged.
+
 No application variable is required while compiling the Worker. All application values above are runtime bindings; the two Cloudflare credentials are deploy-tool inputs only.
 
 ## Operational constraints
 
-Five unique Cron Triggers consume the entire account-wide Cron Trigger allowance on a Cloudflare Workers Free plan. The Free plan's 10 ms CPU limit may also be insufficient for SSR or scheduled processing. Account plan/quota and the account subdomain must be confirmed before an authorized staging deployment.
+Five unique Cron Triggers consume the entire account-wide Cron Trigger allowance on a Cloudflare Workers Free plan. The Free plan's 10 ms CPU limit may also be insufficient for SSR or scheduled processing. Account plan/quota must be confirmed before an authorized staging deployment.
 
-Other deploy-time prerequisites are staging-only Supabase keys, a dedicated staging Telegram bot/chat identity, the final Worker URL for `APP_URL`, and explicit authorization to set secrets and register the staging webhook. None is needed for the local build gate, and none was accessed or changed in this sprint.
+Remaining deploy-time prerequisites are the owner-supplied staging-only Supabase secret key, dedicated staging Telegram bot token and identity IDs, confirmation that all other required non-secret bindings are present, and explicit authorization to register the staging webhook. None is needed for the local build gate, and no remote service is accessed or changed by this handoff update.

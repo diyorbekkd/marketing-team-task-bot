@@ -1,6 +1,6 @@
 # Sprint 9F production runbook
 
-This runbook is frozen with the release candidate in `docs/SPRINT_9F_RELEASE_MANIFEST.md`. It describes a future, separately authorized production release. It does not authorize one.
+This runbook was originally frozen with the Sprint 9F release candidate in `docs/SPRINT_9F_RELEASE_MANIFEST.md`. Its database source and inventory are reconciled here to the final Sprint 10E-FIX canonical release. It describes a future, separately authorized production release. It does not authorize one.
 
 ```text
 DB_RELEASE = GO
@@ -14,13 +14,14 @@ Stop immediately on any unexpected output, dirty repository, SHA/hash mismatch, 
 ## Frozen constants
 
 - Task Bot release-control repository: `/workspaces/codespaces-blank/marketing-team-task-bot-sprint9b`
-- Task Bot release SHA: `3a3becab5cd21cf2a6a2947e3e4de861ea6b0f4c`
+- Task Bot release SHA: `3bd2ca73cd810b09fcee850271a6e29acb63dcd6`
 - Content OS source repository: `/workspaces/codespaces-blank/ibox-content-funnel`
 - Content OS release SHA: `ceb5f52184f1886948ebb8a7f6b4196b6de6f42a`
 - Content OS Site/project tenant: `appgprj_6aaeb64e7ed88191b9710786438491d2`
-- Canonical migration count: 19
+- Canonical migration count: 23
 - Expected live ledger before release: 8 rows
-- Expected live ledger after release: 19 rows
+- Expected pending migrations: 15
+- Expected live ledger after release: 23 rows
 - Supabase CLI: repository-pinned `2.116.0`
 
 Never substitute a branch tip or an abbreviated SHA for a frozen release SHA.
@@ -32,15 +33,15 @@ Never substitute a branch tip or an abbreviated SHA for a frozen release SHA.
 The release-control documentation is committed after the frozen application/database source, so do not deploy its moving branch tip. Create clean detached artifact worktrees at the two frozen SHAs. The commands below assume the exact temporary paths shown and that neither path already exists:
 
 ```sh
-git -C /workspaces/codespaces-blank/marketing-team-task-bot-sprint9b worktree add --detach /tmp/sprint-9f-task-bot-rc 3a3becab5cd21cf2a6a2947e3e4de861ea6b0f4c
+git -C /workspaces/codespaces-blank/marketing-team-task-bot-sprint9b worktree add --detach /tmp/sprint-9f-task-bot-rc 3bd2ca73cd810b09fcee850271a6e29acb63dcd6
 git -C /workspaces/codespaces-blank/ibox-content-funnel worktree add --detach /tmp/sprint-9f-content-os-rc ceb5f52184f1886948ebb8a7f6b4196b6de6f42a
 
 cd /tmp/sprint-9f-task-bot-rc
-test "$(git rev-parse HEAD)" = "3a3becab5cd21cf2a6a2947e3e4de861ea6b0f4c"
+test "$(git rev-parse HEAD)" = "3bd2ca73cd810b09fcee850271a6e29acb63dcd6"
 test -z "$(git status --porcelain=v1)"
 npm ci
 npm run db:check-manifest
-sha256sum -c /workspaces/codespaces-blank/marketing-team-task-bot-sprint9b/docs/SPRINT_9F_MIGRATIONS.sha256
+(cd supabase/migrations && sha256sum -c /workspaces/codespaces-blank/marketing-team-task-bot-sprint9b/docs/SPRINT_10E_FIX_MIGRATIONS.sha256)
 env DO_NOT_TRACK=1 ./node_modules/.bin/supabase --version
 
 cd /tmp/sprint-9f-content-os-rc
@@ -48,7 +49,7 @@ test "$(git rev-parse HEAD)" = "ceb5f52184f1886948ebb8a7f6b4196b6de6f42a"
 test -z "$(git status --porcelain=v1)"
 ```
 
-The CLI version output must be exactly `2.116.0`. The manifest guard must report 19 ordered versions, no duplicates, and seven byte-identical Content OS files.
+The CLI version output must be exactly `2.116.0`. The manifest guard must report 23 ordered versions, no duplicates, and seven byte-identical Content OS files. The checksum verification must report `OK` for all 23 files.
 
 The seven source/canonical comparisons must all exit zero:
 
@@ -123,7 +124,7 @@ cd /tmp/sprint-9f-task-bot-rc
 env DO_NOT_TRACK=1 ./node_modules/.bin/supabase db push --dry-run --db-url "$SPRINT_9F_DB_URL"
 ```
 
-The dry-run must list exactly these 11 pending migrations, in this order:
+The dry-run must list exactly these 15 pending migrations, in this order:
 
 ```text
 20261009100000_content_os_00_helpers.sql
@@ -137,6 +138,10 @@ The dry-run must list exactly these 11 pending migrations, in this order:
 20261014123341_repair_posting_checklist_creation.sql
 20261014130000_content_os_06_transition_contract.sql
 20261014130332_content_os_task_transition_compatibility.sql
+20261015121850_content_os_telegram_web_auth.sql
+20261015132700_sprint_10b_team_permissions_task_management.sql
+20261015151900_sprint_10d_workflow_auth_notification_hardening.sql
+20261015164349_sprint_10e_final_blocker_closure.sql
 ```
 
 After a human verifies the dry-run output and signs the apply approval, apply once with the same pinned CLI and connection:
@@ -150,14 +155,14 @@ The second dry-run must report no pending migrations. Do not add `--include-all`
 
 ### 2.1 Final ledger and catalog
 
-Verify all 19 ledger versions against the manifest:
+Verify all 23 ledger versions against the manifest:
 
 ```sh
 psql -X "$SPRINT_9F_DB_URL" -v ON_ERROR_STOP=1 -Atc \
   "select version from supabase_migrations.schema_migrations order by version;"
 ```
 
-The output must equal the 19 versions in `docs/SPRINT_9F_RELEASE_MANIFEST.md`, with no additional row. Then run this read-only catalog check:
+The output must equal the 23 versions in `docs/SPRINT_9F_RELEASE_MANIFEST.md`, with no additional row. Then run this read-only catalog check:
 
 ```sh
 psql -X "$SPRINT_9F_DB_URL" -v ON_ERROR_STOP=1 -P pager=off <<'SQL'
@@ -252,7 +257,7 @@ Build only from the frozen commits and retain artifact checksums:
 
 ```sh
 cd /tmp/sprint-9f-task-bot-rc
-test "$(git rev-parse HEAD)" = "3a3becab5cd21cf2a6a2947e3e4de861ea6b0f4c"
+test "$(git rev-parse HEAD)" = "3bd2ca73cd810b09fcee850271a6e29acb63dcd6"
 npm run lint
 npm run typecheck
 npm test
@@ -326,9 +331,9 @@ All boxes are intentionally unchecked. Names, timestamps, and evidence links bel
 
 ### Precheck approvals
 
-- [ ] Release manager confirms Task Bot SHA `3a3becab5cd21cf2a6a2947e3e4de861ea6b0f4c` and Content OS SHA `ceb5f52184f1886948ebb8a7f6b4196b6de6f42a`.
+- [ ] Release manager confirms Task Bot SHA `3bd2ca73cd810b09fcee850271a6e29acb63dcd6` and Content OS SHA `ceb5f52184f1886948ebb8a7f6b4196b6de6f42a`.
 - [ ] Release manager confirms both release checkouts are clean.
-- [ ] Database owner confirms all 19 hashes and all seven cross-repository comparisons.
+- [ ] Database owner confirms all 23 hashes and all seven cross-repository comparisons.
 - [ ] Database owner records the current backup/PITR reference, recovery point, retention, and restore owner.
 - [ ] Database owner confirms the live ledger is exactly the expected eight rows.
 - [ ] Database owner confirms the read-only pre-release catalog sanity output.
@@ -337,9 +342,9 @@ All boxes are intentionally unchecked. Names, timestamps, and evidence links bel
 
 ### Execution approvals
 
-- [ ] Database owner approves the exact 11-migration dry-run output.
+- [ ] Database owner approves the exact 15-migration dry-run output.
 - [ ] Release manager approves the one normal `supabase db push` execution.
-- [ ] Database owner confirms the final 19-row ledger and exact catalog/privilege results.
+- [ ] Database owner confirms the final 23-row ledger and exact catalog/privilege results.
 - [ ] Authorized approver records a new `APPLICATION_RELEASE = GO` decision; it is not inherited from database GO.
 - [ ] Security owner approves the server-only environment-variable scopes and confirms no service-role secret exposure.
 - [ ] Release manager approves deployment of only the frozen Task Bot and Content OS artifacts.
