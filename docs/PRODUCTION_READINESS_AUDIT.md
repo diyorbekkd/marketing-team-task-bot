@@ -2,7 +2,7 @@
 
 ## Executive verdict
 
-The application code is substantially safer, more complete, and more scalable than the deployed baseline. All local static/unit/build gates pass and the production database was audited read-only. This branch is ready for a staging migration and preview acceptance cycle; it is **not yet approved for production merge/deploy** because the five new migrations have not run against an isolated PostgreSQL/Supabase environment, the connected Vercel account cannot access the production project for a preview, and no real Telegram/iOS/Android test session is available here.
+The application code is substantially safer, more complete, and more scalable than the deployed baseline. All local static/unit/build gates pass and the production database was audited read-only. This branch is ready for a staging migration and preview acceptance cycle; it is **not yet approved for production merge/deploy** because the five new migrations have not run against an isolated PostgreSQL/Supabase environment, the Vercel preview is protected and unavailable to this environment for runtime acceptance, and no real Telegram/iOS/Android test session is available here.
 
 No production data, schema, deployment, webhook, or Telegram recipient was changed during this audit.
 
@@ -13,7 +13,7 @@ No production data, schema, deployment, webhook, or Telegram recipient was chang
 | GitHub | Repository writable; default/base is `fast-track/mvp`; no `main` branch exists | Work isolated on `codex/production-readiness-audit`; PR targets `fast-track/mvp` |
 | Production Supabase | `cbjcclefgxrdyjwkjcpq`, `ACTIVE_HEALTHY`, PostgreSQL 17.6 | Read-only schema/data/advisor/plan audit completed |
 | Staging Supabase | `yuznbaaoonyqonhiywkt`, `INACTIVE`, PostgreSQL 17.11 | Not restored or changed without approval; migration integration gate blocked |
-| Vercel | Connected account exposes only an empty staging project, not the production project | No preview deployment or runtime-log validation possible |
+| Vercel | GitHub integration built a protected PR preview successfully; local CLI has no authenticated Vercel identity and the URL redirects to Vercel Authentication | Build check passed, but application runtime/log validation remains blocked |
 | Telegram | No isolated test bot credentials/test users in the environment | No messages sent; webhook/Mini App end-to-end gate blocked |
 | Local runtime | Node 24, npm, Next.js build and Vitest available | Full code gate available |
 | Browser/device | Browser automation exists, but no authenticated Telegram client or physical iOS/Android device | Real Mini App mobile acceptance remains human QA |
@@ -99,7 +99,7 @@ No authenticated Telegram preview was available, so initial render/network timin
 ## Release gates still required
 
 1. Restore or replace the staging Supabase project, apply all migrations from a clean baseline, run migration lint/contract tests, then rerun security/performance advisors.
-2. Connect the correct Vercel team/project, create a preview with staging secrets, and smoke every route/cron without production recipients.
+2. Grant this environment access to the protected Vercel preview (or provide an authenticated reviewer), confirm staging secrets, and smoke every route/cron without production recipients.
 3. Use an isolated Telegram test bot and users for onboarding, create/edit/comment/result, review/revision/approve, deadline request, reminder partial failure/retry, workflow advancement/recovery, and daily check.
 4. Run the Mini App on real iOS Telegram, Android Telegram, Telegram Web, and desktop for dark/light mode, keyboard, safe areas, bottom sheets, slow network, error/empty states, and calendar views.
 5. Review the PR and explicitly approve production migrations/deployment. Do not create `main`; the repository's actual release base remains `fast-track/mvp` until the owner chooses a branch strategy.
