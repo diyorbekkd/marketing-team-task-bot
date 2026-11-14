@@ -6,6 +6,7 @@ const task = (overrides: Partial<Task> = {}): Task => ({
   id: "20000000-0000-4000-8000-000000000001", title: "Campaign", description: null,
   priority: "high", status: "DONE", creatorId: "10000000-0000-4000-8000-000000000001",
   assigneeId: "10000000-0000-4000-8000-000000000002", deadline: "2026-09-08T13:00:00Z",
+  publicationAt: null,
   blockedReason: null, completedAt: "2026-09-08T12:00:00Z", cancelledAt: null,
   createdAt: "2026-09-06T12:00:00Z", updatedAt: "2026-09-08T12:00:00Z", ...overrides,
 });

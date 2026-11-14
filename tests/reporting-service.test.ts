@@ -15,7 +15,7 @@ const inactive: User = { ...head, id: "10000000-0000-4000-8000-000000000003", te
 const task: Task = {
   id: "20000000-0000-4000-8000-000000000001", title: "Post campaign", description: null,
   priority: "normal", status: "IN_PROGRESS", creatorId: head.id, assigneeId: employee.id,
-  deadline: "2026-09-09T07:00:00Z", blockedReason: null, completedAt: null, cancelledAt: null,
+  deadline: "2026-09-09T07:00:00Z", publicationAt: null, blockedReason: null, completedAt: null, cancelledAt: null,
   createdAt: "2026-09-08T08:00:00Z", updatedAt: "2026-09-08T08:00:00Z",
 };
 
@@ -39,7 +39,7 @@ describe("scheduled report delivery", () => {
     expect(result).toMatchObject({ recipients: 2, sent: 2, failed: 0 });
     expect(sent.map((delivery) => delivery.recipient.id)).toEqual([head.id, employee.id]);
     expect(sent.find((delivery) => delivery.recipient.id === head.id)?.text).toContain("Marketing — Bugun");
-    expect(sent.find((delivery) => delivery.recipient.id === employee.id)?.text).toContain("Bugungi tasklaringiz");
+    expect(sent.find((delivery) => delivery.recipient.id === employee.id)?.text).toContain("Bugungi vazifalaringiz");
   });
 
   it("does not send again when the database idempotency claim already exists", async () => {

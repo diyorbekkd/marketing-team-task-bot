@@ -34,6 +34,7 @@ export type EditableTaskField =
   | "priority"
   | "deadline"
   | "assignee"
+  | "publicationAt"
   | "subtasks"
   | "status";
 
@@ -96,6 +97,6 @@ export class PermissionDeniedError extends Error {
 
 export function assertCanChangeDeadline(actor: ActorContext, task: TaskAccessContext): void {
   if (!canChangeDeadline(actor, task)) {
-    throw new PermissionDeniedError("Only the task creator or Head may directly change the deadline.");
+    throw new PermissionDeniedError("Muddatni faqat vazifa yaratuvchisi yoki Marketing rahbari bevosita o‘zgartira oladi.");
   }
 }

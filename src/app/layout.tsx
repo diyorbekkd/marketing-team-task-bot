@@ -12,7 +12,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "Marketing Team Task Bot",
-  description: "A focused task workspace for the marketing team.",
+  description: "Marketing jamoasi uchun vazifalarni boshqarish tizimi.",
 };
 
 export const viewport: Viewport = {

@@ -72,6 +72,6 @@ export function handleTelegramUpdate(update: TelegramUpdate): TelegramReply | nu
 
   return {
     chatId: message.chat.id,
-    text: "Marketing Team Task Bot is online. Team onboarding will be available in Sprint 1.",
+    text: "Marketing vazifalar boti ishlayapti.",
   };
 }

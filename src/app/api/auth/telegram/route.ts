@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     return response;
   } catch (error) {
     if (error instanceof TelegramInitDataError) {
-      return errorResponse(new ApplicationError("UNAUTHENTICATED", "Telegram authentication failed."));
+      return errorResponse(new ApplicationError("UNAUTHENTICATED", "Telegram autentifikatsiyasi bajarilmadi."));
     }
     return errorResponse(error);
   }

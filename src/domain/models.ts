@@ -94,6 +94,7 @@ export const TaskSchema = z.object({
   creatorId: z.string().uuid(),
   assigneeId: z.string().uuid(),
   deadline: z.string(),
+  publicationAt: z.string().nullable(),
   blockedReason: z.string().nullable(),
   completedAt: z.string().nullable(),
   cancelledAt: z.string().nullable(),
@@ -101,6 +102,39 @@ export const TaskSchema = z.object({
   updatedAt: z.string(),
   recurringDefinitionId: z.string().uuid().nullable().optional(),
   scheduledOccurrenceAt: z.string().nullable().optional(),
+  workflowRunId: z.string().uuid().nullable().optional(),
+  workflowStepId: z.string().uuid().nullable().optional(),
+});
+
+export const WorkflowTemplateStepSchema = z.object({
+  id: z.string().uuid(),
+  templateId: z.string().uuid(),
+  position: z.number().int().positive(),
+  title: z.string(),
+  description: z.string().nullable(),
+  assigneeRole: TeamRoleSchema,
+  priority: TaskPrioritySchema,
+  dueAfterHours: z.number().int().positive(),
+});
+
+export const WorkflowTemplateSchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  isActive: z.boolean(),
+  isSystem: z.boolean(),
+  steps: z.array(WorkflowTemplateStepSchema),
+});
+
+export const TaskCommentSchema = z.object({
+  id: z.string().uuid(),
+  taskId: z.string().uuid(),
+  authorId: z.string().uuid(),
+  kind: z.enum(["COMMENT", "RESULT"]),
+  body: z.string().nullable(),
+  attachmentUrl: z.string().url().nullable(),
+  createdAt: z.string(),
 });
 
 export const TaskEventSchema = z.object({
@@ -133,6 +167,7 @@ export const DeadlineChangeRequestSchema = z.object({
 export type User = z.infer<typeof UserSchema>;
 export type Task = z.infer<typeof TaskSchema>;
 export type TaskEvent = z.infer<typeof TaskEventSchema>;
+export type TaskComment = z.infer<typeof TaskCommentSchema>;
 export type DeadlineChangeRequest = z.infer<typeof DeadlineChangeRequestSchema>;
 export type PostingChecklist = z.infer<typeof PostingChecklistSchema>;
 export type PostingChecklistItem = z.infer<typeof PostingChecklistItemSchema>;
@@ -141,3 +176,5 @@ export type RecurrenceFrequency = z.infer<typeof RecurrenceFrequencySchema>;
 export type RecurrenceStatus = z.infer<typeof RecurrenceStatusSchema>;
 export type UserEvent = z.infer<typeof UserEventSchema>;
 export type UserEventType = z.infer<typeof UserEventTypeSchema>;
+export type WorkflowTemplate = z.infer<typeof WorkflowTemplateSchema>;
+export type WorkflowTemplateStep = z.infer<typeof WorkflowTemplateStepSchema>;

@@ -28,7 +28,7 @@ function meaningfulLines(text: string): string[] {
 
 function requireFutureDeadline(deadline: string, now: Date): string {
   if (new Date(deadline).getTime() <= now.getTime()) {
-    throw new TaskShorthandError("Deadline must be in the future.");
+    throw new TaskShorthandError("Muddat kelajakdagi vaqt bo‘lishi kerak.");
   }
   return deadline;
 }
@@ -52,7 +52,7 @@ export function looksLikePositionalTask(text: string): boolean {
 
 export function parseTashkentDeadline(value: string, now = new Date()): string {
   const match = value.trim().match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?\s+(\d{1,2}):(\d{2})$/);
-  if (!match) throw new TaskShorthandError("DL must use DD.MM HH:mm or DD.MM.YYYY HH:mm.");
+  if (!match) throw new TaskShorthandError("DL maydoni DD.MM HH:mm yoki DD.MM.YYYY HH:mm formatida bo‘lishi kerak.");
 
   const [, dayText, monthText, explicitYear, hourText, minuteText] = match;
   const day = Number(dayText);
@@ -70,7 +70,7 @@ export function parseTashkentDeadline(value: string, now = new Date()): string {
     localCheck.getUTCFullYear() !== year || localCheck.getUTCMonth() !== month - 1 ||
     localCheck.getUTCDate() !== day || localCheck.getUTCHours() !== hour || localCheck.getUTCMinutes() !== minute
   ) {
-    throw new TaskShorthandError("DL contains an invalid date or time.");
+    throw new TaskShorthandError("DL maydonida noto‘g‘ri sana yoki vaqt bor.");
   }
 
   if (!explicitYear && deadline.getTime() < now.getTime()) {
@@ -90,12 +90,12 @@ export function parseTaskShorthand(text: string, now = new Date()): ParsedTaskSh
     const match = line.match(/^(T|A|DL|P|D)\s*:\s*(.*)$/i);
     if (!match) continue;
     const key = match[1].toUpperCase();
-    if (fields.has(key)) throw new TaskShorthandError(`${key} may only appear once.`);
+    if (fields.has(key)) throw new TaskShorthandError(`${key} maydoni faqat bir marta yozilishi mumkin.`);
     fields.set(key, match[2].trim());
   }
 
   for (const required of ["T", "A", "DL"]) {
-    if (!fields.get(required)) throw new TaskShorthandError(`${required} is required.`);
+    if (!fields.get(required)) throw new TaskShorthandError(`${required} maydoni majburiy.`);
   }
 
   const assignee = fields.get("A")!.replace(/^@/, "");
@@ -107,7 +107,7 @@ export function parseTaskShorthand(text: string, now = new Date()): ParsedTaskSh
     description: fields.get("D") || undefined,
   });
   if (!result.success) {
-    throw new TaskShorthandError(result.error.issues[0]?.message ?? "Task format is invalid.");
+    throw new TaskShorthandError(result.error.issues[0]?.message ?? "Vazifa formati noto‘g‘ri.");
   }
   return result.data;
 }
@@ -115,12 +115,12 @@ export function parseTaskShorthand(text: string, now = new Date()): ParsedTaskSh
 export function parsePositionalTask(text: string, now = new Date()): ParsedTaskShorthand {
   const lines = meaningfulLines(text);
   if (lines.length < 3) {
-    throw new TaskShorthandError("Task requires title, @assignee, and deadline lines.");
+    throw new TaskShorthandError("Vazifa nomi, @mas’ul va muddat qatorlari kerak.");
   }
 
   const assigneeMatch = lines[1].match(TelegramUsernameLine);
   if (!assigneeMatch) {
-    throw new TaskShorthandError("Line 2 must be exactly @username.");
+    throw new TaskShorthandError("2-qator aynan @username ko‘rinishida bo‘lishi kerak.");
   }
 
   let deadline: string;
@@ -128,7 +128,7 @@ export function parsePositionalTask(text: string, now = new Date()): ParsedTaskS
     deadline = requireFutureDeadline(parseTashkentDeadline(lines[2], now), now);
   } catch (error) {
     if (error instanceof TaskShorthandError && error.message.startsWith("DL ")) {
-      throw new TaskShorthandError(error.message.replace(/^DL/, "Line 3"));
+      throw new TaskShorthandError(error.message.replace(/^DL/, "3-qator"));
     }
     throw error;
   }
@@ -144,7 +144,7 @@ export function parsePositionalTask(text: string, now = new Date()): ParsedTaskS
     description: descriptionLines.length > 0 ? descriptionLines.join("\n") : undefined,
   });
   if (!result.success) {
-    throw new TaskShorthandError(result.error.issues[0]?.message ?? "Task format is invalid.");
+    throw new TaskShorthandError(result.error.issues[0]?.message ?? "Vazifa formati noto‘g‘ri.");
   }
   return result.data;
 }

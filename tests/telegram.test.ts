@@ -15,7 +15,7 @@ describe("Telegram foundation", () => {
 
     expect(handleTelegramUpdate(update)).toEqual({
       chatId: 42,
-      text: "Marketing Team Task Bot is online. Team onboarding will be available in Sprint 1.",
+      text: "Marketing vazifalar boti ishlayapti.",
     });
   });
 

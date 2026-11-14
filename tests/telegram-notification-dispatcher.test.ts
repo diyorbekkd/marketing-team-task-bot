@@ -38,6 +38,7 @@ const task: Task = {
   creatorId: creator.id,
   assigneeId: assignee.id,
   deadline: "2026-09-08T13:00:00.000Z",
+  publicationAt: null,
   blockedReason: null,
   completedAt: null,
   cancelledAt: null,
@@ -70,16 +71,16 @@ describe("Telegram notification dispatcher", () => {
     await expect(notifier.notifyAssignment({ task, creator, assignee })).resolves.toEqual({ status: "SENT" });
     expect(sendTelegramMessage).toHaveBeenCalledWith("test-token", expect.objectContaining({
       chatId: "43",
-      text: expect.stringContaining("Creator: Team Lead"),
+      text: expect.stringContaining("Yaratuvchi: Team Lead"),
       replyMarkup: {
         inline_keyboard: [
-          [{ text: "📋 Open Task", web_app: { url: "https://tasks.example.com" } }],
+          [{ text: "📋 Vazifani ochish", web_app: { url: "https://tasks.example.com" } }],
         ],
       },
     }));
     const [, call] = (sendTelegramMessage as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call.text).not.toContain("Accept");
-    expect(call.text).toContain("Status: In Progress");
+    expect(call.text).toContain("Holat: Jarayonda");
   });
 
   it("sends one combined message for several tasks assigned to the same person in a bulk batch", async () => {
@@ -90,7 +91,7 @@ describe("Telegram notification dispatcher", () => {
     await expect(notifier.notifyBulkAssignment({ tasks: [task, second], creator, assignee })).resolves.toEqual({ status: "SENT" });
     const [, call] = (sendTelegramMessage as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call.chatId).toBe("43");
-    expect(call.text).toContain("2 ta yangi task");
+    expect(call.text).toContain("2 ta yangi vazifa");
     expect(call.text).toContain("1. Publish launch reel");
     expect(call.text).toContain("2. Second task");
   });
@@ -136,9 +137,9 @@ describe("Telegram notification dispatcher", () => {
       text: expect.stringContaining("Material kech keldi"),
       replyMarkup: {
         inline_keyboard: [
-          [{ text: "✅ Approve", callback_data: `deadline:${deadlineRequest.id}:APPROVE` }],
-          [{ text: "❌ Reject", callback_data: `deadline:${deadlineRequest.id}:REJECT` }],
-          [{ text: "📋 Open Task", web_app: { url: "https://tasks.example.com" } }],
+          [{ text: "✅ Tasdiqlash", callback_data: `deadline:${deadlineRequest.id}:APPROVE` }],
+          [{ text: "❌ Rad etish", callback_data: `deadline:${deadlineRequest.id}:REJECT` }],
+          [{ text: "📋 Vazifani ochish", web_app: { url: "https://tasks.example.com" } }],
         ],
       },
     }));
@@ -159,7 +160,7 @@ describe("Telegram notification dispatcher", () => {
           recipients: [assignee],
           deadlineRequest: { ...deadlineRequest, status: "APPROVED" },
         },
-        expectedText: "✅ Deadline o‘zgartirildi",
+        expectedText: "✅ Muddat o‘zgartirildi",
       },
       {
         input: {
@@ -169,7 +170,7 @@ describe("Telegram notification dispatcher", () => {
           recipients: [assignee],
           deadlineRequest: { ...deadlineRequest, status: "REJECTED" },
         },
-        expectedText: "❌ Deadline so‘rovi rad etildi",
+        expectedText: "❌ Muddat so‘rovi rad etildi",
       },
       {
         input: {
@@ -178,7 +179,7 @@ describe("Telegram notification dispatcher", () => {
           actor: assignee,
           recipients: [creator],
         },
-        expectedText: "✅ Task qabul qilindi\n\nTask: Publish launch reel\nAssignee: @editor\nDeadline:",
+        expectedText: "✅ Vazifa qabul qilindi\n\nVazifa: Publish launch reel\nMas’ul: @editor\nMuddat:",
       },
       {
         input: {
@@ -187,7 +188,7 @@ describe("Telegram notification dispatcher", () => {
           actor: creator,
           recipients: [assignee],
         },
-        expectedText: "✅ Task qabul qilindi",
+        expectedText: "✅ Vazifa tasdiqlandi",
       },
       {
         input: {
@@ -197,7 +198,7 @@ describe("Telegram notification dispatcher", () => {
           recipients: [assignee],
           comment: "Use the approved copy",
         },
-        expectedText: "Comment:\nUse the approved copy",
+        expectedText: "Izoh:\nUse the approved copy",
       },
       {
         input: {
@@ -207,7 +208,7 @@ describe("Telegram notification dispatcher", () => {
           recipients: [creator],
           comment: "Waiting for assets",
         },
-        expectedText: "Reason:\nWaiting for assets",
+        expectedText: "Sabab:\nWaiting for assets",
       },
     ];
 
@@ -232,12 +233,12 @@ describe("Telegram notification dispatcher", () => {
     });
 
     expect(sendTelegramMessage).toHaveBeenCalledWith("test-token", expect.objectContaining({
-      text: expect.stringContaining("📝 Task reviewga yuborildi"),
+      text: expect.stringContaining("📝 Vazifa tekshiruvga yuborildi"),
       replyMarkup: {
         inline_keyboard: [
-          [{ text: "✅ Approve", callback_data: `task:${task.id}:APPROVE` }],
-          [{ text: "🔄 Revision", callback_data: `task:${task.id}:REQUEST_REVISION` }],
-          [{ text: "📋 Open Task", web_app: { url: "https://tasks.example.com" } }],
+          [{ text: "✅ Tasdiqlash", callback_data: `task:${task.id}:APPROVE` }],
+          [{ text: "🔄 Tuzatishga qaytarish", callback_data: `task:${task.id}:REQUEST_REVISION` }],
+          [{ text: "📋 Vazifani ochish", web_app: { url: "https://tasks.example.com" } }],
         ],
       },
     }));
@@ -257,12 +258,12 @@ describe("Telegram notification dispatcher", () => {
     expect(sendTelegramMessage).toHaveBeenCalledWith("test-token", expect.objectContaining({
       chatId: creator.telegramUserId,
       text: [
-        "✅ Task qabul qilindi",
+        "✅ Vazifa qabul qilindi",
         "",
-        "Task: Publish launch reel",
-        "Assignee: @editor",
-        "Deadline: 08.09.2026 18:00",
-        "Status: In Progress",
+        "Vazifa: Publish launch reel",
+        "Mas’ul: @editor",
+        "Muddat: 08.09.2026 18:00",
+        "Holat: Jarayonda",
       ].join("\n"),
     }));
   });

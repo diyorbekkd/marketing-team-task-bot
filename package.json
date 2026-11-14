@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "engines": {
-    "node": "22.x"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "next dev",
@@ -21,21 +21,21 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "2.115.0",
-    "next": "16.3.4",
+    "next": "16.4.6",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "server-only": "0.0.1",
-    "zod": "4.5.4"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@eslint/compat": "2.1.1",
     "@types/node": "26.4.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
-    "eslint": "10.0.2",
-    "eslint-config-next": "16.3.4",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.4.6",
     "supabase": "2.116.0",
     "typescript": "5.9.3",
-    "vitest": "5.0.0"
+    "vitest": "5.1.0"
   }
 }

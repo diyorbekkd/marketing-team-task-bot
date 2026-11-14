@@ -47,6 +47,7 @@ function task(overrides: Partial<Task> = {}): Task {
     creatorId: ids.creator,
     assigneeId: ids.assignee,
     deadline: "2026-09-08T13:00:00.000Z",
+    publicationAt: null,
     blockedReason: null,
     completedAt: null,
     cancelledAt: null,
@@ -123,11 +124,17 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     }),
     reassignTask: vi.fn(async ({ taskId, newAssigneeId }) => task({ id: taskId, assigneeId: newAssigneeId })),
     createTask: vi.fn(),
+    updateTask: vi.fn(async ({ patch }) => task(patch)),
     getTask: vi.fn(async () => task()),
+    listTaskPage: vi.fn(async () => ({ tasks: [task()], hasMore: false })),
     listTasks: vi.fn(async () => [task()]),
+    listHomeTasks: vi.fn(async () => [task()]),
+    listReminderCandidates: vi.fn(async () => [task()]),
     transitionTask: vi.fn(async (input) => task({ status: input.newStatus })),
     listTaskEvents: vi.fn(async () => []),
     listAllTaskEvents: vi.fn(async () => []),
+    listTaskComments: vi.fn(async () => []),
+    addTaskComment: vi.fn(),
     getPostingChecklist: vi.fn(async () => null),
     getPostingChecklistByItemId: vi.fn(async () => null),
     togglePostingChecklistItem: vi.fn(),
@@ -146,9 +153,19 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     createRecurringDefinition: vi.fn(),
     updateRecurringDefinition: vi.fn(),
     generateRecurringOccurrence: vi.fn(async () => null),
+    listWorkflowTemplates: vi.fn(async () => []),
+    startWorkflowRun: vi.fn(async () => task()),
+    advanceWorkflowRun: vi.fn(async () => null),
+    recoverWorkflowRuns: vi.fn(async () => []),
     claimReportDelivery: vi.fn(async () => true),
     completeReportDelivery: vi.fn(async () => undefined),
-    claimReminderDelivery: vi.fn(async () => true),
+    enqueueNotification: vi.fn(),
+    claimNotification: vi.fn(async () => true),
+    claimDueNotifications: vi.fn(async () => []),
+    completeNotification: vi.fn(async () => undefined),
+    getNotificationPreferences: vi.fn(async () => ({ assignments: true, workflow: true, reminders: true, dailyCheck: true, reports: true })),
+    updateNotificationPreferences: vi.fn(async (_userId, preferences) => preferences),
+    claimReminderDelivery: vi.fn(async () => ({ claimed: true, deliveries: [] })),
     completeReminderDelivery: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -224,6 +241,60 @@ describe("MarketingService MVP permissions", () => {
     const service = new MarketingService(repository(), notifier());
     await expect(service.listTasks(assignee, "team")).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(service.listTasks(head, "team")).resolves.toHaveLength(1);
+  });
+
+  it("pushes task visibility, filters, and pagination into the repository", async () => {
+    const pageTask = task({ status: "BLOCKED", priority: "high" });
+    const repo = repository({
+      listTaskPage: vi.fn(async () => ({ tasks: [pageTask], hasMore: true })),
+    });
+    const service = new MarketingService(repo, notifier());
+
+    const result = await service.listTaskPage(assignee, "my", {
+      status: "BLOCKED",
+      priority: "high",
+      search: "creative",
+      sort: "created_desc",
+      pageSize: "25",
+    });
+
+    expect(repo.listTaskPage).toHaveBeenCalledWith(expect.objectContaining({
+      visibleToUserId: assignee.id,
+      status: "BLOCKED",
+      priority: "high",
+      search: "creative",
+      sort: "created_desc",
+      limit: 25,
+    }));
+    expect(result.pagination).toMatchObject({ pageSize: 25, hasMore: true });
+    expect(result.pagination.nextCursor).toEqual(expect.any(String));
+  });
+
+  it("builds Today bounds in Asia/Tashkent before querying the database", async () => {
+    const repo = repository({ listTaskPage: vi.fn(async () => ({ tasks: [], hasMore: false })) });
+    const service = new MarketingService(repo, notifier());
+
+    await service.listTaskPage(head, "today", {}, new Date("2026-09-06T20:00:00.000Z"));
+
+    expect(repo.listTaskPage).toHaveBeenCalledWith(expect.objectContaining({
+      visibleToUserId: undefined,
+      deadlineFrom: "2026-09-06T19:00:00.000Z",
+      deadlineBefore: "2026-09-07T19:00:00.000Z",
+    }));
+  });
+
+  it("keeps created-task and deadline-range filtering in the database query", async () => {
+    const repo = repository({ listTaskPage: vi.fn(async () => ({ tasks: [], hasMore: false })) });
+    const service = new MarketingService(repo, notifier());
+
+    await service.listTaskPage(assignee, "created", { deadlineRange: "next_7_days" }, new Date("2026-09-06T10:00:00.000Z"));
+
+    expect(repo.listTaskPage).toHaveBeenCalledWith(expect.objectContaining({
+      visibleToUserId: undefined,
+      creatorId: assignee.id,
+      deadlineFrom: "2026-09-06T10:00:00.000Z",
+      deadlineBefore: "2026-09-13T10:00:00.000Z",
+    }));
   });
 
   it("keeps Head's My Tasks personal while team filters remain team-wide", async () => {
@@ -648,7 +719,7 @@ describe("MarketingService MVP permissions", () => {
     });
   });
 
-  describe("role can be corrected later", () => {
+  describe("role can be corrected by Head", () => {
     it("lets Head correct another team member's role", async () => {
       const repo = repository();
       const service = new MarketingService(repo, notifier());
@@ -659,13 +730,14 @@ describe("MarketingService MVP permissions", () => {
       expect(updated.role).toBe("DIGITAL_MARKETER");
     });
 
-    it("lets a team member correct their own mis-set role", async () => {
+    it("does not let a team member change their own organizational role", async () => {
       const repo = repository();
       const service = new MarketingService(repo, notifier());
 
-      await service.updateUserRole(assignee, ids.assignee, "CONTENT_MARKETER");
+      await expect(service.updateUserRole(assignee, ids.assignee, "CONTENT_MARKETER"))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
 
-      expect(repo.updateUserRole).toHaveBeenCalledWith({ userId: ids.assignee, actorId: assignee.id, role: "CONTENT_MARKETER" });
+      expect(repo.updateUserRole).not.toHaveBeenCalled();
     });
 
     it("does not let an ordinary user change someone else's role", async () => {
@@ -1004,6 +1076,110 @@ describe("MarketingService MVP permissions", () => {
       expect(repo.updateRecurringDefinition).toHaveBeenCalledWith(expect.objectContaining({
         id: activeDef.id, status: "PAUSED", pauseReason: "ASSIGNEE_DEACTIVATED",
       }));
+    });
+  });
+
+  describe("task editing and collaboration", () => {
+    it("lets an assignee edit content fields but not deadline, assignee, or publication date", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+
+      await service.updateTask(assignee, ids.task, { title: "Updated title", priority: "high" });
+      expect(repo.updateTask).toHaveBeenCalledWith({
+        taskId: ids.task,
+        actorId: assignee.id,
+        patch: { title: "Updated title", priority: "high" },
+      });
+      await expect(service.updateTask(assignee, ids.task, {
+        deadline: "2026-09-12T13:00:00.000Z",
+      })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.updateTask(assignee, ids.task, {
+        publicationAt: "2026-09-13T13:00:00.000Z",
+      })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.updateTask(assignee, ids.task, {
+        assigneeId: unrelated.id,
+      })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("lets the creator and Head manage restricted fields, but requires an active assignee", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+
+      await service.updateTask(creator, ids.task, {
+        assigneeId: unrelated.id,
+        deadline: "2026-09-12T13:00:00.000Z",
+        publicationAt: "2026-09-13T13:00:00.000Z",
+      });
+      expect(repo.updateTask).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: ids.task,
+        actorId: creator.id,
+        patch: expect.objectContaining({ assigneeId: unrelated.id }),
+      }));
+
+      const inactive = { ...unrelated, isActive: false, deactivatedAt: "2026-09-01T00:00:00.000Z" };
+      const inactiveRepo = repository({ getUserById: vi.fn(async (id) => id === inactive.id ? inactive : task().id === id ? null : task().creatorId === id ? creator : task().assigneeId === id ? assignee : null) });
+      await expect(new MarketingService(inactiveRepo, notifier()).updateTask(head, ids.task, {
+        assigneeId: inactive.id,
+      })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    });
+
+    it("stores comments and result links only for people who can view the task", async () => {
+      const savedComment = {
+        id: "70000000-0000-4000-8000-000000000001",
+        taskId: ids.task,
+        authorId: assignee.id,
+        kind: "RESULT" as const,
+        body: "Montaj tayyor",
+        attachmentUrl: "https://drive.google.com/file/example",
+        createdAt: "2026-09-08T12:00:00.000Z",
+      };
+      const repo = repository({ addTaskComment: vi.fn(async () => savedComment) });
+      const service = new MarketingService(repo, notifier());
+
+      await expect(service.addTaskComment(assignee, ids.task, {
+        kind: "RESULT",
+        body: "Montaj tayyor",
+        attachmentUrl: "https://drive.google.com/file/example",
+      })).resolves.toEqual(savedComment);
+      expect(repo.addTaskComment).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: ids.task,
+        authorId: assignee.id,
+        kind: "RESULT",
+      }));
+      await expect(service.addTaskComment(unrelated, ids.task, { body: "No access" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.addTaskComment(assignee, ids.task, {})).rejects.toThrow();
+    });
+  });
+
+  describe("marketing workflows", () => {
+    it("allows only Head to start a reusable workflow and notifies its first assignee", async () => {
+      const firstTask = task({ workflowRunId: "90000000-0000-4000-8000-000000000001", workflowStepId: "90000000-0000-4000-8000-000000000002" });
+      const repo = repository({ startWorkflowRun: vi.fn(async () => firstTask) });
+      const notifications = notifier();
+      const service = new MarketingService(repo, notifications);
+      const input = { templateId: "91000000-0000-4000-8000-000000000001", subject: "Yangi filial" };
+
+      await expect(service.startWorkflow(creator, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.startWorkflow(head, input)).resolves.toMatchObject({ task: firstTask });
+      expect(repo.startWorkflowRun).toHaveBeenCalledWith(expect.objectContaining({ actorId: head.id, subject: "Yangi filial" }));
+      expect(notifications.notifyAssignment).toHaveBeenCalledWith(expect.objectContaining({ task: firstTask, assignee }));
+    });
+
+    it("advances a workflow after approval and queues the next assignee notification", async () => {
+      const reviewed = task({ status: "REVIEW", workflowRunId: "90000000-0000-4000-8000-000000000001", workflowStepId: "90000000-0000-4000-8000-000000000002" });
+      const completed = { ...reviewed, status: "DONE" as const, completedAt: "2026-09-08T14:00:00.000Z" };
+      const next = task({ id: "20000000-0000-4000-8000-000000000020", creatorId: head.id, workflowRunId: reviewed.workflowRunId, workflowStepId: "90000000-0000-4000-8000-000000000003" });
+      const repo = repository({
+        getTask: vi.fn(async () => reviewed),
+        transitionTask: vi.fn(async () => completed),
+        advanceWorkflowRun: vi.fn(async () => next),
+      });
+      const notifications = notifier();
+
+      await new MarketingService(repo, notifications).performTaskAction(head, reviewed.id, { action: "APPROVE" });
+      expect(repo.advanceWorkflowRun).toHaveBeenCalledWith({ completedTaskId: reviewed.id, actorId: head.id });
+      expect(notifications.notifyAssignment).toHaveBeenCalledWith(expect.objectContaining({ task: next, assignee }));
     });
   });
 

@@ -32,6 +32,8 @@ A user is either **pending** (never activated — `is_active = false`, no `deact
 
 Only Head may activate, deactivate, or reactivate a team member, and Head can never deactivate themself or any other Head account — the only path to removing a Head from the team is a direct database operation outside this product, which matches the existing constraint that at most one user may hold the `HEAD_OF_MARKETING` role and be active at a time.
 
+Organizational roles are authorization data. An ordinary team member cannot change their own role; only Head may correct a non-Head role, and every such change is recorded in `user_events`. Transferring the Head role remains an out-of-band administrative operation.
+
 An active user can use the bot and Mini App, be assigned new tasks, and appears in assignee pickers, current team lists, and workload/analytics. A deactivated user cannot perform bot actions or authenticated Mini App requests (their session and every future Telegram command are rejected before reaching any business logic), cannot be assigned new tasks by any creation path (group shorthand, private bot, Mini App Quick Add, or recurring task configuration/generation), does not receive workflow notifications, deadline reminders, or scheduled reports, and is excluded from current team/workload views. Their historical tasks, audit events, and past report/analytics activity are never rewritten or hidden — only their current membership state changes.
 
 Deactivating a member with open (non-terminal) tasks requires Head to explicitly choose what happens to those tasks: reassign them all to a named active teammate (this also sends that teammate the normal task-assignment notification), cancel them, or keep the historical assignment as-is. There is no silent default that reassigns or orphans work. Any of that member's `ACTIVE` recurring definitions are automatically paused (recorded as `pauseReason: "ASSIGNEE_DEACTIVATED"`) so the scheduler cannot keep generating tasks for someone no longer on the team; Head can later change the recurrence's assignee and resume it. Deactivation never deletes a row — user, task, and recurrence history all remain queryable — so reactivation cannot create a duplicate account.
@@ -64,7 +66,7 @@ A private message to the bot supports the exact same task-creation format as the
 
 ### Telegram Mini App
 
-The Mini App will eventually include Home, Tasks, Team, Calendar, and Reports. It will provide task lists and details, quick add, Kanban, factual workload counts, overdue/blocked/review queues, calendar, filters, search, reports, and activity history. Employee views are mainly personal; Head views are team-wide.
+The Mini App includes Home, Tasks, Team, Calendar, and Reports. It provides task lists and details, quick add, Kanban, factual workload counts, overdue/blocked/review queues, day/week/month calendar, server-side filters and search, reports, and activity history. Employees can switch between tasks assigned to them and tasks they created; Head can additionally inspect the team-wide scope.
 
 Quick Add stays short: title, assignee, and deadline are required; priority and description are optional. Submission is blocked while the team list is still loading (a loading/retry state, never a false "not found"); a team-list load failure shows `"Jamoa ma'lumotlarini yuklab bo'lmadi. Qayta urinib ko'ring."`.
 
@@ -85,6 +87,8 @@ Canonical statuses are:
 `OVERDUE` is never a status. It is derived when `deadline < current time` and status is neither `DONE` nor `CANCELLED`. A blocked, review, revision, or in-progress task may simultaneously be overdue.
 
 Priorities are `high`, `normal`, and `low`, defaulting to `normal`.
+
+`deadline` is the work-completion commitment. `publication_at` is an optional, separate marketing-publication date. Both are shown in the calendar with different visual markers and changing either is audited.
 
 Tasks are cancelled instead of permanently deleted so analytics and history remain intact. A future Head-only reopen/recovery action may be added.
 
@@ -143,6 +147,8 @@ Important mutations append an immutable task event containing task, actor, event
 - `TASK_BLOCKED`, `TASK_UNBLOCKED`
 - `REVIEW_REQUESTED`, `REVISION_REQUESTED`, `TASK_COMPLETED`
 - `TASK_CANCELLED`, `TASK_REOPENED`
+- `PUBLICATION_DATE_CHANGED`, `COMMENT_ADDED`, `RESULT_SUBMITTED`
+- `WORKFLOW_STARTED`, `WORKFLOW_STEP_ACTIVATED`, `WORKFLOW_COMPLETED`
 
 Analytics must use history where historical state matters rather than attempting to infer everything from the current `tasks` row.
 
@@ -154,10 +160,10 @@ A new task's assignment notification states the title, creator, deadline, priori
 
 Deadline reminders fire for every active (non-`DONE`/`CANCELLED`) task at five thresholds relative to its deadline: 24 hours before, 3 hours before, at the deadline, 1 hour overdue, and 24 hours overdue. Before/at-deadline reminders go to the assignee only; the two overdue reminders escalate to the assignee, creator, and Head (deduplicated, so a creator who is also Head or the assignee receives one message, not two). Delivery is idempotent per `(task_id, deadline, reminder_type)` — a cron sweep that runs every few minutes, or runs twice, never resends a reminder that already went out for that exact deadline value. Changing a task's deadline starts a fresh reminder cycle for the new value; delivery history for the old deadline is untouched and does not block the new one. A threshold that passed more than a few hours before the sweep first sees it is treated as missed rather than fired retroactively, so deploying this feature (or recovering from a scheduler gap) does not burst-notify on old deadlines.
 
-Scheduled reports use `Asia/Tashkent`:
+Scheduled reports and checks use `Asia/Tashkent`:
 
 - morning summary at 08:00 daily;
-- evening summary at 19:00 daily;
+- daily task check at 17:30 on weekdays;
 - weekly report Sunday at 10:00.
 
 Head receives team-wide reports; other employees receive only their own. Head can inspect all activity but should not receive a push for every small edit. Important pushes include overdue, blocked, deadline/reassignment requests, review, revision, and significant high-priority issues.
@@ -175,6 +181,20 @@ Scheduled report metrics are deterministic:
 - `deadline changes`: approved requests resolved inside the weekly interval. Analytics counts all requests created inside its window.
 
 The weekly interval starts Monday 00:00 Asia/Tashkent and ends when the Sunday report runs. Morning summaries are delivered even when empty because they explicitly confirm no deadline today. Empty evening and weekly reports are skipped. A database ledger deduplicates every recipient and interval.
+
+Assignment, workflow, and report notifications are first written to a per-recipient outbox. Failed Telegram sends are retried with exponential backoff, stale claims are recovered, attempts are capped at five, and the deduplication key prevents a retry from creating a second logical notification. Reminder retries retain per-recipient results, so a partial failure retries only failed recipients. Users can independently turn assignment, workflow, reminder, daily-check, and report notifications on or off.
+
+## Task editing, discussion, and results
+
+Task Detail supports editing title, description, priority, assignee, deadline, and publication date according to the same server-side permission matrix used by Telegram actions. Head can manage every task; a creator has creator-level fields; an assignee can edit content and priority but cannot silently change deadline or assignee. PostgreSQL rechecks visibility and field permissions and writes state plus audit events in one transaction.
+
+Visible participants can add immutable comments or submit a result with an HTTP(S) attachment link. Common image links receive an inline preview; other Drive, design, video, or document links remain directly openable. Comments, results, revision reasons, workflow events, and approvals remain in the task timeline.
+
+## Reusable marketing workflows
+
+Head can start a sequential workflow from one of seven reusable templates: Instagram Reels, Telegram post, Instagram Stories, ad creatives, ad campaign, landing page, and customer case video. Each step declares its role, priority, and due-after duration. Starting a run assigns the first step; approving a completed step atomically creates the next ordinary task and sends its assignment notification. A five-minute recovery sweep advances a run if a transient failure happens between approval and the next step.
+
+Templates and steps are normalized database records rather than hard-coded UI sequences, so custom template-management controls can be added without changing the run engine. Editing a template that already has active or historical runs is intentionally not exposed in this release; safe versioning/clone semantics must be defined first so history cannot be rewritten.
 
 ## Posting checklist
 
@@ -198,4 +218,4 @@ The Reports view uses a 30-day window by default. Employee data is attributed by
 
 Subtasks and lightweight Telegram message relay remain planned. Relay should use Telegram copy/forward semantics and should not require permanent application storage of the message body or file.
 
-MVP explicitly excludes AI features, categories, advanced project management, effort points, time tracking, internal task chat, Google Calendar, Notion, Bitrix, Gantt charts, salary/KPI features, gamification, and a generalized workflow engine.
+MVP explicitly excludes AI features, categories, advanced project management, effort points, time tracking, real-time chat/presence, Google Calendar, Notion, Bitrix, Gantt charts, salary/KPI features, gamification, and a generalized branching workflow engine.

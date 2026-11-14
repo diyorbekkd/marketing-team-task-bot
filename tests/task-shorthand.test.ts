@@ -56,7 +56,7 @@ describe("Telegram task shorthand", () => {
   });
 
   it("rejects impossible local dates", () => {
-    expect(() => parseTashkentDeadline("31.02.2026 12:00")).toThrow(/invalid date or time/);
+    expect(() => parseTashkentDeadline("31.02.2026 12:00")).toThrow(/noto‘g‘ri sana yoki vaqt/);
   });
 
   it("parses the primary positional format", () => {
@@ -112,11 +112,11 @@ describe("Telegram task shorthand", () => {
     expect(() => parseGroupTaskMessage(
       "Yangi creative\n@misbahmarketing\n08-09-2026 18:00",
       now,
-    )).toThrow(/Line 3/);
+    )).toThrow(/3-qator/);
     expect(() => parseGroupTaskMessage(
       "Yangi creative\n@misbahmarketing\n01.01.2026 10:00",
       now,
-    )).toThrow(/future/);
+    )).toThrow(/kelajakdagi vaqt/);
   });
 
   it("silently ignores unrelated three-line conversation", () => {

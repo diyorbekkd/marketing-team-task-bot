@@ -9,8 +9,10 @@ import type {
   RecurrenceStatus,
   RecurringDefinition,
   Task,
+  TaskComment,
   TaskEvent,
   User,
+  WorkflowTemplate,
 } from "@/domain/models";
 
 export interface TelegramIdentityInput {
@@ -31,6 +33,70 @@ export interface CreateTaskRecord {
   readonly scheduledOccurrenceAt?: string;
 }
 
+export interface UpdateTaskRecord {
+  readonly taskId: string;
+  readonly actorId: string;
+  readonly patch: Readonly<{
+    title?: string;
+    description?: string | null;
+    priority?: TaskPriority;
+    deadline?: string;
+    assigneeId?: string;
+    publicationAt?: string | null;
+  }>;
+}
+
+export type TaskPageSort = "deadline_asc" | "deadline_desc" | "created_desc";
+
+export interface TaskPageQuery {
+  /** When present, keep results to tasks created by or assigned to this user. */
+  readonly visibleToUserId?: string;
+  readonly status?: TaskStatus;
+  readonly priority?: TaskPriority;
+  readonly assigneeId?: string;
+  readonly creatorId?: string;
+  readonly deadlineFrom?: string;
+  readonly deadlineBefore?: string;
+  readonly excludeTerminal?: boolean;
+  readonly search?: string;
+  readonly sort: TaskPageSort;
+  readonly limit: number;
+  readonly cursor?: Readonly<{ value: string; id: string }>;
+}
+
+export interface TaskPage {
+  readonly tasks: Task[];
+  readonly hasMore: boolean;
+}
+
+export interface NotificationOutboxRecord {
+  readonly id: string;
+  readonly dedupeKey: string;
+  readonly notificationType: "ASSIGNMENT" | "BULK_ASSIGNMENT" | "WORKFLOW" | "REPORT";
+  readonly recipientUserId: string;
+  readonly taskId: string | null;
+  readonly payload: unknown;
+  readonly status: "PENDING" | "CLAIMED" | "SENT" | "FAILED";
+  readonly attemptCount: number;
+}
+
+export interface ReminderClaim {
+  readonly claimed: boolean;
+  readonly deliveries: Array<{
+    readonly recipientUserId: string;
+    readonly status: "SENT" | "FAILED";
+    readonly reason?: string;
+  }>;
+}
+
+export interface NotificationPreferences {
+  readonly assignments: boolean;
+  readonly workflow: boolean;
+  readonly reminders: boolean;
+  readonly dailyCheck: boolean;
+  readonly reports: boolean;
+}
+
 export interface MarketingRepository {
   registerTelegramUser(identity: TelegramIdentityInput, expectedHeadTelegramUserId: string): Promise<User>;
   getUserById(id: string): Promise<User | null>;
@@ -45,8 +111,12 @@ export interface MarketingRepository {
   reactivateUser(input: { userId: string; actorId: string }): Promise<User>;
 
   createTask(input: CreateTaskRecord): Promise<Task>;
+  updateTask(input: UpdateTaskRecord): Promise<Task>;
   getTask(taskId: string): Promise<Task | null>;
+  listTaskPage(input: TaskPageQuery): Promise<TaskPage>;
   listTasks(): Promise<Task[]>;
+  listHomeTasks(visibleToUserId?: string): Promise<Task[]>;
+  listReminderCandidates(input: { deadlineFrom: string; deadlineTo: string }): Promise<Task[]>;
   transitionTask(input: {
     taskId: string;
     actorId: string;
@@ -56,6 +126,14 @@ export interface MarketingRepository {
   reassignTask(input: { taskId: string; newAssigneeId: string; actorId: string }): Promise<Task>;
   listTaskEvents(taskId: string): Promise<TaskEvent[]>;
   listAllTaskEvents(): Promise<TaskEvent[]>;
+  listTaskComments(taskId: string): Promise<TaskComment[]>;
+  addTaskComment(input: {
+    taskId: string;
+    authorId: string;
+    kind: "COMMENT" | "RESULT";
+    body?: string;
+    attachmentUrl?: string;
+  }): Promise<TaskComment>;
   getPostingChecklist(taskId: string): Promise<PostingChecklist | null>;
   getPostingChecklistByItemId(itemId: string): Promise<PostingChecklist | null>;
   togglePostingChecklistItem(input: { itemId: string; actorId: string }): Promise<PostingChecklistItem>;
@@ -67,7 +145,7 @@ export interface MarketingRepository {
     reason: string;
   }): Promise<DeadlineChangeRequest>;
   getDeadlineChangeRequest(requestId: string): Promise<DeadlineChangeRequest | null>;
-  listDeadlineChangeRequests(): Promise<DeadlineChangeRequest[]>;
+  listDeadlineChangeRequests(input?: { taskId?: string }): Promise<DeadlineChangeRequest[]>;
   resolveDeadlineChangeRequest(input: {
     requestId: string;
     resolvedBy: string;
@@ -110,6 +188,28 @@ export interface MarketingRepository {
     scheduledOccurrenceAt: string;
     nextOccurrenceAt: string | null;
   }): Promise<Task | null>;
+  listWorkflowTemplates(): Promise<WorkflowTemplate[]>;
+  startWorkflowRun(input: {
+    templateId: string;
+    actorId: string;
+    subject: string;
+    assigneeMap: Record<string, string>;
+  }): Promise<Task>;
+  advanceWorkflowRun(input: { completedTaskId: string; actorId: string }): Promise<Task | null>;
+  recoverWorkflowRuns(): Promise<Task[]>;
+
+  enqueueNotification(input: {
+    dedupeKey: string;
+    notificationType: NotificationOutboxRecord["notificationType"];
+    recipientUserId: string;
+    taskId?: string;
+    payload: unknown;
+  }): Promise<NotificationOutboxRecord>;
+  claimNotification(id: string): Promise<boolean>;
+  claimDueNotifications(limit: number): Promise<NotificationOutboxRecord[]>;
+  completeNotification(input: { id: string; sent: boolean; error?: string }): Promise<void>;
+  getNotificationPreferences(userId: string): Promise<NotificationPreferences>;
+  updateNotificationPreferences(userId: string, preferences: NotificationPreferences): Promise<NotificationPreferences>;
 
   claimReportDelivery(input: {
     reportType: "DAILY_MORNING" | "DAILY_EVENING" | "WEEKLY";
@@ -128,7 +228,7 @@ export interface MarketingRepository {
     taskId: string;
     deadline: string;
     reminderType: ReminderType;
-  }): Promise<boolean>;
+  }): Promise<ReminderClaim>;
   completeReminderDelivery(input: {
     taskId: string;
     deadline: string;

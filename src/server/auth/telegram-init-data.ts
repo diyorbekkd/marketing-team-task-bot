@@ -48,7 +48,7 @@ export function verifyTelegramInitData(
   const calculatedHash = createHmac("sha256", secretKey).update(dataCheckString).digest();
   const receivedHashBytes = Buffer.from(receivedHash, "hex");
   if (receivedHashBytes.length !== calculatedHash.length || !timingSafeEqual(receivedHashBytes, calculatedHash)) {
-    throw new TelegramInitDataError("Telegram init data signature is invalid.");
+    throw new TelegramInitDataError("Telegram boshlang‘ich ma’lumotlari imzosi noto‘g‘ri.");
   }
 
   const authDate = Number(authDateText);
@@ -61,7 +61,7 @@ export function verifyTelegramInitData(
   try {
     rawUser = JSON.parse(userText);
   } catch {
-    throw new TelegramInitDataError("Telegram user data is invalid JSON.");
+    throw new TelegramInitDataError("Telegram foydalanuvchi ma’lumoti noto‘g‘ri JSON formatida.");
   }
   const user = TelegramWebAppUserSchema.parse(rawUser);
   if (user.is_bot) {

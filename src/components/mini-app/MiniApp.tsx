@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { t } from "@/i18n";
+import { CalendarView } from "./CalendarView";
 import "./mini-app.css";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -42,6 +44,7 @@ interface Task {
   assigneeId: string;
   creatorId: string;
   deadline: string;
+  publicationAt?: string | null;
   blockedReason?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -57,6 +60,16 @@ interface TaskEvent {
   metadata?: Record<string, unknown>;
   oldValue?: unknown;
   newValue?: unknown;
+}
+
+interface TaskComment {
+  id: string;
+  taskId: string;
+  authorId: string;
+  kind: "COMMENT" | "RESULT";
+  body: string | null;
+  attachmentUrl: string | null;
+  createdAt: string;
 }
 
 interface DeadlineRequest {
@@ -76,6 +89,7 @@ interface DeadlineRequest {
 interface TaskDetail {
   task: Task;
   events: TaskEvent[];
+  comments: TaskComment[];
   deadlineRequests: DeadlineRequest[];
   postingChecklist: PostingChecklist | null;
   recurringDefinition: RecurringDefinition | null;
@@ -130,25 +144,61 @@ interface AnalyticsResponse {
   team: Array<{ user: User; metrics: AnalyticsMetrics; workload: WorkloadMetrics }>;
 }
 
+interface TaskPagination {
+  pageSize: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+interface TaskQueryOptions {
+  search: string;
+  status: "" | TaskStatus;
+  priority: "" | Priority;
+  assigneeId: string;
+  deadlineRange: "" | "today" | "next_7_days" | "overdue";
+  sort: "deadline_asc" | "deadline_desc" | "created_desc";
+}
+
+interface NotificationPreferences {
+  assignments: boolean;
+  workflow: boolean;
+  reminders: boolean;
+  dailyCheck: boolean;
+  reports: boolean;
+}
+
+interface WorkflowTemplateStep {
+  id: string;
+  position: number;
+  title: string;
+  description: string | null;
+  assigneeRole: Role;
+  priority: Priority;
+  dueAfterHours: number;
+}
+
+interface WorkflowTemplate {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  isSystem: boolean;
+  steps: WorkflowTemplateStep[];
+}
+
 type AssignmentNotificationResult =
   | { status: "SENT" }
   | { status: "FAILED"; reason: "ASSIGNEE_NOT_ONBOARDED" | "DELIVERY_FAILED" };
 
-type Filter = "my" | "today" | "overdue" | "team" | "review" | "blocked";
-type BackendScope = "my" | "today" | "overdue" | "team" | "review";
+type Filter = "my" | "created" | "today" | "overdue" | "team" | "review" | "blocked";
+type BackendScope = "my" | "created" | "today" | "overdue" | "team" | "review";
 type ViewMode = "list" | "kanban";
-type Nav = "home" | "tasks" | "team" | "reports";
+type Nav = "home" | "tasks" | "calendar" | "team" | "reports";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
-  ASSIGNED: "Assigned",
-  IN_PROGRESS: "In Progress",
-  BLOCKED: "Blocked",
-  REVIEW: "Review",
-  REVISION: "Revision",
-  DONE: "Done",
-  CANCELLED: "Cancelled",
+  ...t.taskStatus,
 };
 
 const STATUS_ORDER: TaskStatus[] = [
@@ -162,19 +212,49 @@ const STATUS_ORDER: TaskStatus[] = [
 ];
 
 const PRIORITY_LABELS: Record<Priority, string> = {
-  low: "Low",
-  normal: "Normal",
-  high: "High",
+  ...t.priority,
 };
 
 const PRIORITY_RANK: Record<Priority, number> = { high: 0, normal: 1, low: 2 };
 
+const RECURRENCE_STATUS_LABELS: Record<RecurringDefinition["status"], string> = {
+  ACTIVE: "Faol",
+  PAUSED: "Vaqtincha to‘xtatilgan",
+  STOPPED: "To‘xtatilgan",
+};
+
 const ROLE_LABELS: Record<Role, string> = {
-  OPERATOR_VIDEO_EDITOR: "Video Editor",
-  CONTENT_MARKETER: "Content Marketer",
-  DIGITAL_MARKETER: "Digital Marketer",
-  SMM_MANAGER: "SMM Manager",
-  HEAD_OF_MARKETING: "Head of Marketing",
+  ...t.role,
+};
+
+const EVENT_LABELS: Record<string, string> = {
+  TASK_CREATED: "Vazifa yaratildi",
+  TASK_ACCEPTED: "Vazifa qabul qilindi",
+  STATUS_CHANGED: "Holat o‘zgardi",
+  TITLE_CHANGED: "Nomi o‘zgardi",
+  DESCRIPTION_CHANGED: "Tavsifi o‘zgardi",
+  PRIORITY_CHANGED: "Ustuvorligi o‘zgardi",
+  DEADLINE_CHANGE_REQUESTED: "Muddat o‘zgarishi so‘raldi",
+  DEADLINE_CHANGE_APPROVED: "Muddat so‘rovi tasdiqlandi",
+  DEADLINE_CHANGE_REJECTED: "Muddat so‘rovi rad etildi",
+  DEADLINE_CHANGED: "Muddat o‘zgardi",
+  ASSIGNEE_CHANGED: "Mas’ul o‘zgardi",
+  TASK_BLOCKED: "Vazifa bloklandi",
+  TASK_UNBLOCKED: "Blok olib tashlandi",
+  REVIEW_REQUESTED: "Tekshiruvga yuborildi",
+  REVISION_REQUESTED: "Tuzatishga qaytarildi",
+  TASK_COMPLETED: "Vazifa bajarildi",
+  TASK_CANCELLED: "Vazifa bekor qilindi",
+  TASK_REOPENED: "Vazifa qayta ochildi",
+  POSTING_CHECKLIST_CREATED: "Joylash ro‘yxati yaratildi",
+  POSTING_CHECKLIST_ITEM_TOGGLED: "Joylash bandi yangilandi",
+  RECURRING_TASK_GENERATED: "Takroriy vazifa yaratildi",
+  PUBLICATION_DATE_CHANGED: "Publikatsiya sanasi o‘zgardi",
+  COMMENT_ADDED: "Izoh qo‘shildi",
+  RESULT_SUBMITTED: "Natija topshirildi",
+  WORKFLOW_STARTED: "Ish jarayoni boshlandi",
+  WORKFLOW_STEP_ACTIVATED: "Keyingi bosqich faollashdi",
+  WORKFLOW_COMPLETED: "Ish jarayoni yakunlandi",
 };
 
 const ACTIVATION_ROLES: Role[] = [
@@ -185,21 +265,17 @@ const ACTIVATION_ROLES: Role[] = [
 ];
 
 const FILTER_LABELS: Record<Filter, string> = {
-  my: "My Tasks",
-  today: "Today",
-  overdue: "Overdue",
-  team: "Team",
-  review: "Review",
-  blocked: "Blocked",
+  ...t.taskFilter,
 };
 
 const EMPTY_COPY: Record<Filter, string> = {
-  my: "No tasks assigned to you yet.",
-  today: "Bugun task yo‘q.",
-  overdue: "Overdue task yo‘q.",
-  team: "No team tasks yet.",
-  review: "Review kutayotgan task yo‘q.",
-  blocked: "No blocked tasks.",
+  my: "Sizga hali vazifa biriktirilmagan.",
+  created: "Siz hali vazifa yaratmagansiz.",
+  today: "Bugun vazifa yo‘q.",
+  overdue: "Kechikkan vazifa yo‘q.",
+  team: "Jamoada hali vazifa yo‘q.",
+  review: "Tekshiruv kutayotgan vazifa yo‘q.",
+  blocked: "Bloklangan vazifa yo‘q.",
 };
 
 function isTerminal(status: TaskStatus): boolean {
@@ -218,7 +294,7 @@ function fmtDate(iso: string | null | undefined) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("en-US", {
+  return d.toLocaleDateString("uz-UZ", {
     timeZone: TZ,
     month: "short",
     day: "numeric",
@@ -230,7 +306,7 @@ function fmtDateTime(iso: string | null | undefined) {
   if (!iso) return "—";
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "—";
-  return d.toLocaleString("en-US", {
+  return d.toLocaleString("uz-UZ", {
     timeZone: TZ,
     month: "short",
     day: "numeric",
@@ -267,9 +343,9 @@ function isOverdue(iso: string | null | undefined) {
 
 function tashkentGreeting(): string {
   const hour = new Date(Date.now() + 5 * 60 * 60 * 1000).getUTCHours();
-  if (hour < 12) return "Good morning";
-  if (hour < 18) return "Good afternoon";
-  return "Good evening";
+  if (hour < 12) return "Xayrli tong";
+  if (hour < 18) return "Xayrli kun";
+  return "Xayrli kech";
 }
 
 /** Convert a datetime-local string to Asia/Tashkent offset-bearing ISO string (+05:00) */
@@ -278,6 +354,20 @@ function localDatetimeToISO(local: string): string {
   // local is "YYYY-MM-DDTHH:mm" — append seconds and +05:00 offset
   const withSeconds = local.length === 16 ? local + ":00" : local;
   return withSeconds + "+05:00";
+}
+
+function isoToTashkentLocalInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (isNaN(date.getTime())) return "";
+  const dateParts = getTZDateParts(date);
+  const timeParts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(date);
+  return `${dateParts.year}-${dateParts.month}-${dateParts.day}T${timeParts}`;
 }
 
 /** Sparing haptic feedback for a handful of meaningful moments (task
@@ -297,7 +387,7 @@ function haptic(kind: "success" | "warning" | "error" | "selection" | "impact") 
 function friendlyError(message: string | null): string | null {
   if (!message) return message;
   const technical = /fetch|network|unexpected token|http 5\d\d|internal server error|typeerror/i;
-  return technical.test(message) ? "Something went wrong. Please try again." : message;
+  return technical.test(message) ? "Xatolik yuz berdi. Qayta urinib ko‘ring." : message;
 }
 
 async function apiFetch<T>(
@@ -372,7 +462,17 @@ export default function MiniApp() {
   const [memberFilter, setMemberFilter] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [loadingTasks, setLoadingTasks] = useState(false);
+  const [loadingMoreTasks, setLoadingMoreTasks] = useState(false);
   const [tasksError, setTasksError] = useState<string | null>(null);
+  const [tasksNextCursor, setTasksNextCursor] = useState<string | null>(null);
+  const [taskQuery, setTaskQuery] = useState<TaskQueryOptions>({
+    search: "",
+    status: "",
+    priority: "",
+    assigneeId: "",
+    deadlineRange: "",
+    sort: "deadline_asc",
+  });
   const [homeTasks, setHomeTasks] = useState<Task[]>([]);
   const [homeLoading, setHomeLoading] = useState(false);
   const [homeError, setHomeError] = useState<string | null>(null);
@@ -380,6 +480,7 @@ export default function MiniApp() {
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showPendingUsers, setShowPendingUsers] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
+  const [showWorkflow, setShowWorkflow] = useState(false);
   const [roleEditUser, setRoleEditUser] = useState<User | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -467,33 +568,47 @@ export default function MiniApp() {
       setUsersLoaded(true);
       setUsersError(null);
     } else {
-      setUsersError(friendlyError(error) ?? "Failed to load team");
+      setUsersError(friendlyError(error) ?? "Jamoani yuklab bo‘lmadi");
     }
   }, []);
 
   // Load the Tasks-tab list for the active filter. Only called while the
   // Tasks tab is actually open (see the effect below) — not on every mount.
   const loadTasks = useCallback(
-    async (f: Filter) => {
+    async (f: Filter, cursor?: string) => {
       tasksAbortRef.current?.abort();
       const controller = new AbortController();
       tasksAbortRef.current = controller;
-      setLoadingTasks(true);
+      if (cursor) setLoadingMoreTasks(true);
+      else setLoadingTasks(true);
       setTasksError(null);
       const scope = scopeForFilter(f, isHead);
-      const { data, error } = await apiFetch<{ tasks: Task[] }>(
-        `/api/tasks?scope=${scope}`,
+      const params = new URLSearchParams({ scope, pageSize: "50", sort: taskQuery.sort });
+      if (cursor) params.set("cursor", cursor);
+      if (taskQuery.search) params.set("search", taskQuery.search);
+      if (taskQuery.priority) params.set("priority", taskQuery.priority);
+      if (f === "blocked") params.set("status", "BLOCKED");
+      else if (taskQuery.status) params.set("status", taskQuery.status);
+      const assigneeId = memberFilter || taskQuery.assigneeId;
+      if (assigneeId) params.set("assigneeId", assigneeId);
+      if (taskQuery.deadlineRange) params.set("deadlineRange", taskQuery.deadlineRange);
+      const { data, error } = await apiFetch<{ tasks: Task[]; pagination: TaskPagination }>(
+        `/api/tasks?${params.toString()}`,
         { signal: controller.signal }
       );
       if (controller.signal.aborted) return;
-      setLoadingTasks(false);
+      if (cursor) setLoadingMoreTasks(false);
+      else setLoadingTasks(false);
       if (data?.tasks) {
-        setTasks(f === "blocked" ? data.tasks.filter((t) => t.status === "BLOCKED") : data.tasks);
+        setTasks((current) => cursor
+          ? [...new Map([...current, ...data.tasks].map((task) => [task.id, task])).values()]
+          : data.tasks);
+        setTasksNextCursor(data.pagination.nextCursor);
       } else {
-        setTasksError(friendlyError(error) ?? "Failed to load tasks");
+        setTasksError(friendlyError(error) ?? "Vazifalarni yuklab bo‘lmadi");
       }
     },
-    [isHead]
+    [isHead, memberFilter, taskQuery]
   );
 
   // Load the Home/Team overview dataset (team-wide for Head, personal otherwise)
@@ -503,15 +618,20 @@ export default function MiniApp() {
     homeAbortRef.current = controller;
     setHomeLoading(true);
     setHomeError(null);
-    const { data, error } = await apiFetch<{ tasks: Task[] }>(
-      `/api/tasks?scope=${isHead ? "team" : "my"}`,
+    const { data, error } = await apiFetch<{ users: User[]; tasks: Task[] }>(
+      "/api/bootstrap",
       { signal: controller.signal }
     );
     if (controller.signal.aborted) return;
     setHomeLoading(false);
-    if (data?.tasks) setHomeTasks(data.tasks);
-    else setHomeError(friendlyError(error) ?? "Failed to load overview");
-  }, [isHead]);
+    if (data?.tasks) {
+      setHomeTasks(data.tasks);
+      setUsers(data.users);
+      setUsersLoaded(true);
+      setUsersError(null);
+    }
+    else setHomeError(friendlyError(error) ?? "Umumiy ma’lumotni yuklab bo‘lmadi");
+  }, []);
 
   // First-paint load: one round trip for the active team list plus the Home
   // task summary, instead of three separate sequential/parallel fetches.
@@ -535,7 +655,7 @@ export default function MiniApp() {
       setUsersError(null);
       setHomeTasks(data.tasks);
     } else {
-      const message = friendlyError(error) ?? "Failed to load overview";
+      const message = friendlyError(error) ?? "Umumiy ma’lumotni yuklab bo‘lmadi";
       setHomeError(message);
       setUsersError(message);
     }
@@ -556,7 +676,7 @@ export default function MiniApp() {
     if (authState !== "authed" || nav !== "tasks") return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadTasks(filter);
-  }, [authState, nav, filter, loadTasks]);
+  }, [authState, nav, filter, memberFilter, taskQuery, loadTasks]);
 
   const refreshAll = useCallback(() => {
     void loadHome();
@@ -591,13 +711,13 @@ export default function MiniApp() {
     setRoleEditUser(null);
     setUsers((prev) => prev.map((u) => (u.id === updated.id ? { ...u, role: updated.role } : u)));
     setCurrentUser((prev) => (prev && prev.id === updated.id ? { ...prev, role: updated.role } : prev));
-    setTaskNotice({ kind: "success", text: `Role updated to ${ROLE_LABELS[updated.role]}.` });
+    setTaskNotice({ kind: "success", text: `Rol yangilandi: ${ROLE_LABELS[updated.role]}.` });
   }, []);
 
   if (authState === "loading") {
     return (
       <div className="ma-center">
-        <div className="ma-spinner" aria-label="Loading" />
+        <div className="ma-spinner" aria-label="Yuklanmoqda" />
       </div>
     );
   }
@@ -608,7 +728,7 @@ export default function MiniApp() {
       <div className="ma-center">
         <div className="ma-no-tg">
           <div className="ma-no-tg-icon" aria-hidden="true">M</div>
-          <p>{inactiveMessage ? "You're not on the active team." : "Open this app from Telegram."}</p>
+          <p>{inactiveMessage ? "Siz faol jamoa tarkibida emassiz." : "Ilovani Telegram ichidan oching."}</p>
           <span className="ma-muted">
             {inactiveMessage ?? "This workspace is only accessible through the Telegram Mini App or a signed-in browser session."}
           </span>
@@ -637,7 +757,7 @@ export default function MiniApp() {
             <button
               className="ma-badge-btn"
               onClick={() => setShowPendingUsers(true)}
-              aria-label={`${pendingUsers.length} pending users`}
+              aria-label={`${pendingUsers.length} ta kutilayotgan foydalanuvchi`}
             >
               {pendingUsers.length}
             </button>
@@ -645,10 +765,11 @@ export default function MiniApp() {
           <button
             className="ma-icon-btn"
             onClick={() => setShowQuickAdd(true)}
-            aria-label="Add task"
+            aria-label="Vazifa qo‘shish"
           >
             +
           </button>
+          {isHead && <button className="ma-icon-btn" onClick={() => setShowWorkflow(true)} aria-label="Ish jarayonini boshlash">⚡</button>}
         </div>
       </header>
 
@@ -656,7 +777,7 @@ export default function MiniApp() {
         {taskNotice && (
           <div className={`ma-notice ${taskNotice.kind}`} role="status">
             <span>{taskNotice.text}</span>
-            <button onClick={() => setTaskNotice(null)} aria-label="Dismiss notification">×</button>
+            <button onClick={() => setTaskNotice(null)} aria-label="Xabarni yopish">×</button>
           </div>
         )}
 
@@ -688,8 +809,24 @@ export default function MiniApp() {
             error={tasksError}
             onRetry={() => loadTasks(filter)}
             onSelect={setSelectedTaskId}
+            query={taskQuery}
+            onQueryChange={setTaskQuery}
+            hasMore={Boolean(tasksNextCursor)}
+            loadingMore={loadingMoreTasks}
+            onLoadMore={() => { if (tasksNextCursor) void loadTasks(filter, tasksNextCursor); }}
             memberFilterUser={memberFilterUser}
             onClearMember={() => setMemberFilter(null)}
+          />
+        )}
+
+        {nav === "calendar" && (
+          <CalendarView
+            tasks={homeTasks}
+            users={users}
+            loading={homeLoading}
+            error={homeError}
+            onRetry={retryHome}
+            onSelect={setSelectedTaskId}
           />
         )}
 
@@ -706,7 +843,7 @@ export default function MiniApp() {
             onDeactivate={setDeactivateTarget}
             onReactivated={(updated) => {
               setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
-              setTaskNotice({ kind: "success", text: `${updated.displayName} is active again.` });
+              setTaskNotice({ kind: "success", text: `${updated.displayName} yana faol jamoa a’zosi.` });
             }}
           />
         )}
@@ -738,12 +875,25 @@ export default function MiniApp() {
             setShowQuickAdd(false);
             haptic("success");
             setTaskNotice(notification.status === "SENT"
-              ? { kind: "success", text: "Task created and assignee notified." }
+              ? { kind: "success", text: "Vazifa yaratildi va mas’ulga xabar yuborildi." }
               : {
                   kind: "warning",
-                  text: "Task created, but the private notification was not delivered. Ask the assignee to send /start to the bot.",
+                  text: "Vazifa yaratildi, lekin shaxsiy xabar yetkazilmadi. Mas’uldan botga /start yuborishini so‘rang.",
                 });
             refreshAll();
+          }}
+        />
+      )}
+
+      {showWorkflow && currentUser && (
+        <WorkflowStartPanel
+          users={users}
+          onClose={() => setShowWorkflow(false)}
+          onStarted={(task) => {
+            setShowWorkflow(false);
+            setTaskNotice({ kind: "success", text: `Ish jarayoni boshlandi: ${task.title}` });
+            refreshAll();
+            setSelectedTaskId(task.id);
           }}
         />
       )}
@@ -760,7 +910,6 @@ export default function MiniApp() {
         <ProfilePanel
           user={currentUser}
           onClose={() => setShowProfile(false)}
-          onEditRole={() => { setShowProfile(false); setRoleEditUser(currentUser); }}
         />
       )}
 
@@ -780,7 +929,7 @@ export default function MiniApp() {
           onDeactivated={(updated) => {
             setDeactivateTarget(null);
             setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
-            setTaskNotice({ kind: "success", text: `${updated.displayName} was removed from the active team.` });
+            setTaskNotice({ kind: "success", text: `${updated.displayName} faol jamoadan chiqarildi.` });
             refreshAll();
           }}
         />
@@ -794,6 +943,7 @@ export default function MiniApp() {
 const NAV_ICONS: Record<Nav, string> = {
   home: "⌂",
   tasks: "≡",
+  calendar: "▦",
   team: "◉",
   reports: "▥",
 };
@@ -808,13 +958,14 @@ function BottomNav({
   showTeam: boolean;
 }) {
   const items: { key: Nav; label: string }[] = [
-    { key: "home", label: "Home" },
-    { key: "tasks", label: "Tasks" },
-    ...(showTeam ? [{ key: "team" as Nav, label: "Team" }] : []),
-    { key: "reports", label: "Reports" },
+    { key: "home", label: t.navigation.home },
+    { key: "tasks", label: t.navigation.tasks },
+    { key: "calendar", label: t.navigation.calendar },
+    ...(showTeam ? [{ key: "team" as Nav, label: t.navigation.team }] : []),
+    { key: "reports", label: t.navigation.reports },
   ];
   return (
-    <nav className="ma-bottom-nav" aria-label="Primary">
+    <nav className="ma-bottom-nav" aria-label="Asosiy navigatsiya">
       {items.map((item) => (
         <button
           key={item.key}
@@ -833,10 +984,10 @@ function BottomNav({
 // ─── Home ─────────────────────────────────────────────────────────────────────
 
 const STAT_TILES: { key: Filter; label: string; tone: string }[] = [
-  { key: "today", label: "Today", tone: "primary" },
-  { key: "overdue", label: "Overdue", tone: "danger" },
-  { key: "blocked", label: "Blocked", tone: "warning" },
-  { key: "review", label: "Review", tone: "violet" },
+  { key: "today", label: "Bugun", tone: "primary" },
+  { key: "overdue", label: "Kechikkan", tone: "danger" },
+  { key: "blocked", label: "Bloklangan", tone: "warning" },
+  { key: "review", label: "Tekshiruvda", tone: "violet" },
 ];
 
 // Head opens Home to triage the team, not to admire a personal to-do list:
@@ -867,10 +1018,10 @@ function HomeView({
   onSelectMember: (userId: string) => void;
 }) {
   if (loading && tasks.length === 0) {
-    return <div className="ma-center-inline"><div className="ma-spinner" aria-label="Loading" /></div>;
+    return <div className="ma-center-inline"><div className="ma-spinner" aria-label="Yuklanmoqda" /></div>;
   }
   if (error) {
-    return <div className="ma-error" role="alert">{error} <button onClick={onRetry}>Retry</button></div>;
+    return <div className="ma-error" role="alert">{error} <button onClick={onRetry}>Qayta urinish</button></div>;
   }
 
   const counts = countsFor(tasks);
@@ -884,7 +1035,7 @@ function HomeView({
     <div className="ma-home">
       <div className="ma-greeting">
         <h1>{tashkentGreeting()}, {firstName}</h1>
-        <p className="ma-muted">{isHead ? "Here's how the team is doing." : "Here's what's on your plate."}</p>
+        <p className="ma-muted">{isHead ? "Jamoaning bugungi holati." : "Sizning bugungi vazifalaringiz."}</p>
       </div>
 
       <div className="ma-stat-grid">
@@ -907,26 +1058,26 @@ function HomeView({
       {isHead && (
         <section className="ma-section">
           <div className="ma-section-head">
-            <h3>Team workload</h3>
-            <button className="ma-link-btn" onClick={() => onGoToFilter("team")}>View all</button>
+            <h3>Jamoa bandligi</h3>
+            <button className="ma-link-btn" onClick={() => onGoToFilter("team")}>Barchasini ko‘rish</button>
           </div>
           <WorkloadList tasks={tasks} users={users} onSelectMember={onSelectMember} limit={4} />
         </section>
       )}
 
       <section className="ma-section">
-        <h3>Today</h3>
+        <h3>Bugun</h3>
         {todayTasks.length === 0 ? (
-          <div className="ma-empty">Bugun task yo‘q.</div>
+          <div className="ma-empty">Bugun vazifa yo‘q.</div>
         ) : (
           <TaskList tasks={todayTasks} users={users} onSelect={onSelectTask} />
         )}
       </section>
 
       <section className="ma-section">
-        <h3>Upcoming</h3>
+        <h3>Yaqin vazifalar</h3>
         {upcoming.length === 0 ? (
-          <div className="ma-empty">{isHead ? "Nothing urgent right now." : "You're all caught up."}</div>
+          <div className="ma-empty">{isHead ? "Hozir shoshilinch vazifa yo‘q." : "Hozircha barcha ishlar nazoratda."}</div>
         ) : (
           <TaskList tasks={upcoming} users={users} onSelect={onSelectTask} />
         )}
@@ -953,7 +1104,7 @@ function WorkloadList({
   const [menuUser, setMenuUser] = useState<User | null>(null);
   const rows = workloadFor(tasks, users).slice(0, limit ?? undefined);
   if (rows.length === 0) {
-    return <div className="ma-empty">No active team members yet.</div>;
+    return <div className="ma-empty">Hali faol jamoa a’zolari yo‘q.</div>;
   }
   return (
     <>
@@ -966,9 +1117,9 @@ function WorkloadList({
               <span className="ma-muted"> · {ROLE_LABELS[row.user.role]}</span>
             </span>
             <span className="ma-workload-counts">
-              <span className="ma-workload-count">{row.open} open</span>
-              <span className="ma-workload-count">{row.today} today</span>
-              <span className={`ma-workload-count${row.overdue > 0 ? " danger" : ""}`}>{row.overdue} overdue</span>
+              <span className="ma-workload-count">{row.open} ochiq</span>
+              <span className="ma-workload-count">{row.today} bugun</span>
+              <span className={`ma-workload-count${row.overdue > 0 ? " danger" : ""}`}>{row.overdue} kechikkan</span>
             </span>
           </button>
           {/* One overflow button instead of two always-visible icons — admin
@@ -978,8 +1129,8 @@ function WorkloadList({
             <button
               className="ma-workload-edit"
               onClick={() => setMenuUser(row.user)}
-              aria-label={`More actions for ${row.user.displayName}`}
-              title="More actions"
+              aria-label={`${row.user.displayName} uchun amallar`}
+              title="Boshqa amallar"
             >
               ⋯
             </button>
@@ -992,12 +1143,12 @@ function WorkloadList({
           className="ma-overlay"
           role="dialog"
           aria-modal="true"
-          aria-label={`Actions for ${menuUser.displayName}`}
+          aria-label={`${menuUser.displayName} uchun amallar`}
           onClick={(e) => { if (e.target === e.currentTarget) setMenuUser(null); }}
         >
           <div className="ma-panel">
             <div className="ma-panel-header">
-              <button className="ma-back-btn" onClick={() => setMenuUser(null)} aria-label="Close">←</button>
+              <button className="ma-back-btn" onClick={() => setMenuUser(null)} aria-label="Yopish">←</button>
               <span className="ma-panel-title">{menuUser.displayName}</span>
             </div>
             <div className="ma-panel-body ma-picker-body">
@@ -1005,14 +1156,14 @@ function WorkloadList({
                 {onEditRole && (
                   <li>
                     <button className="ma-picker-row" onClick={() => { const u = menuUser; setMenuUser(null); onEditRole(u); }}>
-                      <span className="ma-picker-info"><span className="ma-picker-name">Edit role</span></span>
+                      <span className="ma-picker-info"><span className="ma-picker-name">Rolni o‘zgartirish</span></span>
                     </button>
                   </li>
                 )}
                 {onDeactivate && (
                   <li>
                     <button className="ma-picker-row" onClick={() => { const u = menuUser; setMenuUser(null); onDeactivate(u); }}>
-                      <span className="ma-picker-info"><span className="ma-picker-name" style={{ color: "var(--danger)" }}>Remove from team</span></span>
+                      <span className="ma-picker-info"><span className="ma-picker-name" style={{ color: "var(--danger)" }}>Jamoadan chiqarish</span></span>
                     </button>
                   </li>
                 )}
@@ -1055,10 +1206,10 @@ function TeamView({
   const [reactivateError, setReactivateError] = useState<string | null>(null);
 
   if (loading && tasks.length === 0) {
-    return <div className="ma-center-inline"><div className="ma-spinner" aria-label="Loading" /></div>;
+    return <div className="ma-center-inline"><div className="ma-spinner" aria-label="Yuklanmoqda" /></div>;
   }
   if (error) {
-    return <div className="ma-error" role="alert">{error} <button onClick={onRetry}>Retry</button></div>;
+    return <div className="ma-error" role="alert">{error} <button onClick={onRetry}>Qayta urinish</button></div>;
   }
 
   const reactivate = async (user: User) => {
@@ -1073,15 +1224,15 @@ function TeamView({
   return (
     <div className="ma-home">
       <div className="ma-greeting">
-        <h1>Team workload</h1>
-        <p className="ma-muted">Tap a teammate to see their tasks, or ⋯ for role and membership actions.</p>
+        <h1>Jamoa bandligi</h1>
+        <p className="ma-muted">Vazifalarni ko‘rish uchun xodimni, rol va a’zolik amallari uchun ⋯ tugmasini bosing.</p>
       </div>
       <WorkloadList tasks={tasks} users={users} onSelectMember={onSelectMember} onEditRole={onEditRole} onDeactivate={onDeactivate} />
 
       {inactiveMembers.length > 0 && (
         <section className="ma-section">
           <button className="ma-section-head ma-collapse-toggle" onClick={() => setShowInactive((value) => !value)} aria-expanded={showInactive}>
-            <h3>Inactive members ({inactiveMembers.length})</h3>
+            <h3>Faol bo‘lmagan a’zolar ({inactiveMembers.length})</h3>
             <span aria-hidden="true">{showInactive ? "▾" : "▸"}</span>
           </button>
           {showInactive && (
@@ -1099,7 +1250,7 @@ function TeamView({
                     disabled={reactivating === member.id}
                     onClick={() => reactivate(member)}
                   >
-                    {reactivating === member.id ? "…" : "Reactivate"}
+                    {reactivating === member.id ? "…" : "Qayta faollashtirish"}
                   </button>
                 </li>
               ))}
@@ -1126,6 +1277,11 @@ function TasksView({
   error,
   onRetry,
   onSelect,
+  query,
+  onQueryChange,
+  hasMore,
+  loadingMore,
+  onLoadMore,
   memberFilterUser,
   onClearMember,
 }: {
@@ -1140,16 +1296,22 @@ function TasksView({
   error: string | null;
   onRetry: () => void;
   onSelect: (id: string) => void;
+  query: TaskQueryOptions;
+  onQueryChange: (query: TaskQueryOptions) => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
   memberFilterUser: User | null;
   onClearMember: () => void;
 }) {
   const [moreOpen, setMoreOpen] = useState(false);
-  const primaryFilters: Filter[] = isHead ? ["my", "today", "overdue", "team"] : ["my", "today", "overdue"];
+  const [searchDraft, setSearchDraft] = useState(query.search);
+  const primaryFilters: Filter[] = isHead ? ["my", "created", "today", "overdue", "team"] : ["my", "created", "today", "overdue"];
   const extraActive = filter === "review" || filter === "blocked" ? filter : null;
 
   return (
     <div className="ma-tasks-view">
-      <nav className="ma-filters" aria-label="Task filters">
+      <nav className="ma-filters" aria-label="Vazifa filtrlari">
         {primaryFilters.map((f) => (
           <button
             key={f}
@@ -1166,21 +1328,21 @@ function TasksView({
         )}
         <div className="ma-more-wrap">
           <button className="ma-filter-btn ghost" onClick={() => setMoreOpen((v) => !v)} aria-expanded={moreOpen}>
-            Filters ▾
+            Filtrlar ▾
           </button>
           {moreOpen && (
             <div className="ma-filter-sheet" role="menu">
-              <button role="menuitem" onClick={() => { onFilterChange("review"); setMoreOpen(false); }}>Review</button>
-              <button role="menuitem" onClick={() => { onFilterChange("blocked"); setMoreOpen(false); }}>Blocked</button>
+              <button role="menuitem" onClick={() => { onFilterChange("review"); setMoreOpen(false); }}>Tekshiruvda</button>
+              <button role="menuitem" onClick={() => { onFilterChange("blocked"); setMoreOpen(false); }}>Bloklangan</button>
             </div>
           )}
         </div>
-        <div className="ma-view-toggle" role="group" aria-label="View mode">
+        <div className="ma-view-toggle" role="group" aria-label="Ko‘rinish turi">
           <button
             className={`ma-view-btn${viewMode === "list" ? " active" : ""}`}
             onClick={() => onViewModeChange("list")}
             aria-pressed={viewMode === "list"}
-            title="List view"
+            title="Ro‘yxat ko‘rinishi"
           >
             ☰
           </button>
@@ -1188,38 +1350,116 @@ function TasksView({
             className={`ma-view-btn${viewMode === "kanban" ? " active" : ""}`}
             onClick={() => onViewModeChange("kanban")}
             aria-pressed={viewMode === "kanban"}
-            title="Kanban view"
+            title="Kanban ko‘rinishi"
           >
             ⊞
           </button>
         </div>
       </nav>
 
+      <form
+        className="ma-task-search"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onQueryChange({ ...query, search: searchDraft.trim() });
+        }}
+      >
+        <input
+          type="search"
+          value={searchDraft}
+          onChange={(event) => setSearchDraft(event.target.value)}
+          placeholder="Vazifa qidirish"
+          aria-label="Vazifa qidirish"
+        />
+        <button className="ma-btn secondary" type="submit">Qidirish</button>
+      </form>
+
+      <div className="ma-task-query-controls">
+        <select
+          aria-label="Holat bo‘yicha filter"
+          value={query.status}
+          disabled={filter === "review" || filter === "blocked"}
+          onChange={(event) => onQueryChange({ ...query, status: event.target.value as TaskQueryOptions["status"] })}
+        >
+          <option value="">Barcha holatlar</option>
+          {STATUS_ORDER.map((status) => <option key={status} value={status}>{STATUS_LABELS[status]}</option>)}
+        </select>
+        <select
+          aria-label="Ustuvorlik bo‘yicha filter"
+          value={query.priority}
+          onChange={(event) => onQueryChange({ ...query, priority: event.target.value as TaskQueryOptions["priority"] })}
+        >
+          <option value="">Barcha ustuvorliklar</option>
+          <option value="high">Yuqori</option>
+          <option value="normal">Oddiy</option>
+          <option value="low">Past</option>
+        </select>
+        {isHead && (
+          <select
+            aria-label="Mas’ul bo‘yicha filter"
+            value={query.assigneeId}
+            onChange={(event) => onQueryChange({ ...query, assigneeId: event.target.value })}
+          >
+            <option value="">Barcha mas’ullar</option>
+            {users.filter((user) => user.isActive).map((user) => (
+              <option key={user.id} value={user.id}>{user.displayName}</option>
+            ))}
+          </select>
+        )}
+        <select
+          aria-label="Vazifalarni saralash"
+          value={query.sort}
+          onChange={(event) => onQueryChange({ ...query, sort: event.target.value as TaskQueryOptions["sort"] })}
+        >
+          <option value="deadline_asc">Muddat: yaqinlari avval</option>
+          <option value="deadline_desc">Muddat: uzoqlari avval</option>
+          <option value="created_desc">Yangi vazifalar avval</option>
+        </select>
+        <select
+          aria-label="Muddat bo‘yicha filter"
+          value={query.deadlineRange}
+          disabled={filter === "today" || filter === "overdue"}
+          onChange={(event) => onQueryChange({ ...query, deadlineRange: event.target.value as TaskQueryOptions["deadlineRange"] })}
+        >
+          <option value="">Barcha muddatlar</option>
+          <option value="today">Bugun</option>
+          <option value="next_7_days">Keyingi 7 kun</option>
+          <option value="overdue">Kechikkan</option>
+        </select>
+      </div>
+
       {memberFilterUser && (
         <div className="ma-member-chip">
-          Showing <strong>{memberFilterUser.displayName}</strong>
-          <button onClick={onClearMember} aria-label="Clear teammate filter">×</button>
+          <strong>{memberFilterUser.displayName}</strong> vazifalari
+          <button onClick={onClearMember} aria-label="Xodim filtrini tozalash">×</button>
         </div>
       )}
 
       {loading && (
         <div className="ma-center-inline">
-          <div className="ma-spinner" aria-label="Loading tasks" />
+          <div className="ma-spinner" aria-label="Vazifalar yuklanmoqda" />
         </div>
       )}
       {!loading && error && (
         <div className="ma-error" role="alert">
           {error}
-          <button onClick={onRetry}>Retry</button>
+          <button onClick={onRetry}>Qayta urinish</button>
         </div>
       )}
       {!loading && !error && tasks.length === 0 && (
         <div className="ma-empty">{EMPTY_COPY[filter]}</div>
       )}
       {!loading && !error && tasks.length > 0 && (
-        viewMode === "list"
-          ? <TaskList tasks={tasks} users={users} onSelect={onSelect} />
-          : <KanbanBoard tasks={tasks} users={users} onSelect={onSelect} />
+        <>
+          {viewMode === "list"
+            ? <TaskList tasks={tasks} users={users} onSelect={onSelect} />
+            : <KanbanBoard tasks={tasks} users={users} onSelect={onSelect} />}
+          {hasMore && (
+            <button className="ma-btn secondary full ma-load-more" onClick={onLoadMore} disabled={loadingMore}>
+              {loadingMore ? "Yuklanmoqda…" : "Yana ko‘rsatish"}
+            </button>
+          )}
+        </>
       )}
     </div>
   );
@@ -1237,7 +1477,7 @@ function TaskList({
   onSelect: (id: string) => void;
 }) {
   return (
-    <ul className="ma-task-list" aria-label="Tasks">
+    <ul className="ma-task-list" aria-label="Vazifalar">
       {tasks.map((t) => (
         <li key={t.id}>
           <TaskCard task={t} users={users} onSelect={onSelect} />
@@ -1308,7 +1548,7 @@ function TaskCard({
     <button
       className={`ma-task-card${compact ? " compact" : ""}${overdue ? " overdue" : ""}`}
       onClick={() => onSelect(task.id)}
-      aria-label={`Task: ${task.title}`}
+      aria-label={`Vazifa: ${task.title}`}
     >
       <div className="ma-task-card-top">
         <span className={`ma-priority p-${task.priority}`}>
@@ -1325,7 +1565,7 @@ function TaskCard({
       <div className="ma-task-meta">
         {assignee && <span>{assignee.displayName}</span>}
         <span className={overdue ? "ma-overdue-text" : today ? "ma-today-text" : ""}>
-          {overdue ? "Overdue · " : today ? "Today · " : ""}
+          {overdue ? "Kechikkan · " : today ? "Bugun · " : ""}
           {fmtDate(task.deadline)}
         </span>
       </div>
@@ -1337,8 +1577,8 @@ function TaskCard({
 
 function metricDuration(hours: number | null): string {
   if (hours == null) return "—";
-  if (hours < 24) return `${hours.toFixed(1)}h`;
-  return `${(hours / 24).toFixed(1)}d`;
+  if (hours < 24) return `${hours.toFixed(1)} soat`;
+  return `${(hours / 24).toFixed(1)} kun`;
 }
 
 function metricPercent(value: number | null): string {
@@ -1356,14 +1596,14 @@ function ReportsView({ isHead }: { isHead: boolean }) {
     const result = await apiFetch<AnalyticsResponse>("/api/reports?days=30");
     setLoading(false);
     if (result.data) setData(result.data);
-    else setError(friendlyError(result.error) ?? "Failed to load reports");
+    else setError(friendlyError(result.error) ?? "Hisobotlarni yuklab bo‘lmadi");
   }, []);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { void load(); }, [load]);
 
   if (loading) return <div className="ma-center-inline"><div className="ma-spinner" /></div>;
-  if (error) return <div className="ma-error" role="alert">{error}<button onClick={load}>Retry</button></div>;
+  if (error) return <div className="ma-error" role="alert">{error}<button onClick={load}>Qayta urinish</button></div>;
   if (!data) return null;
   const metric = data.metrics;
   const maxThroughput = Math.max(metric.created, metric.completed, 1);
@@ -1372,56 +1612,56 @@ function ReportsView({ isHead }: { isHead: boolean }) {
     <div className="ma-reports">
       <div className="ma-section-head">
         <div>
-          <span className="ma-eyebrow">Operational visibility</span>
-          <h1>{isHead ? "Team reports" : "My reports"}</h1>
+          <span className="ma-eyebrow">Ish jarayoni tahlili</span>
+          <h1>{isHead ? "Jamoa hisoboti" : "Mening hisobotim"}</h1>
         </div>
-        <span className="ma-window-chip">Last 30 days</span>
+        <span className="ma-window-chip">So‘nggi 30 kun</span>
       </div>
 
       <section className="ma-report-card">
-        <h3>Created vs completed</h3>
-        <div className="ma-comparison-row"><span>Created</span><strong>{metric.created}</strong></div>
+        <h3>Reja va natija</h3>
+        <div className="ma-comparison-row"><span>Yaratilgan</span><strong>{metric.created}</strong></div>
         <div className="ma-bar"><span style={{ width: `${metric.created / maxThroughput * 100}%` }} /></div>
-        <div className="ma-comparison-row"><span>Completed</span><strong>{metric.completed}</strong></div>
+        <div className="ma-comparison-row"><span>Bajarilgan</span><strong>{metric.completed}</strong></div>
         <div className="ma-bar success"><span style={{ width: `${metric.completed / maxThroughput * 100}%` }} /></div>
       </section>
 
       <div className="ma-report-grid">
-        <div className="ma-report-stat"><span>Carry-over</span><strong>{metric.carryOver}</strong></div>
-        <div className="ma-report-stat danger"><span>Current overdue</span><strong>{metric.currentOverdue}</strong></div>
-        <div className="ma-report-stat"><span>On-time</span><strong>{metricPercent(metric.onTimeCompletionRate)}</strong></div>
-        <div className="ma-report-stat"><span>Revision rate</span><strong>{metricPercent(metric.revisionRate)}</strong></div>
-        <div className="ma-report-stat"><span>Deadline requests</span><strong>{metric.deadlineChangeRequests}</strong></div>
-        <div className="ma-report-stat"><span>Avg cycle</span><strong>{metricDuration(metric.averageCycleHours)}</strong></div>
+        <div className="ma-report-stat"><span>O‘tgan davrdan qolgan</span><strong>{metric.carryOver}</strong></div>
+        <div className="ma-report-stat danger"><span>Hozir kechikkan</span><strong>{metric.currentOverdue}</strong></div>
+        <div className="ma-report-stat"><span>Vaqtida</span><strong>{metricPercent(metric.onTimeCompletionRate)}</strong></div>
+        <div className="ma-report-stat"><span>Tuzatish ulushi</span><strong>{metricPercent(metric.revisionRate)}</strong></div>
+        <div className="ma-report-stat"><span>Muddat so‘rovlari</span><strong>{metric.deadlineChangeRequests}</strong></div>
+        <div className="ma-report-stat"><span>O‘rtacha davomiylik</span><strong>{metricDuration(metric.averageCycleHours)}</strong></div>
       </div>
 
       <section className="ma-report-card">
-        <h3>Current workload</h3>
+        <h3>Joriy bandlik</h3>
         <div className="ma-workload-metrics">
-          <span>Open <strong>{metric.workload.open}</strong></span>
-          <span>In progress <strong>{metric.workload.inProgress}</strong></span>
-          <span>Today <strong>{metric.workload.dueToday}</strong></span>
-          <span>Next 48h <strong>{metric.workload.dueNext48h}</strong></span>
-          <span>High <strong>{metric.workload.highPriority}</strong></span>
-          <span className="danger">Overdue <strong>{metric.workload.overdue}</strong></span>
-          <span>Blocked <strong>{metric.workload.blocked}</strong></span>
-          <span>Review <strong>{metric.workload.review}</strong></span>
+          <span>Ochiq <strong>{metric.workload.open}</strong></span>
+          <span>Jarayonda <strong>{metric.workload.inProgress}</strong></span>
+          <span>Bugun <strong>{metric.workload.dueToday}</strong></span>
+          <span>Keyingi 48 soat <strong>{metric.workload.dueNext48h}</strong></span>
+          <span>Yuqori <strong>{metric.workload.highPriority}</strong></span>
+          <span className="danger">Kechikkan <strong>{metric.workload.overdue}</strong></span>
+          <span>Bloklangan <strong>{metric.workload.blocked}</strong></span>
+          <span>Tekshiruvda <strong>{metric.workload.review}</strong></span>
         </div>
       </section>
 
       {(metric.posting.created > 0 || metric.posting.currentOpen > 0) && (
         <section className="ma-report-card">
-          <h3>#posting workflow</h3>
+          <h3>#posting jarayoni</h3>
           <div className="ma-workload-metrics">
-            <span>Created <strong>{metric.posting.created}</strong></span>
-            <span>Completed <strong>{metric.posting.completed}</strong></span>
-            <span>Current open <strong>{metric.posting.currentOpen}</strong></span>
+            <span>Yaratilgan <strong>{metric.posting.created}</strong></span>
+            <span>Bajarilgan <strong>{metric.posting.completed}</strong></span>
+            <span>Hozir ochiq <strong>{metric.posting.currentOpen}</strong></span>
           </div>
         </section>
       )}
 
       <section className="ma-report-card">
-        <h3>Average time in status</h3>
+        <h3>Har bir holatdagi o‘rtacha vaqt</h3>
         <div className="ma-status-times">
           {(["ASSIGNED", "IN_PROGRESS", "BLOCKED", "REVIEW", "REVISION"] as TaskStatus[]).map((status) => (
             <div key={status}>
@@ -1434,19 +1674,19 @@ function ReportsView({ isHead }: { isHead: boolean }) {
 
       {isHead && data.team.length > 0 && (
         <section className="ma-section">
-          <h3>Team breakdown</h3>
+          <h3>Xodimlar kesimida</h3>
           <div className="ma-analytics-team">
             {data.team.map((row) => (
               <article className="ma-employee-analytics" key={row.user.id}>
                 <div className="ma-section-head"><strong>{row.user.displayName}</strong><span className="ma-muted">{ROLE_LABELS[row.user.role]}</span></div>
                 <div className="ma-employee-numbers">
-                  <span>Done <b>{row.metrics.completed}</b></span>
-                  <span>On time <b>{row.metrics.onTimeCompleted}</b></span>
-                  <span>Open <b>{row.workload.open}</b></span>
-                  <span className={row.workload.overdue ? "danger" : ""}>Overdue <b>{row.workload.overdue}</b></span>
-                  <span>Revisions <b>{row.metrics.revisionCount}</b></span>
-                  <span>DL changes <b>{row.metrics.deadlineChangeRequests}</b></span>
-                  <span>Avg cycle <b>{metricDuration(row.metrics.averageCycleHours)}</b></span>
+                  <span>Bajarilgan <b>{row.metrics.completed}</b></span>
+                  <span>Vaqtida <b>{row.metrics.onTimeCompleted}</b></span>
+                  <span>Ochiq <b>{row.workload.open}</b></span>
+                  <span className={row.workload.overdue ? "danger" : ""}>Kechikkan <b>{row.workload.overdue}</b></span>
+                  <span>Tuzatishlar <b>{row.metrics.revisionCount}</b></span>
+                  <span>Muddat o‘zgarishi <b>{row.metrics.deadlineChangeRequests}</b></span>
+                  <span>O‘rtacha vaqt <b>{metricDuration(row.metrics.averageCycleHours)}</b></span>
                 </div>
               </article>
             ))}
@@ -1492,6 +1732,17 @@ function TaskDetailPanel({
   const [recurrenceTime, setRecurrenceTime] = useState("09:00");
   const [recurrenceEnd, setRecurrenceEnd] = useState("");
   const [recurrenceAssigneeId, setRecurrenceAssigneeId] = useState("");
+  const [showEdit, setShowEdit] = useState(false);
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editPriority, setEditPriority] = useState<Priority>("normal");
+  const [editAssigneeId, setEditAssigneeId] = useState("");
+  const [editDeadline, setEditDeadline] = useState("");
+  const [editPublication, setEditPublication] = useState("");
+  const [commentKind, setCommentKind] = useState<TaskComment["kind"]>("COMMENT");
+  const [commentBody, setCommentBody] = useState("");
+  const [commentUrl, setCommentUrl] = useState("");
+  const [commentPending, setCommentPending] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -1500,7 +1751,7 @@ function TaskDetailPanel({
     const { data, error: e } = await apiFetch<TaskDetail>(`/api/tasks/${taskId}`);
     setLoading(false);
     if (data) setDetail(data);
-    else setError(friendlyError(e) ?? "Failed to load task");
+    else setError(friendlyError(e) ?? "Vazifani yuklab bo‘lmadi");
   }, [taskId]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -1584,6 +1835,69 @@ function TaskDetailPanel({
     }
   };
 
+  const openEditForm = () => {
+    const current = detail?.task;
+    if (!current) return;
+    setEditTitle(current.title);
+    setEditDescription(current.description ?? "");
+    setEditPriority(current.priority);
+    setEditAssigneeId(current.assigneeId);
+    setEditDeadline(isoToTashkentLocalInput(current.deadline));
+    setEditPublication(isoToTashkentLocalInput(current.publicationAt));
+    setActionError(null);
+    setShowEdit(true);
+  };
+
+  const saveTaskEdit = async () => {
+    const current = detail?.task;
+    if (!current || !editTitle.trim()) return;
+    const canManage = currentUser.role === "HEAD_OF_MARKETING" || current.creatorId === currentUser.id;
+    const payload = {
+      title: editTitle.trim(),
+      description: editDescription.trim() || null,
+      priority: editPriority,
+      ...(canManage ? {
+        assigneeId: editAssigneeId,
+        deadline: localDatetimeToISO(editDeadline),
+        publicationAt: editPublication ? localDatetimeToISO(editPublication) : null,
+      } : {}),
+    };
+    setActionPending(true);
+    setActionError(null);
+    const { data, error: editError } = await apiFetch<Task>(`/api/tasks/${taskId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    setActionPending(false);
+    if (!data) { setActionError(friendlyError(editError)); return; }
+    setDetail((previous) => previous ? { ...previous, task: data } : previous);
+    setShowEdit(false);
+    haptic("success");
+    onRefresh();
+  };
+
+  const submitComment = async () => {
+    if (!commentBody.trim() && !commentUrl.trim()) return;
+    setCommentPending(true);
+    setActionError(null);
+    const { data, error: commentError } = await apiFetch<TaskComment>(`/api/tasks/${taskId}/comments`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: commentKind,
+        ...(commentBody.trim() ? { body: commentBody.trim() } : {}),
+        ...(commentUrl.trim() ? { attachmentUrl: commentUrl.trim() } : {}),
+      }),
+    });
+    setCommentPending(false);
+    if (!data) { setActionError(friendlyError(commentError)); return; }
+    setDetail((previous) => previous ? { ...previous, comments: [...(previous.comments ?? []), data] } : previous);
+    setCommentBody("");
+    setCommentUrl("");
+    haptic("success");
+  };
+
   const openRecurrenceForm = () => {
     const recurrence = detail?.recurringDefinition;
     if (recurrence) {
@@ -1648,12 +1962,15 @@ function TaskDetailPanel({
 
   const task = detail?.task;
   const events = detail?.events ?? [];
+  const comments = detail?.comments ?? [];
   const dlRequests = detail?.deadlineRequests ?? [];
   const assignee = task ? users.find((u) => u.id === task.assigneeId) : null;
   const creator = task ? users.find((u) => u.id === task.creatorId) : null;
   const isAssignee = task?.assigneeId === currentUser.id;
   const isCreator = task?.creatorId === currentUser.id;
   const isHead = currentUser.role === "HEAD_OF_MARKETING";
+  const canEditContent = Boolean(task && (isHead || isCreator || isAssignee));
+  const canManageTask = Boolean(task && (isHead || isCreator));
   const pendingDL = dlRequests.filter((r) => r.status === "PENDING");
   const postingChecklist = detail?.postingChecklist;
   const postingComplete = !postingChecklist || postingChecklist.items.every((item) => item.isCompleted);
@@ -1662,15 +1979,15 @@ function TaskDetailPanel({
 
   const actions: { label: string; action: string; variant?: string }[] = [];
   if (task) {
-    if (task.status === "ASSIGNED" && isAssignee) actions.push({ label: "Accept", action: "ACCEPT" });
-    if (task.status === "IN_PROGRESS" && isAssignee && postingComplete) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
-    if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Block", action: "_block", variant: "warn" });
-    if (task.status === "BLOCKED" && isAssignee) actions.push({ label: "Resume", action: "RESUME" });
-    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Approve", action: "APPROVE" });
-    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Request Revision", action: "_revision", variant: "warn" });
-    if (task.status === "REVISION" && isAssignee && postingComplete) actions.push({ label: "Submit Review", action: "SUBMIT_REVIEW" });
-    if (!isTerminal(task.status) && (isCreator || isHead)) actions.push({ label: "Cancel", action: "CANCEL", variant: "danger" });
-    if (isTerminal(task.status) && isHead) actions.push({ label: "Reopen", action: "REOPEN" });
+    if (task.status === "ASSIGNED" && isAssignee) actions.push({ label: "Qabul qilish", action: "ACCEPT" });
+    if (task.status === "IN_PROGRESS" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW" });
+    if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Bloklash", action: "_block", variant: "warn" });
+    if (task.status === "BLOCKED" && isAssignee) actions.push({ label: "Davom ettirish", action: "RESUME" });
+    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Tasdiqlash", action: "APPROVE" });
+    if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Tuzatishga qaytarish", action: "_revision", variant: "warn" });
+    if (task.status === "REVISION" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW" });
+    if (!isTerminal(task.status) && (isCreator || isHead)) actions.push({ label: "Bekor qilish", action: "CANCEL", variant: "danger" });
+    if (isTerminal(task.status) && isHead) actions.push({ label: "Qayta ochish", action: "REOPEN" });
   }
 
   return (
@@ -1678,43 +1995,78 @@ function TaskDetailPanel({
       className="ma-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Task detail"
+      aria-label="Vazifa tafsilotlari"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="ma-panel" ref={panelRef} tabIndex={-1}>
         <div className="ma-panel-header">
-          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
-          <span className="ma-panel-title">Task Detail</span>
+          <button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button>
+          <span className="ma-panel-title">Vazifa tafsilotlari</span>
         </div>
 
         {loading && <div className="ma-center-inline"><div className="ma-spinner" /></div>}
-        {error && <div className="ma-error" role="alert">{error} <button onClick={load}>Retry</button></div>}
+        {error && <div className="ma-error" role="alert">{error} <button onClick={load}>Qayta urinish</button></div>}
 
         {task && (
           <div className="ma-panel-body">
             <div className="ma-detail-top">
-              <span className={`ma-priority p-${task.priority}`}>{PRIORITY_LABELS[task.priority]}</span>
-              <span className={`ma-status-pill s-${task.status.toLowerCase()}`}>{STATUS_LABELS[task.status]}</span>
+              <div className="ma-detail-badges">
+                <span className={`ma-priority p-${task.priority}`}>{PRIORITY_LABELS[task.priority]}</span>
+                <span className={`ma-status-pill s-${task.status.toLowerCase()}`}>{STATUS_LABELS[task.status]}</span>
+              </div>
+              {canEditContent && <button className="ma-btn secondary compact" onClick={openEditForm}>Tahrirlash</button>}
             </div>
 
             <h2 className="ma-detail-title">{task.title}</h2>
             {task.description && <p className="ma-detail-desc">{task.description}</p>}
 
             <dl className="ma-detail-meta">
-              <dt>Assignee</dt><dd>{assignee?.displayName ?? "—"}</dd>
-              <dt>Creator</dt><dd>{creator?.displayName ?? "—"}</dd>
-              <dt>Deadline</dt><dd>{fmtDateTime(task.deadline)}</dd>
-              {task.blockedReason && <><dt>Blocked reason</dt><dd className="ma-overdue-text">{task.blockedReason}</dd></>}
+              <dt>Mas’ul</dt><dd>{assignee?.displayName ?? "—"}</dd>
+              <dt>Yaratuvchi</dt><dd>{creator?.displayName ?? "—"}</dd>
+              <dt>Muddat</dt><dd>{fmtDateTime(task.deadline)}</dd>
+              <dt>Publikatsiya</dt><dd>{fmtDateTime(task.publicationAt)}</dd>
+              {task.blockedReason && <><dt>Blok sababi</dt><dd className="ma-overdue-text">{task.blockedReason}</dd></>}
             </dl>
+
+            {showEdit && (
+              <section className="ma-section ma-edit-card" aria-labelledby="edit-task-title">
+                <div className="ma-section-head"><h3 id="edit-task-title">Vazifani tahrirlash</h3><button className="ma-back-btn" onClick={() => setShowEdit(false)} aria-label="Tahrirlashni yopish">×</button></div>
+                <div className="ma-block-form">
+                  <label htmlFor="edit-title">Vazifa nomi</label>
+                  <input id="edit-title" value={editTitle} maxLength={200} onChange={(event) => setEditTitle(event.target.value)} />
+                  <label htmlFor="edit-description">Tavsif</label>
+                  <textarea id="edit-description" value={editDescription} maxLength={5000} rows={4} onChange={(event) => setEditDescription(event.target.value)} />
+                  <label htmlFor="edit-priority">Ustuvorlik</label>
+                  <select id="edit-priority" value={editPriority} onChange={(event) => setEditPriority(event.target.value as Priority)}>
+                    <option value="high">Yuqori</option><option value="normal">Oddiy</option><option value="low">Past</option>
+                  </select>
+                  {canManageTask && <>
+                    <label htmlFor="edit-assignee">Mas’ul</label>
+                    <PersonPickerField id="edit-assignee" users={users.filter((user) => user.isActive)} selectedId={editAssigneeId} onSelect={setEditAssigneeId} pickerTitle="Mas’ulni tanlang" placeholder="Mas’ulni tanlang" />
+                    <label htmlFor="edit-deadline">Muddat</label>
+                    <input id="edit-deadline" type="datetime-local" value={editDeadline} onChange={(event) => setEditDeadline(event.target.value)} />
+                    <label htmlFor="edit-publication">Publikatsiya sanasi (ixtiyoriy)</label>
+                    <input id="edit-publication" type="datetime-local" value={editPublication} onChange={(event) => setEditPublication(event.target.value)} />
+                    <span className="ma-muted">Publikatsiya sanasi ishni tugatish muddatidan alohida saqlanadi.</span>
+                  </>}
+                  {!canManageTask && <span className="ma-muted">Mas’ul muddat, mas’ul shaxs va publikatsiya sanasini o‘zgartira olmaydi.</span>}
+                  <div className="ma-form-row">
+                    <button className="ma-btn primary" disabled={actionPending || !editTitle.trim() || (canManageTask && (!editAssigneeId || !editDeadline))} onClick={saveTaskEdit}>{actionPending ? "Saqlanmoqda…" : "Saqlash"}</button>
+                    <button className="ma-btn secondary" disabled={actionPending} onClick={() => setShowEdit(false)}>Bekor qilish</button>
+                  </div>
+                  {actionError && <div className="ma-error-inline" role="alert">{actionError}</div>}
+                </div>
+              </section>
+            )}
 
             {postingChecklist && (
               <section className="ma-checklist-card" aria-labelledby="posting-checklist-title">
                 <div className="ma-section-head">
                   <div>
-                    <h3 id="posting-checklist-title">Posting checklist</h3>
-                    <span className="ma-muted">{postingChecklist.items.filter((item) => item.isCompleted).length} / {postingChecklist.items.length} complete</span>
+                    <h3 id="posting-checklist-title">Joylash ro‘yxati</h3>
+                    <span className="ma-muted">{postingChecklist.items.filter((item) => item.isCompleted).length} / {postingChecklist.items.length} bajarilgan</span>
                   </div>
-                  {postingComplete && <span className="ma-complete-chip">Complete</span>}
+                  {postingComplete && <span className="ma-complete-chip">Tayyor</span>}
                 </div>
                 <div className="ma-checklist-items">
                   {postingChecklist.items.map((item) => (
@@ -1729,7 +2081,7 @@ function TaskDetailPanel({
                   ))}
                 </div>
                 {!postingComplete && isAssignee && (
-                  <p className="ma-muted">Complete all platforms to enable Send to Review.</p>
+                  <p className="ma-muted">Tekshiruvga yuborish uchun barcha platformalarni belgilang.</p>
                 )}
               </section>
             )}
@@ -1737,17 +2089,17 @@ function TaskDetailPanel({
             {/* Deadline requests */}
             {pendingDL.length > 0 && (
               <section className="ma-section" aria-labelledby="dl-req-title">
-                <h3 id="dl-req-title">Pending Deadline Requests</h3>
+                <h3 id="dl-req-title">Kutilayotgan muddat so‘rovlari</h3>
                 {pendingDL.map((req) => {
                   const requester = users.find((u) => u.id === req.requestedBy);
                   return (
                     <div key={req.id} className="ma-dl-req">
-                      <span><strong>{requester?.displayName ?? "Someone"}</strong> → {fmtDateTime(req.requestedDeadline)}</span>
+                      <span><strong>{requester?.displayName ?? "Foydalanuvchi"}</strong> → {fmtDateTime(req.requestedDeadline)}</span>
                       <span className="ma-muted">{req.reason}</span>
                       {(isCreator || isHead) && (
                         <div className="ma-dl-actions">
-                          <button className="ma-btn primary" disabled={actionPending} onClick={() => resolveDeadline(req.id, true)}>Approve</button>
-                          <button className="ma-btn warn" disabled={actionPending} onClick={() => resolveDeadline(req.id, false)}>Reject</button>
+                          <button className="ma-btn primary" disabled={actionPending} onClick={() => resolveDeadline(req.id, true)}>Tasdiqlash</button>
+                          <button className="ma-btn warn" disabled={actionPending} onClick={() => resolveDeadline(req.id, false)}>Rad etish</button>
                         </div>
                       )}
                     </div>
@@ -1759,16 +2111,16 @@ function TaskDetailPanel({
             {/* Workflow actions */}
             {actions.length > 0 && (
               <section className="ma-section">
-                <h3>Actions</h3>
+                <h3>Amallar</h3>
                 {showBlockInput ? (
                   <div className="ma-block-form">
-                    <label htmlFor="block-reason">Reason for blocking</label>
+                    <label htmlFor="block-reason">Bloklash sababi</label>
                     <textarea
                       id="block-reason"
                       value={blockReason}
                       onChange={(e) => setBlockReason(e.target.value)}
                       rows={3}
-                      placeholder="Describe what's blocking progress…"
+                      placeholder="Ishga nima to‘sqinlik qilayotganini yozing…"
                     />
                     <div className="ma-form-row">
                       <button
@@ -1781,21 +2133,21 @@ function TaskDetailPanel({
                           }
                         }}
                       >
-                        Confirm Block
+                        Bloklashni tasdiqlash
                       </button>
-                      <button className="ma-btn secondary" onClick={() => setShowBlockInput(false)}>Cancel</button>
+                      <button className="ma-btn secondary" onClick={() => setShowBlockInput(false)}>Bekor qilish</button>
                     </div>
                   </div>
                 ) : showRevisionInput ? (
                   <div className="ma-block-form">
-                    <label htmlFor="revision-reason">Revision comment (optional)</label>
+                    <label htmlFor="revision-reason">Tuzatish izohi (ixtiyoriy)</label>
                     <textarea
                       id="revision-reason"
                       value={revisionReason}
                       onChange={(event) => setRevisionReason(event.target.value)}
                       rows={3}
                       maxLength={5000}
-                      placeholder="Explain what should change…"
+                      placeholder="Nimani o‘zgartirish kerakligini yozing…"
                     />
                     <div className="ma-form-row">
                       <button
@@ -1811,9 +2163,9 @@ function TaskDetailPanel({
                           }
                         }}
                       >
-                        Request Revision
+                        Tuzatishga qaytarish
                       </button>
-                      <button className="ma-btn secondary" onClick={() => setShowRevisionInput(false)}>Cancel</button>
+                      <button className="ma-btn secondary" onClick={() => setShowRevisionInput(false)}>Bekor qilish</button>
                     </div>
                   </div>
                 ) : (
@@ -1841,101 +2193,144 @@ function TaskDetailPanel({
             {/* Request deadline change (assignee only, non-terminal) */}
             {isAssignee && !isTerminal(task.status) && (
               <section className="ma-section">
-                <h3>Deadline Change</h3>
+                <h3>Muddatni o‘zgartirish</h3>
                 {showDLRequest ? (
                   <div className="ma-block-form">
-                    <label htmlFor="dl-date">Proposed deadline</label>
+                    <label htmlFor="dl-date">Taklif qilinayotgan muddat</label>
                     <input id="dl-date" type="datetime-local" value={dlDate} onChange={(e) => setDlDate(e.target.value)} />
-                    <label htmlFor="dl-reason">Reason</label>
-                    <textarea id="dl-reason" value={dlReason} onChange={(e) => setDlReason(e.target.value)} rows={2} placeholder="Why do you need more time?" />
+                    <label htmlFor="dl-reason">Sabab</label>
+                    <textarea id="dl-reason" value={dlReason} onChange={(e) => setDlReason(e.target.value)} rows={2} placeholder="Nega qo‘shimcha vaqt kerak?" />
                     <div className="ma-form-row">
-                      <button className="ma-btn primary" disabled={actionPending || !dlDate || !dlReason.trim()} onClick={requestDeadline}>Submit Request</button>
-                      <button className="ma-btn secondary" onClick={() => setShowDLRequest(false)}>Cancel</button>
+                      <button className="ma-btn primary" disabled={actionPending || !dlDate || !dlReason.trim()} onClick={requestDeadline}>So‘rov yuborish</button>
+                      <button className="ma-btn secondary" onClick={() => setShowDLRequest(false)}>Bekor qilish</button>
                     </div>
                     {actionError && <div className="ma-error-inline" role="alert">{actionError}</div>}
                   </div>
                 ) : (
-                  <button className="ma-btn secondary" onClick={() => setShowDLRequest(true)}>Request deadline change</button>
+                  <button className="ma-btn secondary" onClick={() => setShowDLRequest(true)}>Muddat o‘zgarishini so‘rash</button>
                 )}
               </section>
             )}
 
             {canManageRecurrence && (
               <section className="ma-section">
-                <h3>Recurring task</h3>
+                <h3>Takroriy vazifa</h3>
                 {showRecurrenceForm ? (
                   <div className="ma-block-form">
-                    <label htmlFor="recurrence-frequency">Schedule</label>
+                    <label htmlFor="recurrence-frequency">Jadval</label>
                     <select id="recurrence-frequency" value={recurrenceFrequency} onChange={(event) => setRecurrenceFrequency(event.target.value as RecurringDefinition["frequency"])}>
-                      <option value="WEEKDAYS">Daily — Mon–Fri</option>
-                      <option value="WEEKLY">Weekly</option>
-                      <option value="MONTHLY">Monthly</option>
+                      <option value="WEEKDAYS">Har ish kuni — Du–Ju</option>
+                      <option value="WEEKLY">Har hafta</option>
+                      <option value="MONTHLY">Har oy</option>
                     </select>
                     {recurrenceFrequency === "WEEKLY" && <>
-                      <label htmlFor="recurrence-weekday">Weekday</label>
+                      <label htmlFor="recurrence-weekday">Hafta kuni</label>
                       <select id="recurrence-weekday" value={recurrenceWeekday} onChange={(event) => setRecurrenceWeekday(Number(event.target.value))}>
-                        {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((label, index) => <option key={label} value={index + 1}>{label}</option>)}
+                        {["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"].map((label, index) => <option key={label} value={index + 1}>{label}</option>)}
                       </select>
                     </>}
                     {recurrenceFrequency === "MONTHLY" && <>
-                      <label htmlFor="recurrence-day">Day of month</label>
+                      <label htmlFor="recurrence-day">Oy kuni</label>
                       <input id="recurrence-day" type="number" min="1" max="31" value={recurrenceDay} onChange={(event) => setRecurrenceDay(Number(event.target.value))} />
-                      <span className="ma-muted">Shorter months use their last day.</span>
+                      <span className="ma-muted">Qisqa oylarda oyning oxirgi kuni olinadi.</span>
                     </>}
-                    <label htmlFor="recurrence-time">Time</label>
+                    <label htmlFor="recurrence-time">Vaqt</label>
                     <input id="recurrence-time" type="time" value={recurrenceTime} onChange={(event) => setRecurrenceTime(event.target.value)} />
-                    <label htmlFor="recurrence-end">End date (optional)</label>
+                    <label htmlFor="recurrence-end">Tugash sanasi (ixtiyoriy)</label>
                     <input id="recurrence-end" type="date" value={recurrenceEnd} onChange={(event) => setRecurrenceEnd(event.target.value)} />
                     {detail?.recurringDefinition && (
                       <>
-                        <label htmlFor="recurrence-assignee">Assignee</label>
+                        <label htmlFor="recurrence-assignee">Mas’ul</label>
                         <PersonPickerField
                           id="recurrence-assignee"
                           users={users.filter((u) => u.isActive)}
                           selectedId={recurrenceAssigneeId}
                           onSelect={setRecurrenceAssigneeId}
-                          pickerTitle="Assignee"
-                          placeholder="Choose assignee"
+                          pickerTitle="Mas’ulni tanlang"
+                          placeholder="Mas’ulni tanlang"
                         />
                       </>
                     )}
                     <div className="ma-form-row">
-                      <button className="ma-btn primary" disabled={actionPending || !recurrenceTime} onClick={saveRecurrence}>Save future schedule</button>
-                      <button className="ma-btn secondary" onClick={() => setShowRecurrenceForm(false)}>Cancel</button>
+                      <button className="ma-btn primary" disabled={actionPending || !recurrenceTime} onClick={saveRecurrence}>Kelgusi jadvalni saqlash</button>
+                      <button className="ma-btn secondary" onClick={() => setShowRecurrenceForm(false)}>Bekor qilish</button>
                     </div>
                   </div>
                 ) : recurringDefinition ? (
                   <div className="ma-recurrence-card">
-                    <div><strong>{recurringDefinition.frequency === "WEEKDAYS" ? "Every weekday" : recurringDefinition.frequency === "WEEKLY" ? `Every ${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][(recurringDefinition.weekday ?? 1) - 1]}` : `Every month on day ${recurringDefinition.dayOfMonth}`}</strong><span> at {recurringDefinition.localTime}</span></div>
-                    <span className={`ma-recurrence-status ${recurringDefinition.status.toLowerCase()}`}>{recurringDefinition.status}</span>
+                    <div><strong>{recurringDefinition.frequency === "WEEKDAYS" ? "Har ish kuni" : recurringDefinition.frequency === "WEEKLY" ? `Har ${["dushanba", "seshanba", "chorshanba", "payshanba", "juma", "shanba", "yakshanba"][(recurringDefinition.weekday ?? 1) - 1]}` : `Har oyning ${recurringDefinition.dayOfMonth}-kuni`}</strong><span> soat {recurringDefinition.localTime}</span></div>
+                    <span className={`ma-recurrence-status ${recurringDefinition.status.toLowerCase()}`}>{RECURRENCE_STATUS_LABELS[recurringDefinition.status]}</span>
                     {recurringDefinition.status === "PAUSED" && recurringDefinition.pauseReason === "ASSIGNEE_DEACTIVATED" && (
-                      <span className="ma-muted">Paused automatically — the assignee was removed from the team. Change the assignee, then Resume.</span>
+                      <span className="ma-muted">Avtomatik to‘xtatildi: mas’ul jamoadan chiqarilgan. Mas’ulni almashtirib, davom ettiring.</span>
                     )}
-                    {recurringDefinition.nextOccurrenceAt && <span className="ma-muted">Next: {fmtDateTime(recurringDefinition.nextOccurrenceAt)}</span>}
+                    {recurringDefinition.nextOccurrenceAt && <span className="ma-muted">Keyingisi: {fmtDateTime(recurringDefinition.nextOccurrenceAt)}</span>}
                     {recurringDefinition.status !== "STOPPED" && <div className="ma-action-row">
-                      <button className="ma-btn secondary" disabled={actionPending} onClick={openRecurrenceForm}>Edit future</button>
-                      <button className="ma-btn secondary" disabled={actionPending} onClick={() => recurrenceAction(recurringDefinition.status === "PAUSED" ? "RESUME" : "PAUSE")}>{recurringDefinition.status === "PAUSED" ? "Resume" : "Pause"}</button>
-                      <button className="ma-btn danger" disabled={actionPending} onClick={() => recurrenceAction("STOP")}>Stop</button>
+                      <button className="ma-btn secondary" disabled={actionPending} onClick={openRecurrenceForm}>Kelgusi jadvalni tahrirlash</button>
+                      <button className="ma-btn secondary" disabled={actionPending} onClick={() => recurrenceAction(recurringDefinition.status === "PAUSED" ? "RESUME" : "PAUSE")}>{recurringDefinition.status === "PAUSED" ? "Davom ettirish" : "Vaqtincha to‘xtatish"}</button>
+                      <button className="ma-btn danger" disabled={actionPending} onClick={() => recurrenceAction("STOP")}>Butunlay to‘xtatish</button>
                     </div>}
                   </div>
                 ) : (
-                  <button className="ma-btn secondary" onClick={openRecurrenceForm}>Make recurring</button>
+                  <button className="ma-btn secondary" onClick={openRecurrenceForm}>Takroriy qilish</button>
                 )}
                 {actionError && <div className="ma-error-inline" role="alert">{actionError}</div>}
               </section>
             )}
 
+            <section className="ma-section ma-comments" aria-labelledby="task-comments-title">
+              <div className="ma-section-head">
+                <div><h3 id="task-comments-title">Muhokama va natijalar</h3><span className="ma-muted">{comments.length} ta yozuv</span></div>
+              </div>
+              {comments.length === 0 ? <div className="ma-empty compact">Hali izoh yoki natija yo‘q.</div> : (
+                <ol className="ma-comment-list">
+                  {comments.map((comment) => {
+                    const author = users.find((user) => user.id === comment.authorId);
+                    const imageAttachment = comment.attachmentUrl && /\.(png|jpe?g|gif|webp)(\?.*)?$/i.test(comment.attachmentUrl);
+                    return (
+                      <li className={`ma-comment ${comment.kind.toLowerCase()}`} key={comment.id}>
+                        <div className="ma-comment-head">
+                          <strong>{author?.displayName ?? "Jamoa a’zosi"}</strong>
+                          <span>{comment.kind === "RESULT" ? "Natija" : "Izoh"} · {fmtDateTime(comment.createdAt)}</span>
+                        </div>
+                        {comment.body && <p>{comment.body}</p>}
+                        {comment.attachmentUrl && <>
+                          {/* User-provided result links can come from any HTTPS host, so Next Image cannot safely predeclare every remote domain. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {imageAttachment && <img src={comment.attachmentUrl} alt="Biriktirilgan natija preview" loading="lazy" referrerPolicy="no-referrer" />}
+                          <a href={comment.attachmentUrl} target="_blank" rel="noreferrer">Natijani ochish ↗</a>
+                        </>}
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+              <div className="ma-block-form ma-comment-form">
+                <label htmlFor="comment-kind">Yozuv turi</label>
+                <select id="comment-kind" value={commentKind} onChange={(event) => setCommentKind(event.target.value as TaskComment["kind"])}>
+                  <option value="COMMENT">Izoh</option><option value="RESULT">Ish natijasi</option>
+                </select>
+                <label htmlFor="comment-body">Izoh</label>
+                <textarea id="comment-body" rows={3} maxLength={4000} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder={commentKind === "RESULT" ? "Natija haqida qisqacha yozing" : "Fikr yoki savolingizni yozing"} />
+                <label htmlFor="comment-url">Google Drive yoki boshqa havola (ixtiyoriy)</label>
+                <input id="comment-url" type="url" value={commentUrl} onChange={(event) => setCommentUrl(event.target.value)} placeholder="https://…" />
+                <button className="ma-btn primary" disabled={commentPending || (!commentBody.trim() && !commentUrl.trim())} onClick={submitComment}>
+                  {commentPending ? "Yuborilmoqda…" : commentKind === "RESULT" ? "Natijani topshirish" : "Izoh yuborish"}
+                </button>
+                {actionError && <div className="ma-error-inline" role="alert">{actionError}</div>}
+              </div>
+            </section>
+
             {/* Events */}
             {events.length > 0 && (
               <section className="ma-section" aria-labelledby="events-title">
-                <h3 id="events-title">Activity</h3>
+                <h3 id="events-title">Faollik tarixi</h3>
                 <ol className="ma-events">
                   {events.map((ev) => {
                     const actor = ev.actorId ? users.find((u) => u.id === ev.actorId) : null;
                     return (
                       <li key={ev.id} className="ma-event">
-                        <span className="ma-event-type">{ev.eventType.replace(/_/g, " ")}</span>
-                        <span className="ma-muted"> · {actor?.displayName ?? "System"} · {fmtDateTime(ev.createdAt)}</span>
+                        <span className="ma-event-type">{EVENT_LABELS[ev.eventType] ?? ev.eventType.replace(/_/g, " ")}</span>
+                        <span className="ma-muted"> · {actor?.displayName ?? "Tizim"} · {fmtDateTime(ev.createdAt)}</span>
                       </li>
                     );
                   })}
@@ -1944,6 +2339,93 @@ function TaskDetailPanel({
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function WorkflowStartPanel({ users, onClose, onStarted }: {
+  users: User[];
+  onClose: () => void;
+  onStarted: (task: Task) => void;
+}) {
+  const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [subject, setSubject] = useState("");
+  const [assigneeMap, setAssigneeMap] = useState<Partial<Record<Role, string>>>({});
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const defaultsFor = useCallback((template: WorkflowTemplate) => {
+    const next: Partial<Record<Role, string>> = {};
+    for (const role of new Set(template.steps.map((step) => step.assigneeRole))) {
+      const candidate = users.find((user) => user.isActive && user.role === role);
+      if (candidate) next[role] = candidate.id;
+    }
+    return next;
+  }, [users]);
+
+  useEffect(() => {
+    void (async () => {
+      const { data, error: loadError } = await apiFetch<{ templates: WorkflowTemplate[] }>("/api/workflow-templates");
+      setLoading(false);
+      if (!data) { setError(friendlyError(loadError)); return; }
+      setTemplates(data.templates);
+      const first = data.templates[0];
+      if (first) {
+        setSelectedId(first.id);
+        setAssigneeMap(defaultsFor(first));
+      }
+    })();
+  }, [defaultsFor]);
+
+  const selected = templates.find((template) => template.id === selectedId) ?? null;
+  const roles = selected ? [...new Set(selected.steps.map((step) => step.assigneeRole))] : [];
+  const start = async () => {
+    if (!selected || !subject.trim()) return;
+    setPending(true);
+    setError(null);
+    const { data, error: startError } = await apiFetch<{ task: Task }>("/api/workflows", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ templateId: selected.id, subject: subject.trim(), assigneeMap }),
+    });
+    setPending(false);
+    if (data?.task) onStarted(data.task);
+    else setError(friendlyError(startError));
+  };
+
+  return (
+    <div className="ma-overlay" role="dialog" aria-modal="true" aria-label="Ish jarayonini boshlash" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="ma-panel">
+        <div className="ma-panel-header"><button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button><span className="ma-panel-title">Marketing ish jarayoni</span></div>
+        <div className="ma-panel-body">
+          {loading && <div className="ma-center-inline"><div className="ma-spinner" /></div>}
+          {!loading && templates.length === 0 && !error && <div className="ma-empty">Ish jarayoni shabloni topilmadi.</div>}
+          {templates.length > 0 && <div className="ma-block-form">
+            <label htmlFor="workflow-template">Shablon</label>
+            <select id="workflow-template" value={selectedId} onChange={(event) => {
+              const template = templates.find((item) => item.id === event.target.value);
+              setSelectedId(event.target.value);
+              if (template) setAssigneeMap(defaultsFor(template));
+            }}>
+              {templates.map((template) => <option value={template.id} key={template.id}>{template.name}</option>)}
+            </select>
+            {selected?.description && <p className="ma-muted">{selected.description}</p>}
+            <label htmlFor="workflow-subject">Loyiha yoki kontent nomi</label>
+            <input id="workflow-subject" value={subject} maxLength={200} onChange={(event) => setSubject(event.target.value)} placeholder="Masalan: Yangi filial Reels" />
+            {selected && <ol className="ma-workflow-steps">
+              {selected.steps.map((step) => <li key={step.id}><span>{step.position}</span><div><strong>{step.title}</strong><small>{ROLE_LABELS[step.assigneeRole]} · {step.dueAfterHours} soat</small></div></li>)}
+            </ol>}
+            {roles.map((role) => <div className="ma-workflow-assignee" key={role}>
+              <label htmlFor={`workflow-role-${role}`}>{ROLE_LABELS[role]}</label>
+              <PersonPickerField id={`workflow-role-${role}`} users={users.filter((user) => user.isActive && user.role === role)} selectedId={assigneeMap[role] ?? null} onSelect={(userId) => setAssigneeMap((current) => ({ ...current, [role]: userId }))} pickerTitle={ROLE_LABELS[role]} placeholder="Xodimni tanlang" />
+            </div>)}
+            <button className="ma-btn primary full" disabled={pending || !subject.trim() || roles.some((role) => !assigneeMap[role])} onClick={start}>{pending ? "Boshlanmoqda…" : "Ish jarayonini boshlash"}</button>
+          </div>}
+          {error && <div className="ma-error-inline" role="alert">{error}</div>}
+        </div>
       </div>
     </div>
   );
@@ -2002,7 +2484,7 @@ function PersonPicker({
     >
       <div className="ma-panel">
         <div className="ma-panel-header">
-          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
+          <button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button>
           <span className="ma-panel-title">{title}</span>
         </div>
         <div className="ma-panel-body ma-picker-body">
@@ -2127,7 +2609,7 @@ function QuickAddPanel({
     });
     setPending(false);
     if (e) { setError(friendlyError(e)); return; }
-    if (!data) { setError("Task was not created."); return; }
+    if (!data) { setError("Vazifa yaratilmadi."); return; }
     onCreated(data.notification);
   };
 
@@ -2136,38 +2618,38 @@ function QuickAddPanel({
       className="ma-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Quick add task"
+      aria-label="Tezkor vazifa qo‘shish"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="ma-panel">
         <div className="ma-panel-header">
-          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
-          <span className="ma-panel-title">New Task</span>
+          <button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button>
+          <span className="ma-panel-title">Yangi vazifa</span>
         </div>
         <div className="ma-panel-body">
           <div className="ma-form-group">
-            <label htmlFor="qa-title">Title *</label>
+            <label htmlFor="qa-title">Nomi *</label>
             <input
               id="qa-title"
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Task title"
+              placeholder="Vazifa nomi"
               autoFocus
             />
           </div>
           <div className="ma-form-group">
-            <label htmlFor="qa-assignee">Assignee *</label>
+            <label htmlFor="qa-assignee">Mas’ul *</label>
             {!usersLoaded && !usersError && (
               <div className="ma-loading-inline">
-                <div className="ma-spinner ma-spinner-sm" aria-label="Loading team" />
-                <span>Loading team…</span>
+                <div className="ma-spinner ma-spinner-sm" aria-label="Jamoa yuklanmoqda" />
+                <span>Jamoa yuklanmoqda…</span>
               </div>
             )}
             {usersError && (
               <div className="ma-error-inline" role="alert">
                 <span>Jamoa ma&apos;lumotlarini yuklab bo&apos;lmadi. Qayta urinib ko&apos;ring.</span>
-                <button type="button" className="ma-link-btn" onClick={onRetryTeam}>Retry</button>
+                <button type="button" className="ma-link-btn" onClick={onRetryTeam}>Qayta urinish</button>
               </div>
             )}
             {usersLoaded && (
@@ -2176,22 +2658,22 @@ function QuickAddPanel({
                 users={activeUsers}
                 selectedId={assigneeId}
                 onSelect={setAssigneeId}
-                pickerTitle="Assignee"
-                placeholder="Choose assignee"
+                pickerTitle="Mas’ulni tanlang"
+                placeholder="Mas’ulni tanlang"
               />
             )}
           </div>
           <div className="ma-form-group">
-            <label htmlFor="qa-deadline">Deadline *</label>
+            <label htmlFor="qa-deadline">Muddat *</label>
             <input id="qa-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
             {relativeDeadlineSummary(deadline) && (
               <span className="ma-deadline-summary">{relativeDeadlineSummary(deadline)}</span>
             )}
           </div>
           <details className="ma-more-details">
-            <summary>Priority &amp; description</summary>
+            <summary>Ustuvorlik va tavsif</summary>
             <div className="ma-form-group">
-              <label htmlFor="qa-priority">Priority</label>
+              <label htmlFor="qa-priority">Ustuvorlik</label>
               <select id="qa-priority" value={priority} onChange={(e) => setPriority(e.target.value as Priority)}>
                 {(["low", "normal", "high"] as Priority[]).map((p) => (
                   <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>
@@ -2199,19 +2681,19 @@ function QuickAddPanel({
               </select>
             </div>
             <div className="ma-form-group">
-              <label htmlFor="qa-desc">Description</label>
+              <label htmlFor="qa-desc">Tavsif</label>
               <textarea
                 id="qa-desc"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={3}
-                placeholder="Optional details…"
+                placeholder="Ixtiyoriy tafsilotlar…"
               />
             </div>
           </details>
           {error && <div className="ma-error-inline" role="alert">{error}</div>}
           <button className="ma-btn primary full" disabled={pending || !teamReady || !title.trim() || !deadline || !assigneeId} onClick={submit}>
-            {pending ? "Creating…" : !teamReady ? "Loading team…" : "Create Task"}
+            {pending ? "Yaratilmoqda…" : !teamReady ? "Jamoa yuklanmoqda…" : "Vazifa yaratish"}
           </button>
         </div>
       </div>
@@ -2256,22 +2738,22 @@ function PendingUsersPanel({
       className="ma-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Pending users"
+      aria-label="Kutilayotgan foydalanuvchilar"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="ma-panel">
         <div className="ma-panel-header">
-          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
-          <span className="ma-panel-title">Pending Users</span>
+          <button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button>
+          <span className="ma-panel-title">Kutilayotgan foydalanuvchilar</span>
         </div>
         <div className="ma-panel-body">
-          {users.length === 0 && <p className="ma-muted">No pending users.</p>}
+          {users.length === 0 && <p className="ma-muted">Kutilayotgan foydalanuvchi yo‘q.</p>}
           {users.map((u) => (
             <div key={u.id} className="ma-pending-user">
               <div className="ma-pending-name">{u.displayName}</div>
               <div className="ma-form-row">
                 <select
-                  aria-label={`Role for ${u.displayName}`}
+                  aria-label={`${u.displayName} uchun rol`}
                   value={roles[u.id] ?? "OPERATOR_VIDEO_EDITOR"}
                   onChange={(e) => setRoles((r) => ({ ...r, [u.id]: e.target.value as Role }))}
                 >
@@ -2284,7 +2766,7 @@ function PendingUsersPanel({
                   disabled={pending[u.id]}
                   onClick={() => activate(u.id)}
                 >
-                  {pending[u.id] ? "…" : "Activate"}
+                  {pending[u.id] ? "…" : "Faollashtirish"}
                 </button>
               </div>
               {errors[u.id] && <div className="ma-error-inline" role="alert">{errors[u.id]}</div>}
@@ -2301,37 +2783,81 @@ function PendingUsersPanel({
 function ProfilePanel({
   user,
   onClose,
-  onEditRole,
 }: {
   user: User;
   onClose: () => void;
-  onEditRole: () => void;
 }) {
-  const canEditOwnRole = user.role !== "HEAD_OF_MARKETING";
+  const [preferences, setPreferences] = useState<NotificationPreferences | null>(null);
+  const [preferencesError, setPreferencesError] = useState<string | null>(null);
+  const [savingPreference, setSavingPreference] = useState<keyof NotificationPreferences | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const { data, error } = await apiFetch<NotificationPreferences>("/api/me/notification-preferences");
+      if (data) setPreferences(data);
+      else setPreferencesError(friendlyError(error));
+    })();
+  }, []);
+
+  const togglePreference = async (key: keyof NotificationPreferences) => {
+    if (!preferences || savingPreference) return;
+    const previous = preferences;
+    const next = { ...preferences, [key]: !preferences[key] };
+    setPreferences(next);
+    setSavingPreference(key);
+    setPreferencesError(null);
+    const { data, error } = await apiFetch<NotificationPreferences>("/api/me/notification-preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ [key]: next[key] }),
+    });
+    setSavingPreference(null);
+    if (data) setPreferences(data);
+    else {
+      setPreferences(previous);
+      setPreferencesError(friendlyError(error));
+    }
+  };
+
+  const preferenceLabels: Array<[keyof NotificationPreferences, string, string]> = [
+    ["assignments", "Yangi vazifalar", "Sizga yangi vazifa biriktirilganda"],
+    ["workflow", "Vazifa jarayoni", "Tekshiruv, tasdiq va tuzatishlar"],
+    ["reminders", "Muddat eslatmalari", "Yaqinlashgan va kechikkan vazifalar"],
+    ["dailyCheck", "17:30 kunlik tekshiruv", "Ish kunlari kun yakuni savoli"],
+    ["reports", "Hisobotlar", "Ertalabki va haftalik xulosalar"],
+  ];
+
   return (
     <div
       className="ma-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Your profile"
+      aria-label="Profil"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="ma-panel">
         <div className="ma-panel-header">
-          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
-          <span className="ma-panel-title">Your Profile</span>
+          <button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button>
+          <span className="ma-panel-title">Profil</span>
         </div>
         <div className="ma-panel-body">
           <dl className="ma-detail-meta">
-            <dt>Name</dt><dd>{user.displayName}</dd>
-            <dt>Role</dt><dd>{ROLE_LABELS[user.role]}</dd>
+            <dt>Ism</dt><dd>{user.displayName}</dd>
+            <dt>Rol</dt><dd>{ROLE_LABELS[user.role]}</dd>
             {user.telegramUsername && <><dt>Telegram</dt><dd>@{user.telegramUsername}</dd></>}
           </dl>
-          {canEditOwnRole ? (
-            <button className="ma-btn secondary full" onClick={onEditRole}>Edit role</button>
-          ) : (
-            <p className="ma-muted">Head&rsquo;s role can only be changed outside the app.</p>
-          )}
+          <p className="ma-muted">Tashkiliy rolni faqat Marketing rahbari o&lsquo;zgartirishi mumkin.</p>
+          <section className="ma-section ma-preferences" aria-labelledby="notification-settings-title">
+            <div><h3 id="notification-settings-title">Bildirishnomalar</h3><span className="ma-muted">Qaysi Telegram xabarlarini olishni tanlang.</span></div>
+            {!preferences && !preferencesError && <div className="ma-spinner" aria-label="Sozlamalar yuklanmoqda" />}
+            {preferences && preferenceLabels.map(([key, label, description]) => (
+              <label className="ma-preference-row" key={key}>
+                <span><strong>{label}</strong><small>{description}</small></span>
+                <input type="checkbox" checked={preferences[key]} disabled={savingPreference !== null} onChange={() => togglePreference(key)} />
+              </label>
+            ))}
+            {preferencesError && <div className="ma-error-inline" role="alert">{preferencesError}</div>}
+          </section>
         </div>
       </div>
     </div>
@@ -2375,19 +2901,19 @@ function RoleEditSheet({
       className="ma-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Edit role"
+      aria-label="Rolni o‘zgartirish"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="ma-panel">
         <div className="ma-panel-header">
-          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
-          <span className="ma-panel-title">Edit Role</span>
+          <button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button>
+          <span className="ma-panel-title">Rolni o‘zgartirish</span>
         </div>
         <div className="ma-panel-body">
           <p className="ma-muted">
-            Correcting <strong>{user.displayName}</strong>&rsquo;s role. This takes effect immediately.
+            <strong>{user.displayName}</strong> roli o‘zgartirilmoqda. O‘zgarish darhol kuchga kiradi.
           </p>
-          <div className="ma-role-options" role="radiogroup" aria-label="Role">
+          <div className="ma-role-options" role="radiogroup" aria-label="Rol">
             {ACTIVATION_ROLES.map((r) => (
               <button
                 key={r}
@@ -2404,9 +2930,9 @@ function RoleEditSheet({
           {error && <div className="ma-error-inline" role="alert">{error}</div>}
           <div className="ma-form-row">
             <button className="ma-btn primary full" disabled={pending} onClick={save}>
-              {pending ? "Saving…" : "Save role"}
+              {pending ? "Saqlanmoqda…" : "Rolni saqlash"}
             </button>
-            <button className="ma-btn secondary" onClick={onClose} disabled={pending}>Cancel</button>
+            <button className="ma-btn secondary" onClick={onClose} disabled={pending}>Bekor qilish</button>
           </div>
         </div>
       </div>
@@ -2453,7 +2979,7 @@ function DeactivateMemberSheet({
         setPreview(data);
         if (data.openTasks.length === 0) setAction("KEEP");
       } else {
-        setLoadError(friendlyError(e) ?? "Failed to load this teammate's task summary.");
+        setLoadError(friendlyError(e) ?? "Xodim vazifalari xulosasini yuklab bo‘lmadi.");
       }
     })();
   }, [user.id]);
@@ -2483,64 +3009,64 @@ function DeactivateMemberSheet({
       className="ma-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Remove from team"
+      aria-label="Jamoadan chiqarish"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="ma-panel">
         <div className="ma-panel-header">
-          <button className="ma-back-btn" onClick={onClose} aria-label="Close">←</button>
-          <span className="ma-panel-title">Remove from Team</span>
+          <button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button>
+          <span className="ma-panel-title">Jamoadan chiqarish</span>
         </div>
         <div className="ma-panel-body">
           {loading && <div className="ma-center-inline"><div className="ma-spinner" /></div>}
           {loadError && <div className="ma-error" role="alert">{loadError}</div>}
           {preview && (
             <>
-              <p className="ma-detail-desc">Remove <strong>{user.displayName}</strong> from active team?</p>
+              <p className="ma-detail-desc"><strong>{user.displayName}</strong> faol jamoadan chiqarilsinmi?</p>
               <ul className="ma-fact-list">
-                <li>{openCount} active task{openCount === 1 ? "" : "s"}</li>
-                <li>{preview.historicalTaskCount} historical task{preview.historicalTaskCount === 1 ? "" : "s"}</li>
+                <li>{openCount} ta faol vazifa</li>
+                <li>{preview.historicalTaskCount} ta tarixiy vazifa</li>
                 {preview.activeRecurringCount > 0 && (
-                  <li>{preview.activeRecurringCount} recurring definition{preview.activeRecurringCount === 1 ? "" : "s"} will pause</li>
+                  <li>{preview.activeRecurringCount} ta takroriy jadval to‘xtatiladi</li>
                 )}
               </ul>
-              <p className="ma-muted">They will:</p>
+              <p className="ma-muted">Natijada foydalanuvchi:</p>
               <ul className="ma-fact-list muted">
-                <li>stop receiving new tasks and bot notifications</li>
-                <li>lose active Mini App access</li>
-                <li>remain in historical task records</li>
+                <li>yangi vazifa va bot xabarlarini olmaydi;</li>
+                <li>Mini App’ga faol kirish huquqini yo‘qotadi;</li>
+                <li>tarixiy vazifa yozuvlarida saqlanib qoladi.</li>
               </ul>
 
               {openCount > 0 && (
                 <>
-                  <h3>What happens to their {openCount} open task{openCount === 1 ? "" : "s"}?</h3>
-                  <div className="ma-role-options" role="radiogroup" aria-label="Open task handling">
+                  <h3>{openCount} ta ochiq vazifa bilan nima qilinsin?</h3>
+                  <div className="ma-role-options" role="radiogroup" aria-label="Ochiq vazifalarni boshqarish">
                     <button type="button" role="radio" aria-checked={action === "REASSIGN"}
                       className={`ma-role-option${action === "REASSIGN" ? " active" : ""}`}
                       onClick={() => setAction("REASSIGN")}>
-                      Reassign to another teammate
+                      Boshqa xodimga o‘tkazish
                     </button>
                     <button type="button" role="radio" aria-checked={action === "CANCEL"}
                       className={`ma-role-option${action === "CANCEL" ? " active" : ""}`}
                       onClick={() => setAction("CANCEL")}>
-                      Cancel these tasks
+                      Vazifalarni bekor qilish
                     </button>
                     <button type="button" role="radio" aria-checked={action === "KEEP"}
                       className={`ma-role-option${action === "KEEP" ? " active" : ""}`}
                       onClick={() => setAction("KEEP")}>
-                      Keep as-is for now
+                      Hozircha o‘z holicha qoldirish
                     </button>
                   </div>
                   {action === "REASSIGN" && (
                     <div className="ma-form-group">
-                      <label htmlFor="reassign-to">Reassign to</label>
+                      <label htmlFor="reassign-to">Kimga o‘tkazilsin</label>
                       <PersonPickerField
                         id="reassign-to"
                         users={reassignCandidates}
                         selectedId={reassignTo || null}
                         onSelect={setReassignTo}
-                        pickerTitle="Reassign to"
-                        placeholder="Choose a teammate…"
+                        pickerTitle="Yangi mas’ulni tanlang"
+                        placeholder="Xodimni tanlang…"
                       />
                     </div>
                   )}
@@ -2554,9 +3080,9 @@ function DeactivateMemberSheet({
                   disabled={pending || (action === "REASSIGN" && !reassignTo)}
                   onClick={confirm}
                 >
-                  {pending ? "Removing…" : "Remove from team"}
+                  {pending ? "Chiqarilmoqda…" : "Jamoadan chiqarish"}
                 </button>
-                <button className="ma-btn secondary" onClick={onClose} disabled={pending}>Cancel</button>
+                <button className="ma-btn secondary" onClick={onClose} disabled={pending}>Bekor qilish</button>
               </div>
             </>
           )}

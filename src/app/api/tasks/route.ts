@@ -3,14 +3,22 @@ import { getMarketingService } from "@/server/application";
 import { requireRequestActor } from "@/server/auth/request-actor";
 import { errorResponse } from "@/server/http/errors";
 
-const ScopeSchema = z.enum(["my", "team", "today", "overdue", "review"]);
+const ScopeSchema = z.enum(["my", "created", "team", "today", "overdue", "review"]);
 
 export async function GET(request: Request) {
   try {
     const actor = await requireRequestActor();
-    const requestedScope = new URL(request.url).searchParams.get("scope") ?? "my";
+    const searchParams = new URL(request.url).searchParams;
+    const requestedScope = searchParams.get("scope") ?? "my";
     const scope = ScopeSchema.parse(requestedScope);
-    return Response.json({ tasks: await getMarketingService().listTasks(actor, scope) });
+    const input = Object.fromEntries(
+      ["status", "priority", "assigneeId", "deadlineRange", "search", "sort", "pageSize", "cursor"]
+        .flatMap((key) => {
+          const value = searchParams.get(key);
+          return value === null ? [] : [[key, value] as const];
+        }),
+    );
+    return Response.json(await getMarketingService().listTaskPage(actor, scope, input));
   } catch (error) {
     return errorResponse(error);
   }

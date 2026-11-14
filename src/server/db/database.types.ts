@@ -33,6 +33,7 @@ type TaskRow = {
   creator_id: string;
   assignee_id: string;
   deadline: string;
+  publication_at: string | null;
   blocked_reason: string | null;
   source_telegram_update_id: number | null;
   completed_at: string | null;
@@ -41,6 +42,54 @@ type TaskRow = {
   updated_at: string;
   recurring_definition_id: string | null;
   scheduled_occurrence_at: string | null;
+  workflow_run_id: string | null;
+  workflow_step_id: string | null;
+}
+
+type WorkflowTemplateRow = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  is_system: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type WorkflowTemplateStepRow = {
+  id: string;
+  template_id: string;
+  position: number;
+  title: string;
+  description: string | null;
+  assignee_role: UserRow["role"];
+  priority: TaskRow["priority"];
+  due_after_hours: number;
+}
+
+type WorkflowRunRow = {
+  id: string;
+  template_id: string;
+  created_by: string;
+  subject: string;
+  assignee_map: Json;
+  status: "ACTIVE" | "COMPLETED" | "CANCELLED";
+  current_position: number;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+type TaskCommentRow = {
+  id: string;
+  task_id: string;
+  author_id: string;
+  kind: "COMMENT" | "RESULT";
+  body: string | null;
+  attachment_url: string | null;
+  created_at: string;
 }
 
 type TaskEventRow = {
@@ -133,6 +182,9 @@ type ReportDeliveryRow = {
   failure_reason: string | null;
   created_at: string;
   completed_at: string | null;
+  attempt_count: number;
+  next_attempt_at: string;
+  claimed_at: string | null;
 }
 
 type ReminderDeliveryRow = {
@@ -145,6 +197,37 @@ type ReminderDeliveryRow = {
   metadata: Json;
   created_at: string;
   completed_at: string | null;
+  attempt_count: number;
+  next_attempt_at: string;
+  claimed_at: string | null;
+}
+
+type NotificationOutboxRow = {
+  id: string;
+  dedupe_key: string;
+  notification_type: "ASSIGNMENT" | "BULK_ASSIGNMENT" | "WORKFLOW" | "REPORT";
+  recipient_user_id: string;
+  task_id: string | null;
+  payload: Json;
+  status: "PENDING" | "CLAIMED" | "SENT" | "FAILED";
+  attempt_count: number;
+  next_attempt_at: string;
+  claimed_at: string | null;
+  sent_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type NotificationPreferencesRow = {
+  user_id: string;
+  assignments: boolean;
+  workflow: boolean;
+  reminders: boolean;
+  daily_check: boolean;
+  reports: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 type TableDefinition<Row> = {
@@ -160,6 +243,7 @@ export interface Database {
       users: TableDefinition<UserRow>;
       tasks: TableDefinition<TaskRow>;
       task_events: TableDefinition<TaskEventRow>;
+      task_comments: TableDefinition<TaskCommentRow>;
       deadline_change_requests: TableDefinition<DeadlineRequestRow>;
       reassign_requests: TableDefinition<ReassignRequestRow>;
       task_revisions: TableDefinition<RevisionRow>;
@@ -169,6 +253,11 @@ export interface Database {
       report_deliveries: TableDefinition<ReportDeliveryRow>;
       user_events: TableDefinition<UserEventRow>;
       task_reminder_deliveries: TableDefinition<ReminderDeliveryRow>;
+      notification_outbox: TableDefinition<NotificationOutboxRow>;
+      user_notification_preferences: TableDefinition<NotificationPreferencesRow>;
+      workflow_templates: TableDefinition<WorkflowTemplateRow>;
+      workflow_template_steps: TableDefinition<WorkflowTemplateStepRow>;
+      workflow_runs: TableDefinition<WorkflowRunRow>;
     };
     Views: Record<never, never>;
     Functions: {
@@ -207,6 +296,85 @@ export interface Database {
         };
         Returns: TaskRow;
       };
+      update_task_with_events: {
+        Args: { p_task_id: string; p_actor_id: string; p_patch: Json };
+        Returns: TaskRow;
+      };
+      add_task_comment_with_event: {
+        Args: {
+          p_task_id: string;
+          p_author_id: string;
+          p_kind: "COMMENT" | "RESULT";
+          p_body: string | null;
+          p_attachment_url: string | null;
+        };
+        Returns: TaskCommentRow;
+      };
+      enqueue_notification_outbox: {
+        Args: {
+          p_dedupe_key: string;
+          p_notification_type: NotificationOutboxRow["notification_type"];
+          p_recipient_user_id: string;
+          p_task_id: string | null;
+          p_payload: Json;
+        };
+        Returns: NotificationOutboxRow;
+      };
+      claim_notification_outbox: { Args: { p_id: string }; Returns: boolean };
+      claim_due_notification_outbox: { Args: { p_limit: number }; Returns: NotificationOutboxRow[] };
+      complete_notification_outbox: {
+        Args: { p_id: string; p_sent: boolean; p_error: string | null };
+        Returns: undefined;
+      };
+      claim_report_delivery: {
+        Args: { p_report_type: string; p_interval_key: string; p_recipient_user_id: string };
+        Returns: boolean;
+      };
+      complete_report_delivery: {
+        Args: {
+          p_report_type: string;
+          p_interval_key: string;
+          p_recipient_user_id: string;
+          p_status: string;
+          p_failure_reason: string | null;
+        };
+        Returns: undefined;
+      };
+      claim_task_reminder_delivery: {
+        Args: { p_task_id: string; p_deadline: string; p_reminder_type: string };
+        Returns: Json;
+      };
+      complete_task_reminder_delivery: {
+        Args: {
+          p_task_id: string;
+          p_deadline: string;
+          p_reminder_type: string;
+          p_status: string;
+          p_failure_reason: string | null;
+          p_metadata: Json;
+        };
+        Returns: undefined;
+      };
+      update_user_notification_preferences: {
+        Args: {
+          p_user_id: string;
+          p_assignments: boolean;
+          p_workflow: boolean;
+          p_reminders: boolean;
+          p_daily_check: boolean;
+          p_reports: boolean;
+        };
+        Returns: NotificationPreferencesRow;
+      };
+      start_workflow_run: {
+        Args: { p_template_id: string; p_actor_id: string; p_subject: string; p_assignee_map: Json };
+        Returns: TaskRow;
+      };
+      advance_workflow_run: {
+        Args: { p_completed_task_id: string; p_actor_id: string };
+        Returns: TaskRow | null;
+      };
+      recover_workflow_runs: { Args: Record<never, never>; Returns: TaskRow[] };
       toggle_posting_checklist_item: {
         Args: { p_item_id: string; p_actor_id: string };
         Returns: ChecklistItemRow;

@@ -28,12 +28,12 @@ export async function POST(request: Request) {
   try {
     input = await request.json();
   } catch {
-    return Response.json({ error: "Request body must be valid JSON." }, { status: 400 });
+    return Response.json({ error: "So‘rov tanasi to‘g‘ri JSON bo‘lishi kerak." }, { status: 400 });
   }
 
   const parsed = TelegramUpdateSchema.safeParse(input);
   if (!parsed.success) {
-    return Response.json({ error: "Invalid Telegram update." }, { status: 400 });
+    return Response.json({ error: "Telegram yangilanishi noto‘g‘ri." }, { status: 400 });
   }
 
   const message = parsed.data.message;

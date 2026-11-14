@@ -1,9 +1,10 @@
 import { CreateTaskInputSchema, isOverdue } from "@/domain/task";
 import type { ActorContext, TeamRole } from "@/domain/permissions";
-import { canApproveDeadlineRequest, isAssignee, isCreator, isHead } from "@/domain/permissions";
+import { canApproveDeadlineRequest, canEditTask, isAssignee, isCreator, isHead } from "@/domain/permissions";
 import type { DeadlineChangeRequest, Task, User } from "@/domain/models";
 import { TaskActionInputSchema, canTransition, statusForAction } from "@/domain/workflow";
 import type { MarketingRepository, TelegramIdentityInput } from "./ports/marketing-repository";
+import type { TaskPageSort } from "./ports/marketing-repository";
 import type {
   AssignmentNotificationResult,
   NotificationDispatcher,
@@ -34,7 +35,7 @@ const DeactivationInputSchema = z.object({
   reassignToUserId: z.string().uuid().optional(),
 }).strict().superRefine((value, context) => {
   if (value.openTasksAction === "REASSIGN" && !value.reassignToUserId) {
-    context.addIssue({ code: "custom", path: ["reassignToUserId"], message: "Choose who the open tasks go to." });
+    context.addIssue({ code: "custom", path: ["reassignToUserId"], message: "Ochiq vazifalar kimga o‘tkazilishini tanlang." });
   }
 });
 
@@ -43,7 +44,81 @@ const DeadlineRequestInputSchema = z.object({
   reason: z.string().trim().min(1).max(2000),
 });
 
-export type TaskScope = "my" | "team" | "today" | "overdue" | "review";
+const UpdateTaskInputSchema = z.object({
+  title: z.string().trim().min(1).max(200).optional(),
+  description: z.string().trim().max(5000).nullable().optional(),
+  priority: z.enum(["high", "normal", "low"]).optional(),
+  deadline: z.string().datetime({ offset: true }).optional(),
+  assigneeId: z.string().uuid().optional(),
+  publicationAt: z.string().datetime({ offset: true }).nullable().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, {
+  message: "Kamida bitta maydonni o‘zgartiring.",
+});
+
+const AddTaskCommentInputSchema = z.object({
+  kind: z.enum(["COMMENT", "RESULT"]).default("COMMENT"),
+  body: z.string().trim().min(1).max(4000).optional(),
+  attachmentUrl: z.string().trim().url().max(2048).refine(
+    (value) => value.startsWith("https://") || value.startsWith("http://"),
+    "Havola http:// yoki https:// bilan boshlanishi kerak.",
+  ).optional(),
+}).strict().refine((value) => Boolean(value.body || value.attachmentUrl), {
+  message: "Izoh yoki natija havolasini kiriting.",
+});
+
+const NotificationPreferencesPatchSchema = z.object({
+  assignments: z.boolean().optional(),
+  workflow: z.boolean().optional(),
+  reminders: z.boolean().optional(),
+  dailyCheck: z.boolean().optional(),
+  reports: z.boolean().optional(),
+}).strict().refine((value) => Object.keys(value).length > 0, {
+  message: "Kamida bitta bildirishnoma sozlamasini tanlang.",
+});
+
+const WORKFLOW_ROLES = [
+  "OPERATOR_VIDEO_EDITOR", "CONTENT_MARKETER", "DIGITAL_MARKETER", "SMM_MANAGER", "HEAD_OF_MARKETING",
+] as const;
+const StartWorkflowInputSchema = z.object({
+  templateId: z.string().uuid(),
+  subject: z.string().trim().min(1).max(200),
+  assigneeMap: z.partialRecord(z.enum(WORKFLOW_ROLES), z.string().uuid()).default({}),
+}).strict();
+
+export type TaskScope = "my" | "created" | "team" | "today" | "overdue" | "review";
+
+const TaskPageInputSchema = z.object({
+  status: z.enum(["ASSIGNED", "IN_PROGRESS", "BLOCKED", "REVIEW", "REVISION", "DONE", "CANCELLED"]).optional(),
+  priority: z.enum(["high", "normal", "low"]).optional(),
+  assigneeId: z.string().uuid().optional(),
+  deadlineRange: z.enum(["today", "next_7_days", "overdue"]).optional(),
+  search: z.string().trim().min(1).max(80).optional(),
+  sort: z.enum(["deadline_asc", "deadline_desc", "created_desc"]).default("deadline_asc"),
+  pageSize: z.coerce.number().int().min(1).max(100).default(50),
+  cursor: z.string().max(1024).optional(),
+}).strict();
+
+const CursorSchema = z.object({
+  sort: z.enum(["deadline_asc", "deadline_desc", "created_desc"]),
+  value: z.string().datetime({ offset: true }),
+  id: z.string().uuid(),
+}).strict();
+
+function decodeTaskCursor(cursor: string | undefined, sort: TaskPageSort) {
+  if (!cursor) return undefined;
+  try {
+    const parsed = CursorSchema.parse(JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")));
+    if (parsed.sort !== sort) throw new Error("sort mismatch");
+    return { value: parsed.value, id: parsed.id };
+  } catch {
+    throw new ApplicationError("INVALID_INPUT", "Vazifalar kursori noto‘g‘ri yoki tanlangan saralashga mos kelmaydi.");
+  }
+}
+
+function encodeTaskCursor(task: Task, sort: TaskPageSort): string {
+  const value = sort === "created_desc" ? task.createdAt : task.deadline;
+  return Buffer.from(JSON.stringify({ sort, value, id: task.id }), "utf8").toString("base64url");
+}
 
 export interface TaskCreationResult {
   readonly task: Task;
@@ -76,7 +151,7 @@ export class MarketingService {
   async requireActorByTelegramId(telegramUserId: string): Promise<User> {
     const user = await this.repository.getUserByTelegramId(telegramUserId);
     if (!user?.isActive) {
-      throw new ApplicationError("UNAUTHENTICATED", "Siz hozir aktiv marketing jamoasida emassiz. Head of Marketing bilan bog‘laning.");
+      throw new ApplicationError("UNAUTHENTICATED", "Siz hozir faol marketing jamoasida emassiz. Marketing rahbari bilan bog‘laning.");
     }
     return user;
   }
@@ -84,7 +159,7 @@ export class MarketingService {
   async requireActorById(userId: string): Promise<User> {
     const user = await this.repository.getUserById(userId);
     if (!user?.isActive) {
-      throw new ApplicationError("UNAUTHENTICATED", "The user session is no longer active.");
+      throw new ApplicationError("UNAUTHENTICATED", "Foydalanuvchi sessiyasi endi faol emas.");
     }
     return user;
   }
@@ -96,48 +171,46 @@ export class MarketingService {
 
   async activateUser(actor: User, userId: string, role: TeamRole): Promise<User> {
     if (!isHead(actorFromUser(actor))) {
-      throw new ApplicationError("FORBIDDEN", "Only Head may activate team members.");
+      throw new ApplicationError("FORBIDDEN", "Jamoa a’zolarini faqat Marketing rahbari faollashtira oladi.");
     }
     if (role === "HEAD_OF_MARKETING") {
-      throw new ApplicationError("INVALID_INPUT", "Head role transfer is outside the MVP activation flow.");
+      throw new ApplicationError("INVALID_INPUT", "Marketing rahbari rolini o‘tkazish ushbu faollashtirish jarayoniga kirmaydi.");
     }
     const target = await this.repository.getUserById(userId);
     if (!target) {
-      throw new ApplicationError("NOT_FOUND", "User not found.");
+      throw new ApplicationError("NOT_FOUND", "Foydalanuvchi topilmadi.");
     }
     if (target.isActive) {
-      throw new ApplicationError("CONFLICT", "This team member is already active.");
+      throw new ApplicationError("CONFLICT", "Bu jamoa a’zosi allaqachon faol.");
     }
     if (target.deactivatedAt) {
-      throw new ApplicationError("CONFLICT", "This person was previously on the team — reactivate them instead of activating.");
+      throw new ApplicationError("CONFLICT", "Bu foydalanuvchi avval jamoada bo‘lgan — uni qayta faollashtiring.");
     }
     return this.repository.activateUser({ userId, actorId: actor.id, role });
   }
 
   /**
-   * Fixes a role picked incorrectly at onboarding. Head may correct anyone's
-   * role; a team member may correct their own. The Head role itself is never
-   * settable here — transferring Head is a deliberate, out-of-scope operation,
-   * so neither a self-promotion nor a Head-to-Head reassignment can happen
-   * through this path.
+   * Corrects a role picked incorrectly at onboarding. This is deliberately a
+   * Head-only operation: organizational roles are authorization data, not
+   * profile preferences. The Head role itself is never settable here —
+   * transferring Head remains a deliberate out-of-band operation.
    */
   async updateUserRole(actor: User, userId: string, role: TeamRole): Promise<User> {
     if (role === "HEAD_OF_MARKETING") {
-      throw new ApplicationError("INVALID_INPUT", "Head role changes are outside this flow.");
+      throw new ApplicationError("INVALID_INPUT", "Marketing rahbari rolini o‘zgartirish ushbu jarayonga kirmaydi.");
     }
-    const actingOnSelf = actor.id === userId;
-    if (!isHead(actorFromUser(actor)) && !actingOnSelf) {
-      throw new ApplicationError("FORBIDDEN", "Only Head may change another teammate's role.");
+    if (!isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Jamoa rollarini faqat Marketing rahbari o‘zgartira oladi.");
     }
     const target = await this.repository.getUserById(userId);
     if (!target) {
-      throw new ApplicationError("NOT_FOUND", "User not found.");
+      throw new ApplicationError("NOT_FOUND", "Foydalanuvchi topilmadi.");
     }
     if (!target.isActive) {
-      throw new ApplicationError("CONFLICT", "Pending users are assigned a role through activation.");
+      throw new ApplicationError("CONFLICT", "Kutilayotgan foydalanuvchiga rol faollashtirish paytida beriladi.");
     }
     if (target.role === "HEAD_OF_MARKETING") {
-      throw new ApplicationError("FORBIDDEN", "Head's role cannot be changed through this flow.");
+      throw new ApplicationError("FORBIDDEN", "Marketing rahbari rolini bu jarayon orqali o‘zgartirib bo‘lmaydi.");
     }
     if (target.role === role) {
       return target;
@@ -152,11 +225,11 @@ export class MarketingService {
    */
   async getDeactivationPreview(actor: User, userId: string) {
     if (!isHead(actorFromUser(actor))) {
-      throw new ApplicationError("FORBIDDEN", "Only Head may manage team membership.");
+      throw new ApplicationError("FORBIDDEN", "Jamoa a’zoligini faqat Marketing rahbari boshqara oladi.");
     }
     const target = await this.repository.getUserById(userId);
     if (!target) {
-      throw new ApplicationError("NOT_FOUND", "User not found.");
+      throw new ApplicationError("NOT_FOUND", "Foydalanuvchi topilmadi.");
     }
     const [tasks, recurringDefinitions] = await Promise.all([
       this.repository.listTasks(),
@@ -186,20 +259,20 @@ export class MarketingService {
    */
   async deactivateUser(actor: User, userId: string, input: unknown) {
     if (!isHead(actorFromUser(actor))) {
-      throw new ApplicationError("FORBIDDEN", "Only Head may manage team membership.");
+      throw new ApplicationError("FORBIDDEN", "Jamoa a’zoligini faqat Marketing rahbari boshqara oladi.");
     }
     if (actor.id === userId) {
-      throw new ApplicationError("FORBIDDEN", "You cannot remove yourself from the team.");
+      throw new ApplicationError("FORBIDDEN", "O‘zingizni jamoadan chiqara olmaysiz.");
     }
     const target = await this.repository.getUserById(userId);
     if (!target) {
-      throw new ApplicationError("NOT_FOUND", "User not found.");
+      throw new ApplicationError("NOT_FOUND", "Foydalanuvchi topilmadi.");
     }
     if (!target.isActive) {
-      throw new ApplicationError("CONFLICT", "This team member is already inactive.");
+      throw new ApplicationError("CONFLICT", "Bu jamoa a’zosi allaqachon faol emas.");
     }
     if (target.role === "HEAD_OF_MARKETING") {
-      throw new ApplicationError("FORBIDDEN", "Head cannot be removed through this flow.");
+      throw new ApplicationError("FORBIDDEN", "Marketing rahbarini bu jarayon orqali jamoadan chiqarib bo‘lmaydi.");
     }
     const parsed = DeactivationInputSchema.parse(input);
 
@@ -209,10 +282,10 @@ export class MarketingService {
     if (openTasks.length > 0 && parsed.openTasksAction === "REASSIGN") {
       const newAssignee = await this.repository.getUserById(parsed.reassignToUserId!);
       if (!newAssignee?.isActive) {
-        throw new ApplicationError("INVALID_INPUT", "Reassignment target must be an active team member.");
+        throw new ApplicationError("INVALID_INPUT", "Vazifalar o‘tkaziladigan foydalanuvchi faol jamoa a’zosi bo‘lishi kerak.");
       }
       if (newAssignee.id === userId) {
-        throw new ApplicationError("INVALID_INPUT", "Choose a different teammate to reassign to.");
+        throw new ApplicationError("INVALID_INPUT", "Vazifalarni o‘tkazish uchun boshqa jamoa a’zosini tanlang.");
       }
       for (const task of openTasks) {
         const reassigned = await this.repository.reassignTask({ taskId: task.id, newAssigneeId: newAssignee.id, actorId: actor.id });
@@ -228,7 +301,7 @@ export class MarketingService {
           taskId: task.id,
           actorId: actor.id,
           newStatus: "CANCELLED",
-          reason: "Assignee removed from the team",
+          reason: "Mas’ul jamoadan chiqarildi",
         });
       }
     }
@@ -258,17 +331,17 @@ export class MarketingService {
    */
   async reactivateUser(actor: User, userId: string): Promise<User> {
     if (!isHead(actorFromUser(actor))) {
-      throw new ApplicationError("FORBIDDEN", "Only Head may manage team membership.");
+      throw new ApplicationError("FORBIDDEN", "Jamoa a’zoligini faqat Marketing rahbari boshqara oladi.");
     }
     const target = await this.repository.getUserById(userId);
     if (!target) {
-      throw new ApplicationError("NOT_FOUND", "User not found.");
+      throw new ApplicationError("NOT_FOUND", "Foydalanuvchi topilmadi.");
     }
     if (target.isActive) {
-      throw new ApplicationError("CONFLICT", "This team member is already active.");
+      throw new ApplicationError("CONFLICT", "Bu jamoa a’zosi allaqachon faol.");
     }
     if (!target.deactivatedAt) {
-      throw new ApplicationError("INVALID_INPUT", "This user was never an active member; activate them instead.");
+      throw new ApplicationError("INVALID_INPUT", "Bu foydalanuvchi avval faol a’zo bo‘lmagan — uni faollashtiring.");
     }
     return this.repository.reactivateUser({ userId, actorId: actor.id });
   }
@@ -281,7 +354,7 @@ export class MarketingService {
     const parsed = CreateTaskInputSchema.parse(input);
     const assignee = await this.repository.getUserById(parsed.assigneeId);
     if (!assignee?.isActive) {
-      throw new ApplicationError("INVALID_INPUT", "Assignee must be an active team member.");
+      throw new ApplicationError("INVALID_INPUT", "Mas’ul faol jamoa a’zosi bo‘lishi kerak.");
     }
     return this.createTaskWithAssignee(actor, assignee, parsed, sourceTelegramUpdateId);
   }
@@ -420,8 +493,8 @@ export class MarketingService {
         const message = error instanceof ApplicationError
           ? error.message
           : error instanceof z.ZodError
-            ? (error.issues[0]?.message ?? "Task format is invalid.")
-            : "Task could not be created.";
+            ? (error.issues[0]?.message ?? "Vazifa formati noto‘g‘ri.")
+            : "Vazifani yaratib bo‘lmadi.";
         outcomes.push({ index, status: "FAILED", errorMessage: message });
       }
     }
@@ -459,7 +532,7 @@ export class MarketingService {
 
   async listTasks(actor: User, scope: TaskScope = "my", now = new Date()): Promise<Task[]> {
     if (scope === "team" && !isHead(actorFromUser(actor))) {
-      throw new ApplicationError("FORBIDDEN", "Only Head may view team-wide tasks.");
+      throw new ApplicationError("FORBIDDEN", "Jamoaning barcha vazifalarini faqat Marketing rahbari ko‘ra oladi.");
     }
 
     const allTasks = await this.repository.listTasks();
@@ -489,21 +562,142 @@ export class MarketingService {
     return visible;
   }
 
+  listHomeTasks(actor: User): Promise<Task[]> {
+    return this.repository.listHomeTasks(isHead(actorFromUser(actor)) ? undefined : actor.id);
+  }
+
+  async listTaskPage(actor: User, scope: TaskScope = "my", input: unknown = {}, now = new Date()) {
+    if (scope === "team" && !isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Jamoaning barcha vazifalarini faqat Marketing rahbari ko‘ra oladi.");
+    }
+    const parsed = TaskPageInputSchema.parse(input);
+    const head = isHead(actorFromUser(actor));
+    let deadlineFrom: string | undefined;
+    let deadlineBefore: string | undefined;
+    let excludeTerminal = false;
+    if (scope === "overdue") {
+      deadlineBefore = now.toISOString();
+      excludeTerminal = true;
+    } else if (scope === "today") {
+      const tashkentNow = new Date(now.getTime() + 5 * 60 * 60 * 1000);
+      const start = Date.UTC(
+        tashkentNow.getUTCFullYear(),
+        tashkentNow.getUTCMonth(),
+        tashkentNow.getUTCDate(),
+      ) - 5 * 60 * 60 * 1000;
+      deadlineFrom = new Date(start).toISOString();
+      deadlineBefore = new Date(start + 24 * 60 * 60 * 1000).toISOString();
+    } else if (parsed.deadlineRange === "overdue") {
+      deadlineBefore = now.toISOString();
+      excludeTerminal = true;
+    } else if (parsed.deadlineRange === "today") {
+      const tashkentNow = new Date(now.getTime() + 5 * 60 * 60 * 1000);
+      const start = Date.UTC(tashkentNow.getUTCFullYear(), tashkentNow.getUTCMonth(), tashkentNow.getUTCDate()) - 5 * 60 * 60 * 1000;
+      deadlineFrom = new Date(start).toISOString();
+      deadlineBefore = new Date(start + 24 * 60 * 60 * 1000).toISOString();
+    } else if (parsed.deadlineRange === "next_7_days") {
+      deadlineFrom = now.toISOString();
+      deadlineBefore = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    }
+
+    const page = await this.repository.listTaskPage({
+      visibleToUserId: scope === "my" || (!head && scope !== "created") ? actor.id : undefined,
+      status: scope === "review" ? "REVIEW" : parsed.status,
+      priority: parsed.priority,
+      assigneeId: parsed.assigneeId,
+      creatorId: scope === "created" ? actor.id : undefined,
+      deadlineFrom,
+      deadlineBefore,
+      excludeTerminal,
+      search: parsed.search,
+      sort: parsed.sort,
+      limit: parsed.pageSize,
+      cursor: decodeTaskCursor(parsed.cursor, parsed.sort),
+    });
+    const last = page.tasks.at(-1);
+    return {
+      tasks: page.tasks,
+      pagination: {
+        pageSize: parsed.pageSize,
+        hasMore: page.hasMore,
+        nextCursor: page.hasMore && last ? encodeTaskCursor(last, parsed.sort) : null,
+      },
+    };
+  }
+
   async getTaskDetails(actor: User, taskId: string) {
     const task = await this.requireVisibleTask(actor, taskId);
-    const [events, requests, postingChecklist, recurringDefinition] = await Promise.all([
+    const [events, comments, requests, postingChecklist, recurringDefinition] = await Promise.all([
       this.repository.listTaskEvents(taskId),
-      this.repository.listDeadlineChangeRequests(),
+      this.repository.listTaskComments(taskId),
+      this.repository.listDeadlineChangeRequests({ taskId }),
       this.repository.getPostingChecklist(taskId),
       this.repository.getRecurringDefinitionForTask(taskId),
     ]);
     return {
       task,
       events,
-      deadlineRequests: requests.filter((request) => request.taskId === taskId),
+      comments,
+      deadlineRequests: requests,
       postingChecklist,
       recurringDefinition,
     };
+  }
+
+  async updateTask(actor: User, taskId: string, input: unknown): Promise<Task> {
+    const parsed = UpdateTaskInputSchema.parse(input);
+    const task = await this.requireVisibleTask(actor, taskId);
+    const actorContext = actorFromUser(actor);
+    const access = taskAccess(task);
+    const requestedFields: Array<readonly [boolean, Parameters<typeof canEditTask>[2]]> = [
+      [parsed.title !== undefined, "title"],
+      [parsed.description !== undefined, "description"],
+      [parsed.priority !== undefined, "priority"],
+      [parsed.deadline !== undefined, "deadline"],
+      [parsed.assigneeId !== undefined, "assignee"],
+      [parsed.publicationAt !== undefined, "publicationAt"],
+    ];
+    if (requestedFields.some(([requested, field]) => requested && !canEditTask(actorContext, access, field))) {
+      throw new ApplicationError("FORBIDDEN", "Bu vazifa maydonini o‘zgartirishga ruxsatingiz yo‘q.");
+    }
+    if (parsed.assigneeId !== undefined) {
+      const assignee = await this.repository.getUserById(parsed.assigneeId);
+      if (!assignee?.isActive) {
+        throw new ApplicationError("INVALID_INPUT", "Mas’ul faol jamoa a’zosi bo‘lishi kerak.");
+      }
+    }
+    return this.repository.updateTask({
+      taskId,
+      actorId: actor.id,
+      patch: parsed,
+    });
+  }
+
+  async listTaskComments(actor: User, taskId: string) {
+    await this.requireVisibleTask(actor, taskId);
+    return this.repository.listTaskComments(taskId);
+  }
+
+  async addTaskComment(actor: User, taskId: string, input: unknown) {
+    const parsed = AddTaskCommentInputSchema.parse(input);
+    await this.requireVisibleTask(actor, taskId);
+    return this.repository.addTaskComment({
+      taskId,
+      authorId: actor.id,
+      kind: parsed.kind,
+      body: parsed.body,
+      attachmentUrl: parsed.attachmentUrl,
+    });
+  }
+
+  getNotificationPreferences(actor: User) {
+    return this.repository.getNotificationPreferences(actor.id);
+  }
+
+  async updateNotificationPreferences(actor: User, input: unknown) {
+    const patch = NotificationPreferencesPatchSchema.parse(input);
+    const current = await this.repository.getNotificationPreferences(actor.id);
+    return this.repository.updateNotificationPreferences(actor.id, { ...current, ...patch });
   }
 
   async performTaskAction(actor: User, taskId: string, input: unknown): Promise<Task> {
@@ -513,29 +707,29 @@ export class MarketingService {
     const access = taskAccess(task);
 
     if (!canTransition(task.status, action.action)) {
-      throw new ApplicationError("CONFLICT", `${action.action} is not valid while task is ${task.status}.`);
+      throw new ApplicationError("CONFLICT", `${action.action} amali vazifaning ${task.status} holatida bajarilmaydi.`);
     }
 
     const assigneeAction = ["ACCEPT", "BLOCK", "RESUME", "SUBMIT_REVIEW"].includes(action.action);
     const reviewerAction = ["APPROVE", "REQUEST_REVISION"].includes(action.action);
     if (assigneeAction && !isAssignee(actorContext, access)) {
-      throw new ApplicationError("FORBIDDEN", "Only the assignee may perform this action.");
+      throw new ApplicationError("FORBIDDEN", "Bu amalni faqat vazifa mas’uli bajara oladi.");
     }
     if (reviewerAction && !isHead(actorContext) && !isCreator(actorContext, access)) {
-      throw new ApplicationError("FORBIDDEN", "Only the creator or Head may review this task.");
+      throw new ApplicationError("FORBIDDEN", "Vazifani faqat yaratuvchi yoki Marketing rahbari tekshira oladi.");
     }
 
     if (action.action === "SUBMIT_REVIEW") {
       const checklist = await this.repository.getPostingChecklist(taskId);
       if (checklist && checklist.items.some((item) => !item.isCompleted)) {
-        throw new ApplicationError("INVALID_INPUT", "Complete every posting checklist item before sending to review.");
+        throw new ApplicationError("INVALID_INPUT", "Tekshiruvga yuborishdan oldin joylash ro‘yxatidagi barcha bandlarni bajaring.");
       }
     }
     if (action.action === "CANCEL" && !isHead(actorContext) && !isCreator(actorContext, access)) {
-      throw new ApplicationError("FORBIDDEN", "Only the creator or Head may cancel this task.");
+      throw new ApplicationError("FORBIDDEN", "Vazifani faqat yaratuvchi yoki Marketing rahbari bekor qila oladi.");
     }
     if (action.action === "REOPEN" && !isHead(actorContext)) {
-      throw new ApplicationError("FORBIDDEN", "Only Head may reopen a task.");
+      throw new ApplicationError("FORBIDDEN", "Vazifani faqat Marketing rahbari qayta ocha oladi.");
     }
 
     const transitionedTask = await this.repository.transitionTask({
@@ -567,6 +761,17 @@ export class MarketingService {
         { event: "TASK_COMPLETED", task: transitionedTask, actor },
         [task.assigneeId],
       );
+      if (transitionedTask.workflowRunId) {
+        try {
+          const nextTask = await this.repository.advanceWorkflowRun({ completedTaskId: taskId, actorId: actor.id });
+          if (nextTask) await this.notifyGeneratedWorkflowTask(nextTask, actor);
+        } catch {
+          // The task completion itself remains valid. A five-minute recovery
+          // sweep advances any workflow left between steps after a transient
+          // database/Telegram failure.
+          console.warn(JSON.stringify({ event: "workflow_advance_deferred", taskId }));
+        }
+      }
     } else if (action.action === "REQUEST_REVISION") {
       await this.dispatchWorkflowNotification(
         { event: "REVISION_REQUESTED", task: transitionedTask, actor, comment: action.reason },
@@ -585,30 +790,69 @@ export class MarketingService {
 
   async togglePostingChecklistItem(actor: User, itemId: string) {
     const checklist = await this.repository.getPostingChecklistByItemId(itemId);
-    if (!checklist) throw new ApplicationError("NOT_FOUND", "Posting checklist item not found.");
+    if (!checklist) throw new ApplicationError("NOT_FOUND", "Joylash ro‘yxati bandi topilmadi.");
     const task = await this.requireVisibleTask(actor, checklist.taskId);
     if (task.assigneeId !== actor.id) {
-      throw new ApplicationError("FORBIDDEN", "Only the assignee may update the posting checklist.");
+      throw new ApplicationError("FORBIDDEN", "Joylash ro‘yxatini faqat vazifa mas’uli yangilay oladi.");
     }
     await this.repository.togglePostingChecklistItem({ itemId, actorId: actor.id });
     return this.repository.getPostingChecklist(checklist.taskId);
+  }
+
+  listWorkflowTemplates(actor: User) {
+    if (!actor.isActive) throw new ApplicationError("UNAUTHENTICATED", "Aktiv jamoa a’zosi bo‘lishingiz kerak.");
+    return this.repository.listWorkflowTemplates();
+  }
+
+  async startWorkflow(actor: User, input: unknown) {
+    if (!isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Workflow’ni faqat Marketing rahbari boshlashi mumkin.");
+    }
+    const parsed = StartWorkflowInputSchema.parse(input);
+    const task = await this.repository.startWorkflowRun({
+      templateId: parsed.templateId,
+      actorId: actor.id,
+      subject: parsed.subject,
+      assigneeMap: parsed.assigneeMap,
+    });
+    const notification = await this.notifyGeneratedWorkflowTask(task, actor);
+    return { task, notification };
+  }
+
+  async recoverWorkflowRuns() {
+    const tasks = await this.repository.recoverWorkflowRuns();
+    for (const task of tasks) await this.notifyGeneratedWorkflowTask(task);
+    return { advanced: tasks.length, taskIds: tasks.map((task) => task.id) };
+  }
+
+  private async notifyGeneratedWorkflowTask(task: Task, fallbackCreator?: User) {
+    const [creator, assignee] = await Promise.all([
+      this.repository.getUserById(task.creatorId),
+      this.repository.getUserById(task.assigneeId),
+    ]);
+    if (!assignee?.isActive) return { status: "FAILED" as const, reason: "ASSIGNEE_NOT_ONBOARDED" as const };
+    return this.notificationDispatcher.notifyAssignment({
+      task,
+      creator: creator ?? fallbackCreator ?? assignee,
+      assignee,
+    });
   }
 
   async createRecurrence(actor: User, taskId: string, input: unknown, now = new Date()) {
     const parsed = RecurrenceInputSchema.parse(input);
     const task = await this.requireVisibleTask(actor, taskId);
     if (!isHead(actorFromUser(actor)) && task.creatorId !== actor.id) {
-      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may make it recurring.");
+      throw new ApplicationError("FORBIDDEN", "Vazifani faqat yaratuvchi yoki Marketing rahbari takroriy qila oladi.");
     }
     if (await this.repository.getRecurringDefinitionForTask(taskId)) {
-      throw new ApplicationError("CONFLICT", "This task already has a recurring definition.");
+      throw new ApplicationError("CONFLICT", "Bu vazifa uchun takrorlanish allaqachon sozlangan.");
     }
     const assignee = await this.repository.getUserById(task.assigneeId);
     if (!assignee?.isActive) {
-      throw new ApplicationError("INVALID_INPUT", "The current assignee is not an active team member; reassign the task first.");
+      throw new ApplicationError("INVALID_INPUT", "Hozirgi mas’ul faol jamoa a’zosi emas; avval vazifani boshqa mas’ulga o‘tkazing.");
     }
     const next = nextOccurrence(parsed, now);
-    if (!next) throw new ApplicationError("INVALID_INPUT", "The recurrence end date leaves no future occurrence.");
+    if (!next) throw new ApplicationError("INVALID_INPUT", "Takrorlanishning tugash sanasidan keyin kelgusi takror qolmaydi.");
     return this.repository.createRecurringDefinition({
       sourceTaskId: task.id,
       createdBy: actor.id,
@@ -628,12 +872,12 @@ export class MarketingService {
   async updateRecurrence(actor: User, definitionId: string, input: unknown, now = new Date()) {
     const parsed = RecurrenceUpdateSchema.parse(input);
     const definition = await this.repository.getRecurringDefinition(definitionId);
-    if (!definition) throw new ApplicationError("NOT_FOUND", "Recurring definition not found.");
+    if (!definition) throw new ApplicationError("NOT_FOUND", "Takrorlanish sozlamasi topilmadi.");
     if (!isHead(actorFromUser(actor)) && definition.createdBy !== actor.id) {
-      throw new ApplicationError("FORBIDDEN", "Only the recurrence creator or Head may manage it.");
+      throw new ApplicationError("FORBIDDEN", "Takrorlanishni faqat yaratuvchi yoki Marketing rahbari boshqara oladi.");
     }
     if (definition.status === "STOPPED") {
-      throw new ApplicationError("CONFLICT", "A stopped recurrence cannot be changed or resumed.");
+      throw new ApplicationError("CONFLICT", "To‘xtatilgan takrorlanishni o‘zgartirib yoki davom ettirib bo‘lmaydi.");
     }
 
     const frequency = parsed.frequency ?? definition.frequency;
@@ -642,17 +886,17 @@ export class MarketingService {
     const localTime = parsed.localTime ?? definition.localTime;
     const endsOn = parsed.endsOn !== undefined ? parsed.endsOn : definition.endsOn;
     if (frequency === "WEEKLY" && weekday == null) {
-      throw new ApplicationError("INVALID_INPUT", "Weekday is required for weekly recurrence.");
+      throw new ApplicationError("INVALID_INPUT", "Haftalik takrorlanish uchun hafta kuni kerak.");
     }
     if (frequency === "MONTHLY" && dayOfMonth == null) {
-      throw new ApplicationError("INVALID_INPUT", "Day of month is required for monthly recurrence.");
+      throw new ApplicationError("INVALID_INPUT", "Oylik takrorlanish uchun oy kuni kerak.");
     }
 
     let assigneeId = definition.assigneeId;
     if (parsed.assigneeId !== undefined && parsed.assigneeId !== definition.assigneeId) {
       const newAssignee = await this.repository.getUserById(parsed.assigneeId);
       if (!newAssignee?.isActive) {
-        throw new ApplicationError("INVALID_INPUT", "The new assignee must be an active team member.");
+        throw new ApplicationError("INVALID_INPUT", "Yangi mas’ul faol jamoa a’zosi bo‘lishi kerak.");
       }
       assigneeId = newAssignee.id;
     }
@@ -773,10 +1017,10 @@ export class MarketingService {
     const parsed = DeadlineRequestInputSchema.parse(input);
     const task = await this.requireVisibleTask(actor, taskId);
     if (!isAssignee(actorFromUser(actor), taskAccess(task))) {
-      throw new ApplicationError("FORBIDDEN", "Only the assignee may request a deadline change.");
+      throw new ApplicationError("FORBIDDEN", "Muddatni o‘zgartirishni faqat vazifa mas’uli so‘rashi mumkin.");
     }
     if (["DONE", "CANCELLED"].includes(task.status)) {
-      throw new ApplicationError("CONFLICT", "A terminal task cannot request a new deadline.");
+      throw new ApplicationError("CONFLICT", "Yakunlangan vazifa uchun yangi muddat so‘rab bo‘lmaydi.");
     }
     const deadlineRequest = await this.repository.createDeadlineChangeRequest({
       taskId,
@@ -800,17 +1044,17 @@ export class MarketingService {
   ): Promise<DeadlineChangeRequest> {
     const request = await this.repository.getDeadlineChangeRequest(requestId);
     if (!request) {
-      throw new ApplicationError("NOT_FOUND", "Deadline request not found.");
+      throw new ApplicationError("NOT_FOUND", "Muddatni o‘zgartirish so‘rovi topilmadi.");
     }
     const task = await this.repository.getTask(request.taskId);
     if (!task) {
-      throw new ApplicationError("NOT_FOUND", "Task not found.");
+      throw new ApplicationError("NOT_FOUND", "Vazifa topilmadi.");
     }
     if (!canApproveDeadlineRequest(actorFromUser(actor), taskAccess(task))) {
-      throw new ApplicationError("FORBIDDEN", "Only the task creator or Head may resolve this request.");
+      throw new ApplicationError("FORBIDDEN", "Bu so‘rovni faqat vazifa yaratuvchisi yoki Marketing rahbari hal qila oladi.");
     }
     if (request.status !== "PENDING") {
-      throw new ApplicationError("CONFLICT", "Deadline request is already resolved.");
+      throw new ApplicationError("CONFLICT", "Muddat so‘rovi allaqachon hal qilingan.");
     }
     const resolvedRequest = await this.repository.resolveDeadlineChangeRequest({
       requestId,
@@ -923,10 +1167,10 @@ export class MarketingService {
   private async requireVisibleTask(actor: User, taskId: string): Promise<Task> {
     const task = await this.repository.getTask(taskId);
     if (!task) {
-      throw new ApplicationError("NOT_FOUND", "Task not found.");
+      throw new ApplicationError("NOT_FOUND", "Vazifa topilmadi.");
     }
     if (!isHead(actorFromUser(actor)) && task.creatorId !== actor.id && task.assigneeId !== actor.id) {
-      throw new ApplicationError("FORBIDDEN", "You cannot access this task.");
+      throw new ApplicationError("FORBIDDEN", "Bu vazifaga kirish huquqingiz yo‘q.");
     }
     return task;
   }
