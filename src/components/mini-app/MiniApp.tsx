@@ -2145,12 +2145,12 @@ function TaskDetailPanel({
   const actions: { label: string; action: string; variant?: string }[] = [];
   if (task) {
     if (task.status === "ASSIGNED" && isAssignee) actions.push({ label: "Qabul qilish", action: "ACCEPT" });
-    if (task.status === "IN_PROGRESS" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW", variant: "secondary" });
+    if (task.status === "IN_PROGRESS" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW", variant: "primary" });
     if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Bloklash", action: "_block", variant: "warn" });
     if (task.status === "BLOCKED" && isAssignee) actions.push({ label: "Davom ettirish", action: "RESUME" });
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Tasdiqlash", action: "APPROVE" });
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Tuzatishga qaytarish", action: "_revision", variant: "warn" });
-    if (task.status === "REVISION" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW", variant: "secondary" });
+    if (task.status === "REVISION" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW", variant: "primary" });
     if (!isTerminal(task.status) && (isCreator || isHead)) actions.push({ label: "Bekor qilish", action: "CANCEL", variant: "danger" });
     if (isTerminal(task.status) && isHead) actions.push({ label: "Qayta ochish", action: "REOPEN" });
   }
@@ -2317,7 +2317,7 @@ function TaskDetailPanel({
                   </div>
                 ) : confirmReview ? (
                   <div className="ma-block-form">
-                    <p>Vazifa tekshiruvchiga yuboriladi. Hali checkpoint qo‘shayotgan bo‘lsangiz, bu amalni bekor qiling.</p>
+                    <p>Vazifani tekshiruvga yuborasizmi?</p>
                     <div className="ma-form-row">
                       <button className="ma-btn primary" disabled={actionPending || checklistPendingIds.size > 0} onClick={async () => {
                         if (await postAction("SUBMIT_REVIEW")) setConfirmReview(false);
@@ -2713,6 +2713,7 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
     <button className="ma-link-btn" onClick={onCancel}>← Ish jarayoniga qaytish</button>
     <h3>Shablonlarni sozlash</h3>
     <p className="ma-muted">Faqat yangi ish jarayonlari yangilangan shablondan foydalanadi. Boshlangan jarayonlarning bosqichlari saqlanadi.</p>
+    <p className="ma-muted">Hozirgi versiyada “Muddat (soat)” vazifa ochilganda avtomatik deadline bo‘ladi. Bu qoida qayta ishlab chiqilmoqda.</p>
     {templates.length > 0 && <><label htmlFor="template-to-edit">Tahrirlash uchun shablon</label>
       <select id="template-to-edit" value={sourceId ?? ""} onChange={(event) => {
         const template = templates.find((item) => item.id === event.target.value);
