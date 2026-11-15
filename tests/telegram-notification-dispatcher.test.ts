@@ -239,7 +239,7 @@ describe("Telegram notification dispatcher", () => {
 
     await notifier.notifyWorkflow({
       event: "REVIEW_REQUESTED",
-      task: { ...task, status: "REVIEW" },
+      task: { ...task, status: "REVIEW", workflowNextDeadline: "2026-11-18T10:00:00.000Z" },
       actor: assignee,
       recipients: [creator],
     });
@@ -253,6 +253,9 @@ describe("Telegram notification dispatcher", () => {
           [{ text: "📋 Vazifani ochish", web_app: { url: "https://tasks.example.com" } }],
         ],
       },
+    }));
+    expect(sendTelegramMessage).toHaveBeenCalledWith("test-token", expect.objectContaining({
+      text: expect.stringContaining("Keyingi bosqich muddati:"),
     }));
   });
 

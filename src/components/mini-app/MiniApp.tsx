@@ -2226,6 +2226,9 @@ function TaskDetailPanel({
 
             {workflowPlan && <section className="ma-section">
               <div className="ma-section-head"><h3>Ish jarayoni rejasi</h3><small>{workflowPlan.templateName}</small></div>
+              {task.workflowNextDeadline && task.status === "REVIEW" && <p className="ma-muted">
+                Keyingi bosqich uchun belgilangan muddat: <strong>{fmtDateTime(task.workflowNextDeadline)}</strong>
+              </p>}
               <ol className="ma-workflow-steps">{workflowPlan.steps.map((step) => <li key={step.id}>
                 <span>{step.position}</span><div><strong>{step.title}</strong>
                   <small>{users.find((user) => user.id === step.ownerId)?.displayName ?? "—"} · {step.taskId ? (step.taskStatus === "DONE" ? "Bajarildi" : "Ochiq") : "Rejada"}</small>

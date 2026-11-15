@@ -153,6 +153,7 @@ function workflowMessage(input: WorkflowNotificationInput, appUrl: string): Tele
           `Vazifa: ${task.title}`,
           `Mas’ul: ${userLabel(actor)}`,
           `Muddat: ${formatDeadline(task.deadline)}`,
+          ...(task.workflowNextDeadline ? [`Keyingi bosqich muddati: ${formatDeadline(task.workflowNextDeadline)}`] : []),
         ].join("\n"),
         replyMarkup: {
           inline_keyboard: [
