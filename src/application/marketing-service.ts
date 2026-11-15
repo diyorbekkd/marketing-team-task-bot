@@ -6,6 +6,7 @@ import { TaskActionInputSchema, canTransition, statusForAction } from "@/domain/
 import type { MarketingRepository, TelegramIdentityInput } from "./ports/marketing-repository";
 import type { TaskPageSort } from "./ports/marketing-repository";
 import type {
+  NotificationQueue,
   AssignmentNotificationResult,
   NotificationDispatcher,
   WorkflowNotificationInput,
@@ -126,6 +127,22 @@ export interface TaskCreationResult {
   readonly notification: AssignmentNotificationResult;
 }
 
+export interface BrowserTaskCreationResult extends Omit<TaskCreationResult, "notification"> {
+  readonly notification: AssignmentNotificationResult | { readonly status: "QUEUED" | "SKIPPED" };
+}
+
+const PersonalPlanInputSchema = z.object({
+  isImportant: z.boolean().nullable(),
+  urgentOverride: z.boolean().nullable(),
+  plannedOn: z.iso.date().nullable(),
+  estimatedMinutes: z.number().int().min(5).max(1440).nullable(),
+}).strict();
+
+const CheckpointInputSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  dueAt: z.iso.datetime({ offset: true }).nullable().optional(),
+}).strict();
+
 export type BulkTaskCreationOutcome =
   | { readonly index: number; readonly status: "CREATED"; readonly task: Task; readonly assignee: User }
   | { readonly index: number; readonly status: "FAILED"; readonly errorMessage: string };
@@ -142,6 +159,7 @@ export class MarketingService {
   constructor(
     private readonly repository: MarketingRepository,
     private readonly notificationDispatcher: NotificationDispatcher,
+    private readonly notificationQueue?: NotificationQueue,
   ) {}
 
   async onboardTelegram(identity: TelegramIdentityInput, expectedHeadTelegramUserId: string): Promise<User> {
@@ -359,6 +377,24 @@ export class MarketingService {
     return this.createTaskWithAssignee(actor, assignee, parsed, sourceTelegramUpdateId);
   }
 
+  async createTaskQueued(actor: User, input: unknown): Promise<BrowserTaskCreationResult> {
+    if (!this.notificationQueue) throw new Error("Notification queue is not configured.");
+    const parsed = CreateTaskInputSchema.parse(input);
+    const assignee = await this.repository.getUserById(parsed.assigneeId);
+    if (!assignee?.isActive) {
+      throw new ApplicationError("INVALID_INPUT", "Mas’ul faol jamoa a’zosi bo‘lishi kerak.");
+    }
+    const task = await this.persistTaskWithAssignee(actor, assignee, parsed);
+    try {
+      const status = await this.notificationQueue.queueAssignment({ task, creator: actor, assignee });
+      return { task, assignee, notification: { status } };
+    } catch {
+      // The task has committed. Never make the client retry the creation and duplicate it.
+      console.error(JSON.stringify({ event: "task_assignment_enqueue_failed", taskId: task.id }));
+      return { task, assignee, notification: { status: "FAILED", reason: "DELIVERY_FAILED" } };
+    }
+  }
+
   /**
    * Resolves the assignee by username exactly once, then hands the already-
    * validated User straight to task creation — createTask (the Mini App's
@@ -407,15 +443,7 @@ export class MarketingService {
     parsed: z.infer<typeof CreateTaskInputSchema>,
     sourceTelegramUpdateId?: number,
   ): Promise<TaskCreationResult> {
-    const task = await this.repository.createTask({
-      creatorId: actor.id,
-      assigneeId: assignee.id,
-      title: parsed.title,
-      description: parsed.description,
-      priority: parsed.priority,
-      deadline: parsed.deadline,
-      sourceTelegramUpdateId,
-    });
+    const task = await this.persistTaskWithAssignee(actor, assignee, parsed, sourceTelegramUpdateId);
 
     let notification: AssignmentNotificationResult;
     try {
@@ -435,6 +463,23 @@ export class MarketingService {
     else console.warn(JSON.stringify(log));
 
     return { task, assignee, notification };
+  }
+
+  private persistTaskWithAssignee(
+    actor: User,
+    assignee: User,
+    parsed: z.infer<typeof CreateTaskInputSchema>,
+    sourceTelegramUpdateId?: number,
+  ): Promise<Task> {
+    return this.repository.createTask({
+      creatorId: actor.id,
+      assigneeId: assignee.id,
+      title: parsed.title,
+      description: parsed.description,
+      priority: parsed.priority,
+      deadline: parsed.deadline,
+      sourceTelegramUpdateId,
+    });
   }
 
   /**
@@ -627,12 +672,14 @@ export class MarketingService {
 
   async getTaskDetails(actor: User, taskId: string) {
     const task = await this.requireVisibleTask(actor, taskId);
-    const [events, comments, requests, postingChecklist, recurringDefinition] = await Promise.all([
+    const [events, comments, requests, postingChecklist, recurringDefinition, personalPlan, checkpoints] = await Promise.all([
       this.repository.listTaskEvents(taskId),
       this.repository.listTaskComments(taskId),
       this.repository.listDeadlineChangeRequests({ taskId }),
       this.repository.getPostingChecklist(taskId),
       this.repository.getRecurringDefinitionForTask(taskId),
+      this.repository.getUserTaskPlan(actor.id, taskId),
+      this.repository.listTaskCheckpoints(taskId),
     ]);
     return {
       task,
@@ -641,7 +688,40 @@ export class MarketingService {
       deadlineRequests: requests,
       postingChecklist,
       recurringDefinition,
+      personalPlan,
+      checkpoints,
     };
+  }
+
+  listPersonalPlans(actor: User) {
+    return this.repository.listUserTaskPlans(actor.id);
+  }
+
+  async savePersonalPlan(actor: User, taskId: string, input: unknown) {
+    const parsed = PersonalPlanInputSchema.parse(input);
+    await this.requireVisibleTask(actor, taskId);
+    return this.repository.saveUserTaskPlan({ userId: actor.id, taskId, ...parsed });
+  }
+
+  async addCheckpoint(actor: User, taskId: string, input: unknown) {
+    const parsed = CheckpointInputSchema.parse(input);
+    await this.requireVisibleTask(actor, taskId);
+    return this.repository.addTaskCheckpoint({ taskId, actorId: actor.id, title: parsed.title, dueAt: parsed.dueAt ?? null });
+  }
+
+  async toggleCheckpoint(actor: User, id: string) {
+    const checkpoint = await this.repository.getTaskCheckpoint(id);
+    if (!checkpoint) throw new ApplicationError("NOT_FOUND", "Checkpoint topilmadi.");
+    await this.requireVisibleTask(actor, checkpoint.taskId);
+    return this.repository.toggleTaskCheckpoint({ id, actorId: actor.id });
+  }
+
+  async removeCheckpoint(actor: User, id: string) {
+    const checkpoint = await this.repository.getTaskCheckpoint(id);
+    if (!checkpoint) throw new ApplicationError("NOT_FOUND", "Checkpoint topilmadi.");
+    await this.requireVisibleTask(actor, checkpoint.taskId);
+    await this.repository.removeTaskCheckpoint({ id, actorId: actor.id });
+    return { ok: true };
   }
 
   async updateTask(actor: User, taskId: string, input: unknown): Promise<Task> {
@@ -700,7 +780,12 @@ export class MarketingService {
     return this.repository.updateNotificationPreferences(actor.id, { ...current, ...patch });
   }
 
-  async performTaskAction(actor: User, taskId: string, input: unknown): Promise<Task> {
+  async performTaskAction(
+    actor: User,
+    taskId: string,
+    input: unknown,
+    options: { deferNotifications?: boolean } = {},
+  ): Promise<Task> {
     const action = TaskActionInputSchema.parse(input);
     const task = await this.requireVisibleTask(actor, taskId);
     const actorContext = actorFromUser(actor);
@@ -748,6 +833,8 @@ export class MarketingService {
         await this.dispatchWorkflowNotification(
           { event: "TASK_ACCEPTED", task: transitionedTask, actor },
           [task.creatorId],
+          false,
+          options.deferNotifications,
         );
       }
     } else if (action.action === "SUBMIT_REVIEW") {
@@ -755,16 +842,29 @@ export class MarketingService {
         { event: "REVIEW_REQUESTED", task: transitionedTask, actor },
         [task.creatorId],
         true,
+        options.deferNotifications,
       );
     } else if (action.action === "APPROVE") {
       await this.dispatchWorkflowNotification(
         { event: "TASK_COMPLETED", task: transitionedTask, actor },
         [task.assigneeId],
+        false,
+        options.deferNotifications,
       );
       if (transitionedTask.workflowRunId) {
         try {
           const nextTask = await this.repository.advanceWorkflowRun({ completedTaskId: taskId, actorId: actor.id });
-          if (nextTask) await this.notifyGeneratedWorkflowTask(nextTask, actor);
+          if (nextTask) {
+            if (options.deferNotifications && this.notificationQueue) {
+              const assignee = await this.repository.getUserById(nextTask.assigneeId);
+              const creator = await this.repository.getUserById(nextTask.creatorId);
+              if (assignee?.isActive) {
+                await this.notificationQueue.queueAssignment({ task: nextTask, assignee, creator: creator ?? actor });
+              }
+            } else {
+              await this.notifyGeneratedWorkflowTask(nextTask, actor);
+            }
+          }
         } catch {
           // The task completion itself remains valid. A five-minute recovery
           // sweep advances any workflow left between steps after a transient
@@ -776,12 +876,15 @@ export class MarketingService {
       await this.dispatchWorkflowNotification(
         { event: "REVISION_REQUESTED", task: transitionedTask, actor, comment: action.reason },
         [task.assigneeId],
+        false,
+        options.deferNotifications,
       );
     } else if (action.action === "BLOCK") {
       await this.dispatchWorkflowNotification(
         { event: "TASK_BLOCKED", task: transitionedTask, actor, comment: action.reason },
         [task.creatorId],
         true,
+        options.deferNotifications,
       );
     }
 
@@ -1078,6 +1181,7 @@ export class MarketingService {
     notification: Omit<WorkflowNotificationInput, "recipients">,
     directRecipientIds: readonly string[],
     includeHeads = false,
+    defer = false,
   ): Promise<void> {
     try {
       const users = await this.repository.listUsers();
@@ -1115,6 +1219,12 @@ export class MarketingService {
 
       const recipients = [...directRecipients, ...heads];
       if (recipients.length === 0) return;
+
+      if (defer && this.notificationQueue) {
+        await this.notificationQueue.queueWorkflow({ ...notification, recipients });
+        console.info(JSON.stringify({ event: "workflow_notification_queued", taskId: notification.task.id }));
+        return;
+      }
 
       let result;
       try {

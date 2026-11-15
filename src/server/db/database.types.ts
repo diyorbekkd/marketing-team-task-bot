@@ -104,6 +104,29 @@ type TaskEventRow = {
   created_at: string;
 }
 
+type UserTaskPlanRow = {
+  user_id: string;
+  task_id: string;
+  is_important: boolean | null;
+  urgent_override: boolean | null;
+  planned_on: string | null;
+  estimated_minutes: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type TaskCheckpointRow = {
+  id: string;
+  task_id: string;
+  title: string;
+  due_at: string | null;
+  position: number;
+  created_by: string;
+  completed_by: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
 type DeadlineRequestRow = {
   id: string;
   task_id: string;
@@ -244,6 +267,8 @@ export interface Database {
       tasks: TableDefinition<TaskRow>;
       task_events: TableDefinition<TaskEventRow>;
       task_comments: TableDefinition<TaskCommentRow>;
+      user_task_plans: TableDefinition<UserTaskPlanRow>;
+      task_checkpoints: TableDefinition<TaskCheckpointRow>;
       deadline_change_requests: TableDefinition<DeadlineRequestRow>;
       reassign_requests: TableDefinition<ReassignRequestRow>;
       task_revisions: TableDefinition<RevisionRow>;
@@ -378,6 +403,18 @@ export interface Database {
       toggle_posting_checklist_item: {
         Args: { p_item_id: string; p_actor_id: string };
         Returns: ChecklistItemRow;
+      };
+      add_task_checkpoint_with_event: {
+        Args: { p_task_id: string; p_actor_id: string; p_title: string; p_due_at: string | null };
+        Returns: TaskCheckpointRow;
+      };
+      toggle_task_checkpoint_with_event: {
+        Args: { p_checkpoint_id: string; p_actor_id: string };
+        Returns: TaskCheckpointRow;
+      };
+      remove_task_checkpoint_with_event: {
+        Args: { p_checkpoint_id: string; p_actor_id: string };
+        Returns: undefined;
       };
       generate_recurring_task: {
         Args: { p_definition_id: string; p_scheduled_occurrence_at: string; p_next_occurrence_at: string | null };

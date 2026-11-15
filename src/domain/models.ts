@@ -58,6 +58,29 @@ export const PostingChecklistSchema = z.object({
   items: z.array(PostingChecklistItemSchema),
 });
 
+export const UserTaskPlanSchema = z.object({
+  userId: z.string().uuid(),
+  taskId: z.string().uuid(),
+  isImportant: z.boolean().nullable(),
+  urgentOverride: z.boolean().nullable(),
+  plannedOn: z.string().nullable(),
+  estimatedMinutes: z.number().int().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const TaskCheckpointSchema = z.object({
+  id: z.string().uuid(),
+  taskId: z.string().uuid(),
+  title: z.string(),
+  dueAt: z.string().nullable(),
+  position: z.number().int().positive(),
+  createdBy: z.string().uuid(),
+  completedBy: z.string().uuid().nullable(),
+  completedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
 export const RecurrenceFrequencySchema = z.enum(["WEEKDAYS", "WEEKLY", "MONTHLY"]);
 export const RecurrenceStatusSchema = z.enum(["ACTIVE", "PAUSED", "STOPPED"]);
 
@@ -168,6 +191,8 @@ export type User = z.infer<typeof UserSchema>;
 export type Task = z.infer<typeof TaskSchema>;
 export type TaskEvent = z.infer<typeof TaskEventSchema>;
 export type TaskComment = z.infer<typeof TaskCommentSchema>;
+export type UserTaskPlan = z.infer<typeof UserTaskPlanSchema>;
+export type TaskCheckpoint = z.infer<typeof TaskCheckpointSchema>;
 export type DeadlineChangeRequest = z.infer<typeof DeadlineChangeRequestSchema>;
 export type PostingChecklist = z.infer<typeof PostingChecklistSchema>;
 export type PostingChecklistItem = z.infer<typeof PostingChecklistItemSchema>;

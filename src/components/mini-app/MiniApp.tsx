@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { t } from "@/i18n";
 import { CalendarView } from "./CalendarView";
+import { MyDayPanel } from "./MyDayPanel";
+import { TaskPlanningPanel, type Checkpoint, type PersonalPlan } from "./TaskPlanningPanel";
 import "./mini-app.css";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -93,6 +95,8 @@ interface TaskDetail {
   deadlineRequests: DeadlineRequest[];
   postingChecklist: PostingChecklist | null;
   recurringDefinition: RecurringDefinition | null;
+  personalPlan?: PersonalPlan | null;
+  checkpoints?: Checkpoint[];
 }
 
 interface PostingChecklistItem {
@@ -188,6 +192,7 @@ interface WorkflowTemplate {
 
 type AssignmentNotificationResult =
   | { status: "SENT" }
+  | { status: "QUEUED" | "SKIPPED" }
   | { status: "FAILED"; reason: "ASSIGNEE_NOT_ONBOARDED" | "DELIVERY_FAILED" };
 
 type Filter = "my" | "created" | "today" | "overdue" | "team" | "review" | "blocked";
@@ -485,6 +490,7 @@ export default function MiniApp() {
   const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
   const [taskNotice, setTaskNotice] = useState<{ kind: "success" | "warning"; text: string } | null>(null);
+  const [planningRefreshKey, setPlanningRefreshKey] = useState(0);
   // Tracks whether the active team list has ever loaded successfully, so the
   // assignee picker can block submission with a loading/retry state instead
   // of a false "not found" while the first fetch is still in flight.
@@ -536,6 +542,14 @@ export default function MiniApp() {
         return;
       }
 
+      const webLoginError = new URLSearchParams(window.location.search).get("web_login");
+      if (webLoginError) {
+        setAuthError(webLoginError === "inactive"
+          ? "Bu Telegram hisobi aktiv jamoa a’zosi emas. Rahbar bilan bog‘laning."
+          : webLoginError === "invalid"
+            ? "Telegram kirish so‘rovi eskirgan. Qayta urinib ko‘ring."
+            : "Telegram orqali kirib bo‘lmadi. Qayta urinib ko‘ring.");
+      }
       setAuthState("no-telegram");
     })();
   }, []);
@@ -575,12 +589,14 @@ export default function MiniApp() {
   // Load the Tasks-tab list for the active filter. Only called while the
   // Tasks tab is actually open (see the effect below) — not on every mount.
   const loadTasks = useCallback(
-    async (f: Filter, cursor?: string) => {
+    async (f: Filter, cursor?: string, silent = false) => {
       tasksAbortRef.current?.abort();
       const controller = new AbortController();
       tasksAbortRef.current = controller;
-      if (cursor) setLoadingMoreTasks(true);
-      else setLoadingTasks(true);
+      if (!silent) {
+        if (cursor) setLoadingMoreTasks(true);
+        else setLoadingTasks(true);
+      }
       setTasksError(null);
       const scope = scopeForFilter(f, isHead);
       const params = new URLSearchParams({ scope, pageSize: "50", sort: taskQuery.sort });
@@ -612,11 +628,11 @@ export default function MiniApp() {
   );
 
   // Load the Home/Team overview dataset (team-wide for Head, personal otherwise)
-  const loadHome = useCallback(async () => {
+  const loadHome = useCallback(async (silent = false) => {
     homeAbortRef.current?.abort();
     const controller = new AbortController();
     homeAbortRef.current = controller;
-    setHomeLoading(true);
+    if (!silent) setHomeLoading(true);
     setHomeError(null);
     const { data, error } = await apiFetch<{ users: User[]; tasks: Task[] }>(
       "/api/bootstrap",
@@ -679,8 +695,8 @@ export default function MiniApp() {
   }, [authState, nav, filter, memberFilter, taskQuery, loadTasks]);
 
   const refreshAll = useCallback(() => {
-    void loadHome();
-    if (nav === "tasks") void loadTasks(filter);
+    void loadHome(true);
+    if (nav === "tasks") void loadTasks(filter, undefined, true);
   }, [loadHome, nav, loadTasks, filter]);
 
   // Home/Team retry: if the team list never loaded, re-run the combined
@@ -728,10 +744,11 @@ export default function MiniApp() {
       <div className="ma-center">
         <div className="ma-no-tg">
           <div className="ma-no-tg-icon" aria-hidden="true">M</div>
-          <p>{inactiveMessage ? "Siz faol jamoa tarkibida emassiz." : "Ilovani Telegram ichidan oching."}</p>
+          <p>{inactiveMessage ? "Siz faol jamoa tarkibida emassiz." : "Marketing ish maydoniga kiring"}</p>
           <span className="ma-muted">
-            {inactiveMessage ?? "This workspace is only accessible through the Telegram Mini App or a signed-in browser session."}
+            {inactiveMessage ?? authError ?? "Telegram botingizdagi hisob bilan webda ham ishlashingiz mumkin."}
           </span>
+          {!inactiveMessage && <a className="ma-btn primary ma-web-login" href="/api/auth/web/start">Telegram orqali kirish</a>}
         </div>
       </div>
     );
@@ -784,6 +801,8 @@ export default function MiniApp() {
         {nav === "home" && (
           <HomeView
             isHead={isHead}
+            currentUserId={currentUser!.id}
+            planningRefreshKey={planningRefreshKey}
             displayName={currentUser?.displayName ?? ""}
             tasks={homeTasks}
             users={users}
@@ -855,11 +874,13 @@ export default function MiniApp() {
 
       {selectedTaskId && (
         <TaskDetailPanel
+          key={selectedTaskId}
           taskId={selectedTaskId}
           currentUser={currentUser!}
           users={users}
           onClose={() => setSelectedTaskId(null)}
           onRefresh={refreshAll}
+          onPlanSaved={() => setPlanningRefreshKey((value) => value + 1)}
         />
       )}
 
@@ -871,15 +892,14 @@ export default function MiniApp() {
           usersError={usersError}
           onRetryTeam={retryHome}
           onClose={() => setShowQuickAdd(false)}
-          onCreated={(notification) => {
+          onCreated={({ notification }) => {
             setShowQuickAdd(false);
             haptic("success");
-            setTaskNotice(notification.status === "SENT"
-              ? { kind: "success", text: "Vazifa yaratildi va mas’ulga xabar yuborildi." }
-              : {
-                  kind: "warning",
-                  text: "Vazifa yaratildi, lekin shaxsiy xabar yetkazilmadi. Mas’uldan botga /start yuborishini so‘rang.",
-                });
+            setTaskNotice(notification.status === "FAILED"
+              ? { kind: "warning", text: "Vazifa yaratildi, lekin xabar navbatga qo‘shilmadi. Administratorga xabar bering." }
+              : notification.status === "SKIPPED"
+                ? { kind: "success", text: "Vazifa yaratildi." }
+                : { kind: "success", text: "Vazifa yaratildi. Mas’ulga xabar yuborilmoqda." });
             refreshAll();
           }}
         />
@@ -996,6 +1016,8 @@ const HEAD_CRITICAL_TILES = new Set<Filter>(["overdue", "blocked"]);
 
 function HomeView({
   isHead,
+  currentUserId,
+  planningRefreshKey,
   displayName,
   tasks,
   users,
@@ -1007,6 +1029,8 @@ function HomeView({
   onSelectMember,
 }: {
   isHead: boolean;
+  currentUserId: string;
+  planningRefreshKey: number;
   displayName: string;
   tasks: Task[];
   users: User[];
@@ -1054,6 +1078,8 @@ function HomeView({
           );
         })}
       </div>
+
+      <MyDayPanel tasks={tasks} userId={currentUserId} refreshKey={planningRefreshKey} onSelectTask={onSelectTask} />
 
       {isHead && (
         <section className="ma-section">
@@ -1705,12 +1731,14 @@ function TaskDetailPanel({
   users,
   onClose,
   onRefresh,
+  onPlanSaved,
 }: {
   taskId: string;
   currentUser: User;
   users: User[];
   onClose: () => void;
   onRefresh: () => void;
+  onPlanSaved: () => void;
 }) {
   const [detail, setDetail] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1745,8 +1773,8 @@ function TaskDetailPanel({
   const [commentPending, setCommentPending] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     const { data, error: e } = await apiFetch<TaskDetail>(`/api/tasks/${taskId}`);
     setLoading(false);
@@ -1765,7 +1793,7 @@ function TaskDetailPanel({
   const postAction = async (action: string, extra?: Record<string, unknown>): Promise<boolean> => {
     setActionPending(true);
     setActionError(null);
-    const { error: e } = await apiFetch<{ task: Task }>(
+    const { data, error: e } = await apiFetch<{ task: Task }>(
       `/api/tasks/${taskId}/actions`,
       {
         method: "POST",
@@ -1776,7 +1804,8 @@ function TaskDetailPanel({
     setActionPending(false);
     if (e) { setActionError(friendlyError(e)); return false; }
     haptic("impact");
-    await load();
+    if (data?.task) setDetail((previous) => previous ? { ...previous, task: data.task } : previous);
+    void load(true);
     onRefresh();
     return true;
   };
@@ -1817,7 +1846,7 @@ function TaskDetailPanel({
     );
     setActionPending(false);
     if (e) { setActionError(friendlyError(e)); return; }
-    await load();
+    void load(true);
     onRefresh();
   };
 
@@ -2005,7 +2034,7 @@ function TaskDetailPanel({
         </div>
 
         {loading && <div className="ma-center-inline"><div className="ma-spinner" /></div>}
-        {error && <div className="ma-error" role="alert">{error} <button onClick={load}>Qayta urinish</button></div>}
+        {error && <div className="ma-error" role="alert">{error} <button onClick={() => { void load(); }}>Qayta urinish</button></div>}
 
         {task && (
           <div className="ma-panel-body">
@@ -2085,6 +2114,18 @@ function TaskDetailPanel({
                 )}
               </section>
             )}
+
+            <TaskPlanningPanel
+              key={`${taskId}:${detail?.personalPlan?.updatedAt ?? "new"}`}
+              taskId={taskId}
+              terminal={isTerminal(task.status)}
+              plan={detail?.personalPlan ?? null}
+              checkpoints={detail?.checkpoints ?? []}
+              onPlan={(plan) => setDetail((previous) => previous ? { ...previous, personalPlan: plan } : previous)}
+              onCheckpoints={(checkpoints) => setDetail((previous) => previous ? { ...previous, checkpoints } : previous)}
+              onRefreshPlan={onPlanSaved}
+              onRefreshDetail={() => { void load(true); }}
+            />
 
             {/* Deadline requests */}
             {pendingDL.length > 0 && (
@@ -2573,7 +2614,7 @@ function QuickAddPanel({
   usersError: string | null;
   onRetryTeam: () => void;
   onClose: () => void;
-  onCreated: (notification: AssignmentNotificationResult) => void;
+  onCreated: (result: { task: Task; notification: AssignmentNotificationResult }) => void;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -2610,7 +2651,7 @@ function QuickAddPanel({
     setPending(false);
     if (e) { setError(friendlyError(e)); return; }
     if (!data) { setError("Vazifa yaratilmadi."); return; }
-    onCreated(data.notification);
+    onCreated(data);
   };
 
   return (

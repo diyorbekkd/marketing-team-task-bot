@@ -305,6 +305,13 @@
   font-weight: 600;
 }
 
+.ma-web-login {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .ma-empty {
   padding: 40px 16px;
   text-align: center;
@@ -1543,4 +1550,32 @@
 @media (min-width: 640px) {
   .ma-topbar { padding: 18px 24px 14px; }
   .ma-main { padding: 20px 24px calc(96px + env(safe-area-inset-bottom)); }
+}
+.ma-planning { display: grid; gap: 12px; }
+.ma-planning > .ma-btn { justify-self: start; }
+.ma-planning-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.ma-planning-grid label { display: grid; gap: 5px; font-size: .8rem; font-weight: 650; }
+.ma-planning-grid input, .ma-planning-grid select, .ma-planning-add input {
+  min-width: 0; min-height: 42px; padding: 9px; border: 1px solid var(--line);
+  border-radius: var(--radius-sm); background: var(--paper); color: var(--ink); font: inherit;
+}
+.ma-planning-checkpoints { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
+.ma-planning-checkpoints h3 { display: flex; gap: 8px; align-items: center; }
+.ma-planning-checkpoints progress { width: 100%; accent-color: var(--primary); }
+.ma-planning-checkpoint { display: flex; align-items: center; gap: 8px; min-height: 38px; }
+.ma-planning-checkpoint span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ma-planning-checkpoint .completed { text-decoration: line-through; color: var(--muted); }
+.ma-planning-checkpoint button { background: transparent; border: 0; color: var(--ink); font-size: 1.25rem; min-width: 34px; min-height: 34px; cursor: pointer; }
+.ma-planning-add { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; }
+.ma-my-day { display: grid; gap: 9px; }
+.ma-my-day-list { display: grid; gap: 6px; }
+.ma-my-day-list button, .ma-matrix-cell button { border: 0; background: transparent; color: var(--primary); text-align: left; padding: 3px 0; cursor: pointer; }
+.ma-matrix { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ma-matrix-cell { display: grid; align-content: start; gap: 4px; min-height: 88px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); font-size: .77rem; }
+.ma-matrix-cell span { color: var(--muted); }
+.ma-matrix-cell button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 420px) {
+  .ma-planning-grid { grid-template-columns: 1fr; }
+  .ma-planning-add { grid-template-columns: 1fr 1fr; }
+  .ma-planning-add input:first-child { grid-column: 1 / -1; }
 }

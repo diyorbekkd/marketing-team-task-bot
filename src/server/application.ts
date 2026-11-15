@@ -39,6 +39,7 @@ export function getMarketingService(): MarketingService {
     service = new MarketingService(
       new SupabaseMarketingRepository(),
       getReliableDispatcher(),
+      getReliableDispatcher(),
     );
   }
   return service;

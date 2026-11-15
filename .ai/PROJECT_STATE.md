@@ -1,8 +1,9 @@
 # Project state
 
-- Current sprint: 2026-11-14 production-readiness audit and requested product expansion.
+- Current sprint: 2026-11-15 production-readiness staging and requested product expansion.
 - Current branch: `codex/production-readiness-audit` (base/default: `fast-track/mvp`; no `main` branch exists).
-- Current objective: land a reviewable PR, then run the five new migrations and the expanded application through isolated Supabase staging, Vercel preview, test Telegram, and real-device acceptance before any production change.
+- Current objective: land the authorized performance, browser login, and optional planning improvements in the reviewable PR; verify on isolated Supabase staging and Vercel Preview before any production change.
+- Current pass (2026-11-15, in progress): browser task creation/action now persists and responds before notification delivery; Next `after()` and retry cron drain the existing durable outbox. Telegram web login uses OIDC authorization code + PKCE and Telegram JWKS verification, followed by the existing signed app session; PWA manifest/icons added. Optional personal day plans, Eisenhower importance/urgency, and audited checkpoints have service, API, and Mini App UI support. The new planning migration was applied only to staging project `yuznbaaoonyqonhiywkt`; staging test rows and RLS/grants were verified. No production migration or deploy. A private draft [Notion SOP home](https://app.notion.com/p/41986faa180481f1b828f8e96f2668f2) and child SOP library/template were created; the Head will author/approve content and remain online for approvals during leave. AI model integration remains disabled pending approved SOPs and provider setup. Browser login still needs BotFather OIDC client configuration and Preview-only Vercel secrets before live verification.
 - Completed sprints: Sprint 0 complete and independently reviewed.
 - Completed current tasks:
   - Product, architecture, sprint, and Sprint 0 documentation

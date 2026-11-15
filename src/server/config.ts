@@ -47,6 +47,11 @@ const TelegramConfigSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: telegramWebhookSecret,
 });
 
+const TelegramWebConfigSchema = z.object({
+  TELEGRAM_WEB_CLIENT_ID: requiredSecret,
+  TELEGRAM_WEB_CLIENT_SECRET: requiredSecret,
+});
+
 const TeamBootstrapConfigSchema = z.object({
   TELEGRAM_GROUP_ID: negativeTelegramInteger,
   HEAD_TELEGRAM_USER_ID: positiveTelegramInteger,
@@ -98,6 +103,11 @@ export function getTelegramConfig(env: Environment = process.env) {
     botToken: parsed.TELEGRAM_BOT_TOKEN,
     webhookSecret: parsed.TELEGRAM_WEBHOOK_SECRET,
   } as const;
+}
+
+export function getTelegramWebConfig(env: Environment = process.env) {
+  const parsed = parseConfig("Telegram web login", TelegramWebConfigSchema, env);
+  return { clientId: parsed.TELEGRAM_WEB_CLIENT_ID, clientSecret: parsed.TELEGRAM_WEB_CLIENT_SECRET } as const;
 }
 
 export function getTeamBootstrapConfig(env: Environment = process.env) {

@@ -62,6 +62,32 @@ function dispatcher(overrides: Partial<NotificationDispatcher & ReportDispatcher
 }
 
 describe("durable Telegram notification outbox", () => {
+  it("queues a browser assignment without waiting for Telegram", async () => {
+    const repo = repository();
+    const inner = dispatcher();
+    const result = await new ReliableNotificationDispatcher(repo, inner)
+      .queueAssignment({ task, creator, assignee });
+
+    expect(result).toBe("QUEUED");
+    expect(repo.enqueueNotification).toHaveBeenCalledWith(expect.objectContaining({
+      notificationType: "ASSIGNMENT", recipientUserId: assignee.id, taskId: task.id,
+    }));
+    expect(inner.notifyAssignment).not.toHaveBeenCalled();
+    expect(repo.claimNotification).not.toHaveBeenCalled();
+  });
+
+  it("queues workflow notifications per recipient without sending them inline", async () => {
+    const repo = repository();
+    const inner = dispatcher();
+    await new ReliableNotificationDispatcher(repo, inner).queueWorkflow({
+      event: "TASK_COMPLETED", task, actor: creator, recipients: [assignee],
+    });
+    expect(repo.enqueueNotification).toHaveBeenCalledWith(expect.objectContaining({
+      notificationType: "WORKFLOW", recipientUserId: assignee.id, taskId: task.id,
+    }));
+    expect(inner.notifyWorkflow).not.toHaveBeenCalled();
+  });
+
   it("claims before sending and marks the per-recipient row sent", async () => {
     const repo = repository();
     const inner = dispatcher();

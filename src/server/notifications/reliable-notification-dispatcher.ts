@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { MarketingRepository, NotificationOutboxRecord, NotificationPreferences } from "@/application/ports/marketing-repository";
 import type {
+  NotificationQueue,
   AssignmentNotificationInput,
   AssignmentNotificationResult,
   BulkAssignmentNotificationInput,
@@ -84,7 +85,7 @@ async function sendPayload(inner: NotificationDispatcher & ReportDispatcher, pay
   }
 }
 
-export class ReliableNotificationDispatcher implements NotificationDispatcher, ReportDispatcher {
+export class ReliableNotificationDispatcher implements NotificationDispatcher, ReportDispatcher, NotificationQueue {
   constructor(
     private readonly repository: MarketingRepository,
     private readonly inner: NotificationDispatcher & ReportDispatcher,
@@ -143,6 +144,19 @@ export class ReliableNotificationDispatcher implements NotificationDispatcher, R
     };
   }
 
+  async queueAssignment(input: AssignmentNotificationInput): Promise<"QUEUED" | "SKIPPED"> {
+    if (!(await this.preferences(input.assignee.id)).assignments) return "SKIPPED";
+    const payload = AssignmentPayloadSchema.parse({ kind: "ASSIGNMENT", input });
+    await this.repository.enqueueNotification({
+      dedupeKey: dedupeKey("assignment", { taskId: input.task.id, recipientId: input.assignee.id }),
+      notificationType: "ASSIGNMENT",
+      recipientUserId: input.assignee.id,
+      taskId: input.task.id,
+      payload,
+    });
+    return "QUEUED";
+  }
+
   async notifyBulkAssignment(input: BulkAssignmentNotificationInput): Promise<AssignmentNotificationResult> {
     if (!(await this.preferences(input.assignee.id)).assignments) return { status: "SENT" };
     const payload = BulkAssignmentPayloadSchema.parse({ kind: "BULK_ASSIGNMENT", input });
@@ -194,6 +208,27 @@ export class ReliableNotificationDispatcher implements NotificationDispatcher, R
           });
     }
     return { deliveries };
+  }
+
+  async queueWorkflow(input: WorkflowNotificationInput): Promise<void> {
+    const recipients = [...new Map(input.recipients.map((recipient) => [recipient.id, recipient])).values()];
+    for (const recipient of recipients) {
+      if (!(await this.preferences(recipient.id)).workflow) continue;
+      const payload = WorkflowPayloadSchema.parse({ kind: "WORKFLOW", input: { ...input, recipients: [recipient] } });
+      await this.repository.enqueueNotification({
+        dedupeKey: dedupeKey("workflow", {
+          event: input.event,
+          taskId: input.task.id,
+          taskUpdatedAt: input.task.updatedAt,
+          requestId: input.deadlineRequest?.id,
+          recipientId: recipient.id,
+        }),
+        notificationType: "WORKFLOW",
+        recipientUserId: recipient.id,
+        taskId: input.task.id,
+        payload,
+      });
+    }
   }
 
   async notifyReminder(input: ReminderNotificationInput): Promise<ReminderNotificationResult> {

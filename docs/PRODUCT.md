@@ -40,6 +40,14 @@ Deactivating a member with open (non-terminal) tasks requires Head to explicitly
 
 ## Interfaces
 
+### Browser access and daily planning
+
+The same active Telegram team member may sign in from a regular browser using Telegram's OIDC authorization-code flow. BotFather provides a client ID, client secret, and allowlisted application/redirect URLs. The backend verifies state, PKCE, token signature, issuer, audience, and expiration before issuing the existing signed application session. Browser sessions last 14 days and are checked against active membership on every request. The site has a standalone web manifest for adding it to a phone home screen or installing it on a desktop. An inactive or unknown Telegram account cannot self-register through web login.
+
+Daily planning is optional and personal. A member may mark a visible task important or unimportant, override its urgency, choose a plan date, and estimate minutes. If urgency is not overridden, the UI treats a task due within 48 hours as urgent. These fields do not alter the shared task priority, deadline, status, or scheduled reports. The Home screen shows the member's planned work and a four-quadrant importance/urgency matrix.
+
+Task checkpoints are optional shared milestones with a title, optional target date, and completion state. A task participant or Head may add, complete, reopen, or remove a checkpoint; each action is audited. Checkpoints show progress but do not block the ordinary task lifecycle. The existing `#posting` checklist retains its mandatory review gate.
+
 All interfaces use the same backend, database, application services, and authorization rules.
 
 ### Marketing group

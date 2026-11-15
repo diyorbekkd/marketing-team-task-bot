@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { after } from "next/server";
 import { getMarketingService } from "@/server/application";
+import { getNotificationRetryService } from "@/server/application";
 import { requireRequestActor } from "@/server/auth/request-actor";
 import { errorResponse } from "@/server/http/errors";
 
@@ -27,7 +29,17 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const actor = await requireRequestActor();
-    const result = await getMarketingService().createTask(actor, await request.json());
+    const result = await getMarketingService().createTaskQueued(actor, await request.json());
+    if (result.notification.status === "QUEUED") {
+      after(async () => {
+        try {
+          await getNotificationRetryService().deliver(25);
+        } catch {
+          // The durable outbox remains available to the scheduled retry worker.
+          console.error(JSON.stringify({ event: "post_response_assignment_delivery_failed", taskId: result.task.id }));
+        }
+      });
+    }
     return Response.json(result, { status: 201 });
   } catch (error) {
     return errorResponse(error);

@@ -10,8 +10,10 @@ import type {
   RecurringDefinition,
   Task,
   TaskComment,
+  TaskCheckpoint,
   TaskEvent,
   User,
+  UserTaskPlan,
   WorkflowTemplate,
 } from "@/domain/models";
 
@@ -137,6 +139,17 @@ export interface MarketingRepository {
   getPostingChecklist(taskId: string): Promise<PostingChecklist | null>;
   getPostingChecklistByItemId(itemId: string): Promise<PostingChecklist | null>;
   togglePostingChecklistItem(input: { itemId: string; actorId: string }): Promise<PostingChecklistItem>;
+  getUserTaskPlan(userId: string, taskId: string): Promise<UserTaskPlan | null>;
+  listUserTaskPlans(userId: string): Promise<UserTaskPlan[]>;
+  saveUserTaskPlan(input: {
+    userId: string; taskId: string; isImportant: boolean | null;
+    urgentOverride: boolean | null; plannedOn: string | null; estimatedMinutes: number | null;
+  }): Promise<UserTaskPlan>;
+  listTaskCheckpoints(taskId: string): Promise<TaskCheckpoint[]>;
+  getTaskCheckpoint(id: string): Promise<TaskCheckpoint | null>;
+  addTaskCheckpoint(input: { taskId: string; actorId: string; title: string; dueAt: string | null }): Promise<TaskCheckpoint>;
+  toggleTaskCheckpoint(input: { id: string; actorId: string }): Promise<TaskCheckpoint>;
+  removeTaskCheckpoint(input: { id: string; actorId: string }): Promise<void>;
 
   createDeadlineChangeRequest(input: {
     taskId: string;

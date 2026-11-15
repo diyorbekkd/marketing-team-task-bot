@@ -138,6 +138,14 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     getPostingChecklist: vi.fn(async () => null),
     getPostingChecklistByItemId: vi.fn(async () => null),
     togglePostingChecklistItem: vi.fn(),
+    getUserTaskPlan: vi.fn(async () => null),
+    listUserTaskPlans: vi.fn(async () => []),
+    saveUserTaskPlan: vi.fn(),
+    listTaskCheckpoints: vi.fn(async () => []),
+    getTaskCheckpoint: vi.fn(async () => null),
+    addTaskCheckpoint: vi.fn(),
+    toggleTaskCheckpoint: vi.fn(),
+    removeTaskCheckpoint: vi.fn(),
     createDeadlineChangeRequest: vi.fn(async () => deadlineRequest()),
     getDeadlineChangeRequest: vi.fn(async () => deadlineRequest()),
     listDeadlineChangeRequests: vi.fn(async () => []),
@@ -225,6 +233,48 @@ describe("MarketingService MVP permissions", () => {
       await new MarketingService(repo, notifier()).performTaskAction(reviewer, ids.task, { action: "APPROVE" });
       expect(repo.transitionTask).toHaveBeenCalledWith(expect.objectContaining({ newStatus: "DONE" }));
     }
+  });
+
+  it("queues browser approval notification without waiting for Telegram", async () => {
+    const reviewed = task({ status: "REVIEW" });
+    const repo = repository({ getTask: vi.fn(async () => reviewed) });
+    const notifications = notifier();
+    const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+
+    const result = await new MarketingService(repo, notifications, queue)
+      .performTaskAction(creator, ids.task, { action: "APPROVE" }, { deferNotifications: true });
+
+    expect(result.status).toBe("DONE");
+    expect(queue.queueWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "TASK_COMPLETED", recipients: [assignee],
+    }));
+    expect(notifications.notifyWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("keeps personal planning scoped to the signed-in user", async () => {
+    const repo = repository({ saveUserTaskPlan: vi.fn(async (input) => ({
+      ...input, createdAt: "2026-11-15T08:00:00Z", updatedAt: "2026-11-15T08:00:00Z",
+    })) });
+    const service = new MarketingService(repo, notifier());
+    await service.savePersonalPlan(assignee, ids.task, {
+      isImportant: true, urgentOverride: null, plannedOn: "2026-11-15", estimatedMinutes: 90,
+    });
+    expect(repo.saveUserTaskPlan).toHaveBeenCalledWith(expect.objectContaining({ userId: assignee.id, taskId: ids.task }));
+    await expect(service.savePersonalPlan(assignee, ids.task, {
+      userId: creator.id, isImportant: true, urgentOverride: null, plannedOn: null, estimatedMinutes: null,
+    })).rejects.toThrow();
+  });
+
+  it("rejects checkpoint changes on tasks outside the actor's visibility", async () => {
+    const repo = repository({ getTaskCheckpoint: vi.fn(async () => ({
+      id: "90000000-0000-4000-8000-000000000001", taskId: ids.task, title: "Draft",
+      dueAt: null, position: 1, createdBy: creator.id, completedBy: null, completedAt: null,
+      createdAt: "2026-11-15T08:00:00Z",
+    })) });
+    const service = new MarketingService(repo, notifier());
+    await expect(service.toggleCheckpoint(unrelated, "90000000-0000-4000-8000-000000000001"))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(repo.toggleTaskCheckpoint).not.toHaveBeenCalled();
   });
 
   it("preserves cancellation as a terminal state unless Head reopens it", async () => {
@@ -480,6 +530,22 @@ describe("MarketingService MVP permissions", () => {
 
     expect(result).toEqual({ task: created, assignee, notification: { status: "SENT" } });
     expect(assignmentNotifier.notifyAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
+  });
+
+  it("returns a queued browser task without waiting for outbound delivery", async () => {
+    const created = task();
+    const repo = repository({ createTask: vi.fn(async () => created) });
+    const notifications = notifier();
+    const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+    const service = new MarketingService(repo, notifications, queue);
+
+    const result = await service.createTaskQueued(creator, {
+      title: created.title, assigneeId: assignee.id, deadline: created.deadline,
+    });
+
+    expect(result).toEqual({ task: created, assignee, notification: { status: "QUEUED" } });
+    expect(queue.queueAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
+    expect(notifications.notifyAssignment).not.toHaveBeenCalled();
   });
 
   it("resolves positional assignees before persistence and preserves assignment notification delivery", async () => {

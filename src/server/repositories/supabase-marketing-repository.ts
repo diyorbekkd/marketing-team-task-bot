@@ -22,8 +22,10 @@ import type {
   RecurringDefinition,
   Task,
   TaskComment,
+  TaskCheckpoint,
   TaskEvent,
   User,
+  UserTaskPlan,
   WorkflowTemplate,
 } from "@/domain/models";
 import { getSupabaseAdminClient } from "@/server/db/supabase";
@@ -77,6 +79,19 @@ const TaskCommentRowSchema = z.object({
   body: z.string().nullable(),
   attachment_url: z.string().url().nullable(),
   created_at: z.string(),
+});
+
+const UserTaskPlanRowSchema = z.object({
+  user_id: z.string().uuid(), task_id: z.string().uuid(),
+  is_important: z.boolean().nullable(), urgent_override: z.boolean().nullable(),
+  planned_on: z.string().nullable(), estimated_minutes: z.number().int().nullable(),
+  created_at: z.string(), updated_at: z.string(),
+});
+
+const TaskCheckpointRowSchema = z.object({
+  id: z.string().uuid(), task_id: z.string().uuid(), title: z.string(),
+  due_at: z.string().nullable(), position: z.number().int(), created_by: z.string().uuid(),
+  completed_by: z.string().uuid().nullable(), completed_at: z.string().nullable(), created_at: z.string(),
 });
 
 const NotificationOutboxRowSchema = z.object({
@@ -141,6 +156,7 @@ const EventRowSchema = z.object({
     "POSTING_CHECKLIST_CREATED", "POSTING_CHECKLIST_ITEM_TOGGLED", "RECURRING_TASK_GENERATED",
     "PUBLICATION_DATE_CHANGED", "COMMENT_ADDED", "RESULT_SUBMITTED", "WORKFLOW_STARTED",
     "WORKFLOW_STEP_ACTIVATED", "WORKFLOW_COMPLETED",
+    "CHECKPOINT_ADDED", "CHECKPOINT_COMPLETED", "CHECKPOINT_REOPENED", "CHECKPOINT_REMOVED",
   ]),
   old_value: z.unknown(),
   new_value: z.unknown(),
@@ -260,6 +276,24 @@ function mapTaskComment(input: unknown): TaskComment {
     body: row.body,
     attachmentUrl: row.attachment_url,
     createdAt: row.created_at,
+  };
+}
+
+function mapUserTaskPlan(input: unknown): UserTaskPlan {
+  const row = UserTaskPlanRowSchema.parse(input);
+  return {
+    userId: row.user_id, taskId: row.task_id, isImportant: row.is_important,
+    urgentOverride: row.urgent_override, plannedOn: row.planned_on,
+    estimatedMinutes: row.estimated_minutes, createdAt: row.created_at, updatedAt: row.updated_at,
+  };
+}
+
+function mapTaskCheckpoint(input: unknown): TaskCheckpoint {
+  const row = TaskCheckpointRowSchema.parse(input);
+  return {
+    id: row.id, taskId: row.task_id, title: row.title, dueAt: row.due_at,
+    position: row.position, createdBy: row.created_by, completedBy: row.completed_by,
+    completedAt: row.completed_at, createdAt: row.created_at,
   };
 }
 
@@ -688,6 +722,65 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     });
     if (error || !data) throwDataError(error, "Joylash ro‘yxatini yangilab bo‘lmadi.");
     return mapChecklistItem(rpcRecord(data));
+  }
+
+  async getUserTaskPlan(userId: string, taskId: string): Promise<UserTaskPlan | null> {
+    const { data, error } = await this.client.from("user_task_plans").select("*")
+      .eq("user_id", userId).eq("task_id", taskId).maybeSingle();
+    if (error) throwDataError(error, "Shaxsiy reja yuklanmadi.");
+    return data ? mapUserTaskPlan(data) : null;
+  }
+
+  async listUserTaskPlans(userId: string): Promise<UserTaskPlan[]> {
+    const { data, error } = await this.client.from("user_task_plans").select("*").eq("user_id", userId);
+    if (error) throwDataError(error, "Shaxsiy rejalar yuklanmadi.");
+    return (data ?? []).map(mapUserTaskPlan);
+  }
+
+  async saveUserTaskPlan(input: Parameters<MarketingRepository["saveUserTaskPlan"]>[0]): Promise<UserTaskPlan> {
+    const { data, error } = await this.client.from("user_task_plans").upsert({
+      user_id: input.userId, task_id: input.taskId, is_important: input.isImportant,
+      urgent_override: input.urgentOverride, planned_on: input.plannedOn,
+      estimated_minutes: input.estimatedMinutes,
+    }, { onConflict: "user_id,task_id" }).select("*").single();
+    if (error || !data) throwDataError(error, "Shaxsiy rejani saqlab bo‘lmadi.");
+    return mapUserTaskPlan(data);
+  }
+
+  async listTaskCheckpoints(taskId: string): Promise<TaskCheckpoint[]> {
+    const { data, error } = await this.client.from("task_checkpoints").select("*")
+      .eq("task_id", taskId).order("position");
+    if (error) throwDataError(error, "Checkpointlar yuklanmadi.");
+    return (data ?? []).map(mapTaskCheckpoint);
+  }
+
+  async getTaskCheckpoint(id: string): Promise<TaskCheckpoint | null> {
+    const { data, error } = await this.client.from("task_checkpoints").select("*").eq("id", id).maybeSingle();
+    if (error) throwDataError(error, "Checkpoint yuklanmadi.");
+    return data ? mapTaskCheckpoint(data) : null;
+  }
+
+  async addTaskCheckpoint(input: Parameters<MarketingRepository["addTaskCheckpoint"]>[0]): Promise<TaskCheckpoint> {
+    const { data, error } = await this.client.rpc("add_task_checkpoint_with_event", {
+      p_task_id: input.taskId, p_actor_id: input.actorId, p_title: input.title, p_due_at: input.dueAt,
+    });
+    if (error || !data) throwDataError(error, "Checkpoint qo‘shilmadi.");
+    return mapTaskCheckpoint(rpcRecord(data));
+  }
+
+  async toggleTaskCheckpoint(input: Parameters<MarketingRepository["toggleTaskCheckpoint"]>[0]): Promise<TaskCheckpoint> {
+    const { data, error } = await this.client.rpc("toggle_task_checkpoint_with_event", {
+      p_checkpoint_id: input.id, p_actor_id: input.actorId,
+    });
+    if (error || !data) throwDataError(error, "Checkpoint yangilanmadi.");
+    return mapTaskCheckpoint(rpcRecord(data));
+  }
+
+  async removeTaskCheckpoint(input: Parameters<MarketingRepository["removeTaskCheckpoint"]>[0]): Promise<void> {
+    const { error } = await this.client.rpc("remove_task_checkpoint_with_event", {
+      p_checkpoint_id: input.id, p_actor_id: input.actorId,
+    });
+    if (error) throwDataError(error, "Checkpoint o‘chirilmadi.");
   }
 
   async createDeadlineChangeRequest(input: {

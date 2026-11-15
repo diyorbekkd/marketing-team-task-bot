@@ -36,6 +36,12 @@ Task events are append-only. Database triggers reject update and delete attempts
 
 ## Security and identity
 
+Regular browser login uses Telegram OIDC authorization code with PKCE and one-time state stored in a short-lived HttpOnly, Secure, SameSite=Lax cookie. The callback exchanges the code server-side with BotFather client credentials, verifies Telegram's RS256 ID token against its JWKS with issuer/audience/age checks, then resolves the Telegram ID to an existing active team member. The resulting application cookie uses the same signed-session verifier as the Mini App, with a 14-day web lifetime. BotFather must allowlist the exact application origin and callback URL; no browser receives the client secret, bot token, or service-role key.
+
+Mini App task creation and action routes now enqueue assignment/workflow messages into the durable notification outbox before returning. Next.js `after()` attempts delivery immediately after the response; the existing five-minute retry cron recovers failures. Bot-initiated task creation continues to await delivery so its Telegram reply can describe the outcome. Browser mutations return the committed task promptly and the UI refreshes lists in the background.
+
+Optional personal plans live in `user_task_plans` keyed by user and task. Shared checkpoints live in `task_checkpoints`; their mutations use narrow RPCs that check the actor, lock the task, and append immutable `task_events` in the same transaction. Both new public tables are RLS-enabled, with browser roles revoked and only server-side service-role access. The Mini App API derives the plan owner from the verified session rather than accepting a caller-provided user ID.
+
 Browser code never receives `SUPABASE_SERVICE_ROLE_KEY` or `TELEGRAM_BOT_TOKEN`. During the current server-mediated design, application tables are inaccessible to `anon` and `authenticated`; RLS is enabled with no permissive policies, and only trusted server code receives explicit table privileges through `service_role`.
 
 Telegram webhook calls must include the configured secret token header. Incoming update JSON is runtime-validated before use.

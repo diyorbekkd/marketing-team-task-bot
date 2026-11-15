@@ -76,3 +76,9 @@ export interface NotificationDispatcher {
   notifyWorkflow(input: WorkflowNotificationInput): Promise<WorkflowNotificationResult>;
   notifyReminder(input: ReminderNotificationInput): Promise<ReminderNotificationResult>;
 }
+
+/** Browser writes can acknowledge the durable outbox entry before Telegram delivery. */
+export interface NotificationQueue {
+  queueAssignment(input: AssignmentNotificationInput): Promise<"QUEUED" | "SKIPPED">;
+  queueWorkflow(input: WorkflowNotificationInput): Promise<void>;
+}
