@@ -209,6 +209,7 @@ export interface MarketingRepository {
     nextOccurrenceAt: string | null;
   }): Promise<Task | null>;
   listWorkflowTemplates(): Promise<WorkflowTemplate[]>;
+  archiveWorkflowTemplate(id: string): Promise<boolean>;
   saveWorkflowTemplateVersion(input: {
     actorId: string;
     sourceTemplateId: string | null;

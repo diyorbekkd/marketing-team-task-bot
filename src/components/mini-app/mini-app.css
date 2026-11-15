@@ -1088,6 +1088,8 @@
      covers part of it, rather than clipping content. */
   max-height: min(calc(var(--ma-keyboard-height, 100dvh) - 12px), 92dvh);
   overflow-y: auto;
+  overflow-anchor: none;
+  scroll-padding-bottom: 40px;
   background: var(--card);
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   display: flex;
@@ -1561,6 +1563,11 @@
 .ma-workflow-steps small { color: var(--muted); }
 .ma-workflow-editor h3 { margin: 0; }
 .ma-workflow-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ma-workflow-archive-confirm { padding: 12px; border: 1px solid var(--warning); border-radius: var(--radius-sm); background: var(--warning-soft); }
+.ma-workflow-archive-confirm p { margin: 0 0 10px; }
+.ma-template-entry { display: grid; gap: 10px; }
+.ma-template-entry h3, .ma-template-entry p { margin: 0; }
+.ma-template-entry .ma-btn { justify-self: start; }
 .ma-workflow-step-editor { display: grid; gap: 7px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); }
 .ma-workflow-step-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .ma-workflow-step-heading > div { display: flex; gap: 4px; }

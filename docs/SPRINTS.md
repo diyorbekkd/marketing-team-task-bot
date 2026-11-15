@@ -88,3 +88,10 @@ Second same-day increment on `fast-track/mvp`, again without touching the Telegr
 
 - Reminders: five deterministic thresholds (24h/3h/at-deadline/1h-overdue/24h-overdue) per active task, `(task_id, deadline, reminder_type)` idempotency ledger, assignee-only before/at-deadline and assignee+creator+Head overdue escalation, protected Vercel Cron every 10 minutes, a bounded catch-up window so a scheduler gap or first deploy doesn't burst-notify on old deadlines.
 - Team membership: explicit deactivated-vs-pending distinction (`deactivated_at`), Head-only deactivate/reactivate with self/Head protection, mandatory open-task disposition (reassign/cancel/keep) before removal, automatic pause of the removed member's active recurring definitions, atomic `*_with_event` state-change functions with a new `user_events` audit trail, and every task-creation/recurrence path already rejecting inactive assignees was audited and closed where it wasn't (recurring configuration and generation).
+
+## Staging usability follow-up — authorized 2026-11-15
+
+- Smooth task creation and checklist interaction: immediate Home insertion after a successful creation response, independent optimistic checklist toggles, and visual-viewport handling that distinguishes native date/time picker zoom from a keyboard.
+- Make reusable workflow templates discoverable from Home, with Head-only archive in addition to existing create, copy, and versioned edit.
+- Verify existing "Mening kunim" checkpoint/deadline groups and report-card task filters; preserve their server-side permissions and count semantics.
+- Verify the full quality gate and Vercel Preview with isolated staging data before any production release.

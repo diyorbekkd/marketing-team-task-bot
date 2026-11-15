@@ -975,6 +975,14 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return (templates ?? []).map((template) => mapWorkflowTemplate(template, steps ?? []));
   }
 
+  async archiveWorkflowTemplate(id: string): Promise<boolean> {
+    const { data, error } = await this.client.from("workflow_templates")
+      .update({ is_active: false }).eq("id", id).eq("is_active", true)
+      .select("id").maybeSingle();
+    if (error) throwDataError(error, "Shablonni arxivlab bo‘lmadi.");
+    return data !== null;
+  }
+
   async saveWorkflowTemplateVersion(input: Parameters<MarketingRepository["saveWorkflowTemplateVersion"]>[0]): Promise<string> {
     const { data, error } = await this.client.rpc("save_workflow_template_version", {
       p_actor_id: input.actorId,

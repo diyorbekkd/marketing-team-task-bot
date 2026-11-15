@@ -490,6 +490,7 @@ export default function MiniApp() {
   const [showPendingUsers, setShowPendingUsers] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showWorkflow, setShowWorkflow] = useState(false);
+  const [openWorkflowInTemplates, setOpenWorkflowInTemplates] = useState(false);
   const [roleEditUser, setRoleEditUser] = useState<User | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -593,7 +594,10 @@ export default function MiniApp() {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         const root = document.documentElement;
-        const keyboardCovered = window.innerHeight - viewport.height - viewport.offsetTop > 120;
+        // A native date/time picker may temporarily zoom the visual viewport.
+        // That is not an on-screen keyboard and must not shrink the sheet.
+        const keyboardCovered = viewport.scale <= 1.05
+          && window.innerHeight - viewport.height - viewport.offsetTop > 120;
         if (keyboardCovered) {
           root.style.setProperty("--ma-keyboard-height", `${viewport.height}px`);
           root.style.setProperty("--ma-keyboard-top", `${viewport.offsetTop}px`);
@@ -614,12 +618,17 @@ export default function MiniApp() {
     viewport.addEventListener("resize", update);
     viewport.addEventListener("scroll", update);
     document.addEventListener("focusin", update);
-    document.addEventListener("input", update);
+    const onInput = (event: Event) => {
+      // Textarea growth can hide its caret; ordinary keystrokes should not
+      // repeatedly compete with the browser's own scroll anchoring.
+      if (event.target instanceof HTMLTextAreaElement) update();
+    };
+    document.addEventListener("input", onInput);
     return () => {
       viewport.removeEventListener("resize", update);
       viewport.removeEventListener("scroll", update);
       document.removeEventListener("focusin", update);
-      document.removeEventListener("input", update);
+      document.removeEventListener("input", onInput);
       window.cancelAnimationFrame(frame);
       document.documentElement.style.removeProperty("--ma-keyboard-height");
       document.documentElement.style.removeProperty("--ma-keyboard-top");
@@ -853,7 +862,7 @@ export default function MiniApp() {
           >
             +
           </button>
-          {isHead && <button className="ma-icon-btn" onClick={() => setShowWorkflow(true)} aria-label="Ish jarayonini boshlash">⚡</button>}
+          {isHead && <button className="ma-icon-btn" onClick={() => { setOpenWorkflowInTemplates(false); setShowWorkflow(true); }} aria-label="Ish jarayonini boshlash">⚡</button>}
         </div>
       </header>
 
@@ -879,6 +888,7 @@ export default function MiniApp() {
             onSelectTask={setSelectedTaskId}
             onGoToFilter={goToFilter}
             onSelectMember={selectMember}
+            onOpenTemplates={() => { setOpenWorkflowInTemplates(true); setShowWorkflow(true); }}
           />
         )}
 
@@ -959,8 +969,12 @@ export default function MiniApp() {
           usersError={usersError}
           onRetryTeam={retryHome}
           onClose={() => setShowQuickAdd(false)}
-          onCreated={({ notification }) => {
+          onCreated={({ task, notification }) => {
             setShowQuickAdd(false);
+            if (isHead || task.assigneeId === currentUser!.id || task.creatorId === currentUser!.id) {
+              setHomeTasks((current) => current.some((item) => item.id === task.id)
+                ? current : [...current, task].sort((a, b) => a.deadline.localeCompare(b.deadline)));
+            }
             haptic("success");
             setTaskNotice(notification.status === "FAILED"
               ? { kind: "warning", text: "Vazifa yaratildi, lekin xabar navbatga qo‘shilmadi. Administratorga xabar bering." }
@@ -975,6 +989,7 @@ export default function MiniApp() {
       {showWorkflow && currentUser && (
         <WorkflowStartPanel
           users={users}
+          initialEditor={openWorkflowInTemplates}
           onClose={() => setShowWorkflow(false)}
           onStarted={(task) => {
             setShowWorkflow(false);
@@ -1099,6 +1114,7 @@ function HomeView({
   onSelectTask,
   onGoToFilter,
   onSelectMember,
+  onOpenTemplates,
 }: {
   isHead: boolean;
   currentUserId: string;
@@ -1112,6 +1128,7 @@ function HomeView({
   onSelectTask: (id: string) => void;
   onGoToFilter: (f: Filter) => void;
   onSelectMember: (userId: string) => void;
+  onOpenTemplates: () => void;
 }) {
   const [planningView, setPlanningView] = useState<DayPlanGroup | null>(null);
   if (planningView) {
@@ -1158,6 +1175,11 @@ function HomeView({
 
       <MyDayPanel tasks={tasks} userId={currentUserId} refreshKey={planningRefreshKey}
         view={null} onOpen={setPlanningView} onBack={() => setPlanningView(null)} onSelectTask={onSelectTask} />
+
+      {isHead && <section className="ma-section ma-template-entry">
+        <div><h3>Ish jarayoni shablonlari</h3><p className="ma-muted">Tayyor bosqichlarni yarating, tahrirlang yoki arxivlang.</p></div>
+        <button className="ma-btn secondary" onClick={onOpenTemplates}>Shablonlarni sozlash →</button>
+      </section>}
 
       {isHead && (
         <section className="ma-section">
@@ -1838,7 +1860,7 @@ function TaskDetailPanel({
   const [showDLRequest, setShowDLRequest] = useState(false);
   const [dlDate, setDlDate] = useState("");
   const [dlReason, setDlReason] = useState("");
-  const [checklistPendingId, setChecklistPendingId] = useState<string | null>(null);
+  const [checklistPendingIds, setChecklistPendingIds] = useState<Set<string>>(() => new Set());
   const [showRecurrenceForm, setShowRecurrenceForm] = useState(false);
   const [recurrenceFrequency, setRecurrenceFrequency] = useState<RecurringDefinition["frequency"]>("WEEKDAYS");
   const [recurrenceWeekday, setRecurrenceWeekday] = useState(1);
@@ -1937,9 +1959,10 @@ function TaskDetailPanel({
   };
 
   const toggleChecklist = async (itemId: string) => {
-    setChecklistPendingId(itemId);
+    if (checklistPendingIds.has(itemId)) return;
+    setChecklistPendingIds((current) => new Set(current).add(itemId));
     setActionError(null);
-    const before = detail?.postingChecklist;
+    const before = detail?.postingChecklist?.items.find((item) => item.id === itemId);
     setDetail((previous) => previous?.postingChecklist ? {
       ...previous,
       postingChecklist: {
@@ -1951,9 +1974,19 @@ function TaskDetailPanel({
     const { data, error: e } = await apiFetch<{ item: PostingChecklistItem }>(
       `/api/checklist-items/${itemId}/toggle`, { method: "POST" }
     );
-    setChecklistPendingId(null);
+    setChecklistPendingIds((current) => {
+      const next = new Set(current);
+      next.delete(itemId);
+      return next;
+    });
     if (e || !data?.item) {
-      setDetail((previous) => previous ? { ...previous, postingChecklist: before ?? previous.postingChecklist } : previous);
+      setDetail((previous) => previous?.postingChecklist && before ? {
+        ...previous,
+        postingChecklist: {
+          ...previous.postingChecklist,
+          items: previous.postingChecklist.items.map((item) => item.id === itemId ? before : item),
+        },
+      } : previous);
       setActionError(friendlyError(e) ?? "Ro‘yxat yangilanmadi.");
       return;
     }
@@ -2205,7 +2238,7 @@ function TaskDetailPanel({
                     <button
                       key={item.id}
                       className={item.isCompleted ? "complete" : ""}
-                      disabled={!isAssignee || !["IN_PROGRESS", "REVISION"].includes(task.status) || checklistPendingId !== null}
+                      disabled={!isAssignee || !["IN_PROGRESS", "REVISION"].includes(task.status) || checklistPendingIds.has(item.id)}
                       onClick={() => toggleChecklist(item.id)}
                     >
                       <span aria-hidden="true">{item.isCompleted ? "✓" : "○"}</span>{item.label}
@@ -2286,7 +2319,7 @@ function TaskDetailPanel({
                   <div className="ma-block-form">
                     <p>Vazifa tekshiruvchiga yuboriladi. Hali checkpoint qo‘shayotgan bo‘lsangiz, bu amalni bekor qiling.</p>
                     <div className="ma-form-row">
-                      <button className="ma-btn primary" disabled={actionPending} onClick={async () => {
+                      <button className="ma-btn primary" disabled={actionPending || checklistPendingIds.size > 0} onClick={async () => {
                         if (await postAction("SUBMIT_REVIEW")) setConfirmReview(false);
                       }}>Ha, tekshiruvga yuborish</button>
                       <button className="ma-btn secondary" onClick={() => setConfirmReview(false)}>Bekor qilish</button>
@@ -2328,7 +2361,7 @@ function TaskDetailPanel({
                       <button
                         key={a.action}
                         className={`ma-btn ${a.variant ?? "primary"}`}
-                        disabled={actionPending}
+                        disabled={actionPending || (a.action === "SUBMIT_REVIEW" && checklistPendingIds.size > 0)}
                         onClick={() => {
                           if (a.action === "_block") { setShowBlockInput(true); return; }
                           if (a.action === "_revision") { setShowRevisionInput(true); return; }
@@ -2499,8 +2532,9 @@ function TaskDetailPanel({
   );
 }
 
-function WorkflowStartPanel({ users, onClose, onStarted }: {
+function WorkflowStartPanel({ users, initialEditor, onClose, onStarted }: {
   users: User[];
+  initialEditor: boolean;
   onClose: () => void;
   onStarted: (task: Task) => void;
 }) {
@@ -2511,7 +2545,7 @@ function WorkflowStartPanel({ users, onClose, onStarted }: {
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editingTemplates, setEditingTemplates] = useState(false);
+  const [editingTemplates, setEditingTemplates] = useState(initialEditor);
 
   const defaultsFor = useCallback((template: WorkflowTemplate) => {
     const next: Partial<Record<Role, string>> = {};
@@ -2532,6 +2566,9 @@ function WorkflowStartPanel({ users, onClose, onStarted }: {
     if (selected) {
       setSelectedId(selected.id);
       setAssigneeMap(defaultsFor(selected));
+    } else {
+      setSelectedId("");
+      setAssigneeMap({});
     }
   }, [defaultsFor]);
 
@@ -2559,7 +2596,8 @@ function WorkflowStartPanel({ users, onClose, onStarted }: {
         <div className="ma-panel-header"><button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button><span className="ma-panel-title">Marketing ish jarayoni</span></div>
         <div className="ma-panel-body">
           {editingTemplates && <WorkflowTemplateEditor templates={templates} initialTemplateId={selectedId}
-            onCancel={() => setEditingTemplates(false)} onSaved={async (id) => { await loadTemplates(id); setEditingTemplates(false); }} />}
+            onCancel={() => setEditingTemplates(false)} onSaved={async (id) => { await loadTemplates(id); setEditingTemplates(false); }}
+            onArchived={async () => { await loadTemplates(); setEditingTemplates(false); }} />}
           {!editingTemplates && <>
           {loading && <div className="ma-center-inline"><div className="ma-spinner" /></div>}
           {!loading && templates.length === 0 && !error && <div className="ma-empty">Ish jarayoni shabloni topilmadi.</div>}
@@ -2610,11 +2648,12 @@ function workflowStepDraft(step?: WorkflowTemplateStep): WorkflowStepDraft {
   };
 }
 
-function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSaved }: {
+function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSaved, onArchived }: {
   templates: WorkflowTemplate[];
   initialTemplateId: string;
   onCancel: () => void;
   onSaved: (id: string) => Promise<void>;
+  onArchived: () => Promise<void>;
 }) {
   const initial = templates.find((template) => template.id === initialTemplateId) ?? null;
   const [sourceId, setSourceId] = useState<string | null>(initial?.id ?? null);
@@ -2625,10 +2664,11 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
   );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmArchive, setConfirmArchive] = useState(false);
 
   const choose = (template: WorkflowTemplate) => {
     setSourceId(template.id); setName(template.name); setDescription(template.description ?? "");
-    setSteps(template.steps.map(workflowStepDraft)); setError(null);
+    setSteps(template.steps.map(workflowStepDraft)); setError(null); setConfirmArchive(false);
   };
   const updateStep = (key: string, patch: Partial<WorkflowStepDraft>) => {
     setSteps((current) => current.map((step) => step.key === key ? { ...step, ...patch } : step));
@@ -2660,6 +2700,15 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
     setPending(false);
   };
 
+  const archive = async () => {
+    if (!sourceId) return;
+    setPending(true); setError(null);
+    const { data, error: archiveError } = await apiFetch<{ ok: true }>(`/api/workflow-templates/${sourceId}`, { method: "DELETE" });
+    if (data?.ok) await onArchived();
+    else setError(friendlyError(archiveError) ?? "Shablonni arxivlab bo‘lmadi.");
+    setPending(false);
+  };
+
   return <div className="ma-block-form ma-workflow-editor">
     <button className="ma-link-btn" onClick={onCancel}>← Ish jarayoniga qaytish</button>
     <h3>Shablonlarni sozlash</h3>
@@ -2674,12 +2723,20 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
       </select></>}
     <div className="ma-workflow-editor-actions">
       <button className="ma-btn secondary" onClick={() => {
-        setSourceId(null); setName(""); setDescription(""); setSteps([workflowStepDraft()]); setError(null);
+        setSourceId(null); setName(""); setDescription(""); setSteps([workflowStepDraft()]); setError(null); setConfirmArchive(false);
       }}>+ Yangi shablon</button>
       {sourceId && <button className="ma-btn secondary" onClick={() => {
-        setSourceId(null); setName(`${name} nusxa`); setError(null);
+        setSourceId(null); setName(`${name} nusxa`); setError(null); setConfirmArchive(false);
       }}>Nusxa olish</button>}
+      {sourceId && <button className="ma-btn warn" disabled={pending} onClick={() => setConfirmArchive(true)}>Arxivlash</button>}
     </div>
+    {confirmArchive && sourceId && <div className="ma-workflow-archive-confirm" role="group" aria-label="Shablonni arxivlashni tasdiqlash">
+      <p><strong>{name}</strong> yangi ish jarayonlari ro‘yxatidan olinadi. Boshlangan jarayonlar davom etadi.</p>
+      <div className="ma-workflow-editor-actions">
+        <button className="ma-btn warn" disabled={pending} onClick={archive}>{pending ? "Arxivlanmoqda…" : "Ha, arxivlash"}</button>
+        <button className="ma-btn secondary" disabled={pending} onClick={() => setConfirmArchive(false)}>Bekor qilish</button>
+      </div>
+    </div>}
     <label htmlFor="template-name">Shablon nomi</label>
     <input id="template-name" maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder="Masalan: Yangi kampaniya" />
     <label htmlFor="template-description">Izoh (ixtiyoriy)</label>

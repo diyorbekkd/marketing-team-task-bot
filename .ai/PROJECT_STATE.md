@@ -1,5 +1,7 @@
 # Project state
 
+- 2026-11-15 usability follow-up (current): User confirmed the one-time bot deep-link browser login works. On `codex/production-readiness-audit`, implementing the next authorized items: independent optimistic posting-checklist toggles, immediate Home insertion after task creation, visual-viewport zoom/keyboard distinction, and a discoverable Head-only workflow-template manager with archive. The existing My Day checkpoint grouping and Reports card-to-task filters were inspected and already implement the requested navigation. Staging template table has seven active templates, service-role UPDATE, and no browser-role UPDATE. Quality gate, Preview deployment, and real mobile click-through remain to be completed for this follow-up. Production remains untouched.
+
 - Current sprint: 2026-11-15 production-readiness staging and requested product expansion.
 - Current branch: `codex/production-readiness-audit` (base/default: `fast-track/mvp`; no `main` branch exists).
 - Current objective: land the authorized performance, browser login, and optional planning improvements in the reviewable PR; verify on isolated Supabase staging and Vercel Preview before any production change.

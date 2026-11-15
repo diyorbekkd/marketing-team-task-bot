@@ -1008,6 +1008,17 @@ export class MarketingService {
     return this.repository.listWorkflowTemplates();
   }
 
+  async archiveWorkflowTemplate(actor: User, id: string) {
+    if (!actor.isActive || !isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Shablonni faqat Marketing rahbari arxivlay oladi.");
+    }
+    const templateId = z.string().uuid().parse(id);
+    if (!await this.repository.archiveWorkflowTemplate(templateId)) {
+      throw new ApplicationError("NOT_FOUND", "Faol shablon topilmadi.");
+    }
+    return { ok: true };
+  }
+
   async saveWorkflowTemplate(actor: User, input: unknown) {
     if (!actor.isActive || !isHead(actorFromUser(actor))) {
       throw new ApplicationError("FORBIDDEN", "Shablonni faqat Marketing rahbari sozlay oladi.");

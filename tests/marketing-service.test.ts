@@ -166,6 +166,7 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     updateRecurringDefinition: vi.fn(),
     generateRecurringOccurrence: vi.fn(async () => null),
     listWorkflowTemplates: vi.fn(async () => []),
+    archiveWorkflowTemplate: vi.fn(async () => true),
     saveWorkflowTemplateVersion: vi.fn(async () => "91000000-0000-4000-8000-000000000009"),
     startWorkflowRun: vi.fn(async () => task()),
     advanceWorkflowRun: vi.fn(async () => null),
@@ -1302,6 +1303,19 @@ describe("MarketingService MVP permissions", () => {
   });
 
   describe("marketing workflows", () => {
+    it("lets only active Head archive an active template", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+      const id = "91000000-0000-4000-8000-000000000001";
+      await expect(service.archiveWorkflowTemplate(assignee, id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(repo.archiveWorkflowTemplate).not.toHaveBeenCalled();
+      await expect(service.archiveWorkflowTemplate(head, "bad-id")).rejects.toThrow();
+      await expect(service.archiveWorkflowTemplate(head, id)).resolves.toEqual({ ok: true });
+      expect(repo.archiveWorkflowTemplate).toHaveBeenCalledWith(id);
+      vi.mocked(repo.archiveWorkflowTemplate).mockResolvedValueOnce(false);
+      await expect(service.archiveWorkflowTemplate(head, id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+
     it("lets Head save a new template version but rejects employees and invalid steps", async () => {
       const repo = repository();
       const service = new MarketingService(repo, notifier());
