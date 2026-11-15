@@ -35,26 +35,31 @@ export async function POST(request: Request) {
   }
   const webhookUrl = new URL("/api/telegram/webhook", origin).toString();
 
+  let stage = "getMe";
   try {
     const bot = await telegram<{ username: string }>(botToken, "getMe", {});
+    stage = "getWebhookInfo";
     const current = await telegram<{ url: string; pending_update_count: number; last_error_date?: number }>(botToken, "getWebhookInfo", {});
     const currentHost = current.url ? new URL(current.url).hostname : null;
     if (currentHost && currentHost !== origin.hostname && !currentHost.includes("staging")) {
       return Response.json({ error: "Bot webhook points to another environment", bot: bot.username, currentHost }, { status: 409 });
     }
 
+    stage = "setWebhook";
     await telegram<boolean>(botToken, "setWebhook", {
       url: webhookUrl,
       secret_token: webhookSecret,
       allowed_updates: ["message", "callback_query"],
       drop_pending_updates: false,
     });
+    stage = "setChatMenuButton";
     await telegram<boolean>(botToken, "setChatMenuButton", {
       menu_button: { type: "web_app", text: "Vazifalar", web_app: { url: origin.origin } },
     });
+    stage = "verifyWebhook";
     const verified = await telegram<{ url: string; pending_update_count: number; last_error_date?: number }>(botToken, "getWebhookInfo", {});
     return Response.json({ bot: bot.username, configured: verified.url === webhookUrl, pendingUpdates: verified.pending_update_count, hasLastError: Boolean(verified.last_error_date) });
   } catch {
-    return Response.json({ error: "Telegram setup failed" }, { status: 502 });
+    return Response.json({ error: "Telegram setup failed", stage }, { status: 502 });
   }
 }
