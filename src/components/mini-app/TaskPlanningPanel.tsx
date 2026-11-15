@@ -87,6 +87,7 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
       });
       onCheckpoints([...checkpoints, result.checkpoint]);
       setTitle(""); setDueDateTime("");
+      onRefreshPlan();
       onRefreshDetail();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Checkpoint qo‘shilmadi.");
@@ -98,6 +99,7 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
     try {
       const result = await write<{ checkpoint: Checkpoint }>(`/api/checkpoints/${id}`, "POST");
       onCheckpoints(checkpoints.map((item) => item.id === id ? result.checkpoint : item));
+      onRefreshPlan();
       onRefreshDetail();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Checkpoint yangilanmadi.");
@@ -109,6 +111,7 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
     try {
       await write<{ ok: true }>(`/api/checkpoints/${id}`, "DELETE");
       onCheckpoints(checkpoints.filter((item) => item.id !== id));
+      onRefreshPlan();
       onRefreshDetail();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Checkpoint o‘chirilmadi.");
