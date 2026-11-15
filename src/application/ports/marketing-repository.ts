@@ -106,6 +106,9 @@ export interface MarketingRepository {
   registerTelegramUser(identity: TelegramIdentityInput, expectedHeadTelegramUserId: string): Promise<User>;
   getUserById(id: string): Promise<User | null>;
   getUserByTelegramId(telegramUserId: string): Promise<User | null>;
+  createWebLoginChallenge(input: { browserHash: string; codeHash: string; expiresAt: string }): Promise<void>;
+  approveWebLoginChallenge(input: { codeHash: string; userId: string; now: string }): Promise<boolean>;
+  consumeWebLoginChallenge(input: { browserHash: string; now: string }): Promise<string | null>;
   /** Looks up by canonical Telegram username regardless of active state, so
    * callers can distinguish "no such username" from "exists but inactive". */
   findUserByUsername(username: string): Promise<User | null>;

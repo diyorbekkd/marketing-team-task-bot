@@ -281,6 +281,15 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
       const firstWord = text.split(/\s+/, 1)[0]?.split("@", 1)[0]?.toLowerCase() ?? "";
 
       if (firstWord === "/start" && message.chat.type === "private") {
+        if (/^\/start(?:@\w+)?\s+wl_/i.test(text)) {
+          const code = text.match(/^\/start(?:@\w+)?\s+(wl_[A-Za-z0-9_-]{24})$/i)?.[1];
+          const approved = code && message.chat.id === message.from.id
+            ? await service.approveWebBotLogin(String(message.from.id), code)
+            : false;
+          return { messages: [{ chatId: message.chat.id, text: approved
+            ? "✅ Web kirish tasdiqlandi. O‘zingiz ochgan brauzer sahifasiga qayting. Agar bu so‘rovni siz boshlamagan bo‘lsangiz, rahbarga xabar bering."
+            : "Kirish havolasi eskirgan yoki noto‘g‘ri. Web sahifada yangi havola yarating." }] };
+        }
         const user = await service.onboardTelegram(
           {
             telegramUserId: String(message.from.id),

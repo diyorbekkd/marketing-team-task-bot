@@ -322,6 +322,7 @@
   justify-content: center;
   text-decoration: none;
 }
+.ma-web-bot-login { display: grid; justify-items: center; gap: 12px; max-width: 360px; text-align: center; }
 
 .ma-empty {
   padding: 40px 16px;

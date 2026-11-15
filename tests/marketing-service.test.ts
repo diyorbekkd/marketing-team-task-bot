@@ -104,6 +104,9 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     registerTelegramUser: vi.fn(),
     getUserById: vi.fn(async (id) => [head, creator, assignee, unrelated].find((candidate) => candidate.id === id) ?? null),
     getUserByTelegramId: vi.fn(),
+    createWebLoginChallenge: vi.fn(async () => undefined),
+    approveWebLoginChallenge: vi.fn(async () => true),
+    consumeWebLoginChallenge: vi.fn(async () => assignee.id),
     findUserByUsername: vi.fn(),
     listUsers: vi.fn(async () => [head, creator, assignee, unrelated]),
     activateUser: vi.fn(async ({ userId, role }) => {
@@ -213,6 +216,36 @@ describe("MarketingService MVP permissions", () => {
 
     await expect(service.onboardTelegram(identity, "1001")).resolves.toEqual(head);
     expect(repo.registerTelegramUser).toHaveBeenCalledWith(identity, "1001");
+  });
+
+  it("uses short-lived hashed challenges for bot-confirmed browser login", async () => {
+    const repo = repository({ getUserByTelegramId: vi.fn(async () => assignee) });
+    const service = new MarketingService(repo, notifier());
+    const now = new Date("2026-11-15T10:00:00.000Z");
+    const challenge = await service.createWebBotLogin(now);
+    expect(challenge.code).toMatch(/^wl_[A-Za-z0-9_-]{24}$/);
+    expect(challenge.browserToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(challenge.expiresAt.toISOString()).toBe("2026-11-15T10:10:00.000Z");
+    expect(repo.createWebLoginChallenge).toHaveBeenCalledWith(expect.objectContaining({
+      browserHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      codeHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+    }));
+    expect(JSON.stringify(vi.mocked(repo.createWebLoginChallenge).mock.calls)).not.toContain(challenge.browserToken);
+    await expect(service.approveWebBotLogin(assignee.telegramUserId, challenge.code, now)).resolves.toBe(true);
+    expect(repo.approveWebLoginChallenge).toHaveBeenCalledWith(expect.objectContaining({ userId: assignee.id }));
+    await expect(service.consumeWebBotLogin(challenge.browserToken, now)).resolves.toEqual(assignee);
+    expect(repo.consumeWebLoginChallenge).toHaveBeenCalledWith(expect.objectContaining({
+      browserHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+    }));
+    await expect(service.approveWebBotLogin(assignee.telegramUserId, "wl_invalid", now)).resolves.toBe(false);
+  });
+
+  it("rejects an inactive Telegram account during web login approval", async () => {
+    const repo = repository({ getUserByTelegramId: vi.fn(async () => ({ ...assignee, isActive: false })) });
+    await expect(new MarketingService(repo, notifier()).approveWebBotLogin(
+      assignee.telegramUserId, `wl_${"a".repeat(24)}`,
+    )).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+    expect(repo.approveWebLoginChallenge).not.toHaveBeenCalled();
   });
 
   it("allows only the assignee to accept and block a task", async () => {

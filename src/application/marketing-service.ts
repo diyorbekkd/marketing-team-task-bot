@@ -13,6 +13,7 @@ import type {
 } from "./ports/notification-dispatcher";
 import { ApplicationError } from "./errors";
 import { z } from "zod";
+import { createHash, randomBytes } from "node:crypto";
 import { nextOccurrence, RecurrenceInputSchema, RecurrenceUpdateSchema } from "@/domain/recurrence";
 import { calculateAnalytics, isOpenTask, tashkentDayRange, workloadMetrics } from "@/domain/reporting";
 
@@ -169,6 +170,14 @@ function taskAccess(task: Task) {
   return { creatorId: task.creatorId, assigneeId: task.assigneeId };
 }
 
+const WEB_BOT_LOGIN_TTL_MS = 10 * 60 * 1000;
+const WEB_BOT_CODE_PATTERN = /^wl_[A-Za-z0-9_-]{24}$/;
+const WEB_BOT_BROWSER_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+function webLoginHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 export class MarketingService {
   constructor(
     private readonly repository: MarketingRepository,
@@ -194,6 +203,32 @@ export class MarketingService {
       throw new ApplicationError("UNAUTHENTICATED", "Foydalanuvchi sessiyasi endi faol emas.");
     }
     return user;
+  }
+
+  async createWebBotLogin(now = new Date()) {
+    const code = `wl_${randomBytes(18).toString("base64url")}`;
+    const browserToken = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(now.getTime() + WEB_BOT_LOGIN_TTL_MS);
+    await this.repository.createWebLoginChallenge({
+      browserHash: webLoginHash(browserToken), codeHash: webLoginHash(code), expiresAt: expiresAt.toISOString(),
+    });
+    return { code, browserToken, expiresAt };
+  }
+
+  async approveWebBotLogin(telegramUserId: string, code: string, now = new Date()): Promise<boolean> {
+    if (!WEB_BOT_CODE_PATTERN.test(code)) return false;
+    const actor = await this.requireActorByTelegramId(telegramUserId);
+    return this.repository.approveWebLoginChallenge({
+      codeHash: webLoginHash(code), userId: actor.id, now: now.toISOString(),
+    });
+  }
+
+  async consumeWebBotLogin(browserToken: string, now = new Date()): Promise<User | null> {
+    if (!WEB_BOT_BROWSER_PATTERN.test(browserToken)) return null;
+    const userId = await this.repository.consumeWebLoginChallenge({
+      browserHash: webLoginHash(browserToken), now: now.toISOString(),
+    });
+    return userId ? this.requireActorById(userId) : null;
   }
 
   async listUsers(actor: User): Promise<User[]> {

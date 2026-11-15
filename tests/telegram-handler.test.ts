@@ -52,6 +52,7 @@ function serviceMock(overrides: Record<string, unknown> = {}) {
   return {
     onboardTelegram: vi.fn(async () => actor),
     requireActorByTelegramId: vi.fn(async () => actor),
+    approveWebBotLogin: vi.fn(async () => true),
     createTaskForUsername: vi.fn(async () => ({ task, assignee, notification: { status: "SENT" as const } })),
     createTasksBulk: vi.fn(async () => []),
     performTaskAction: vi.fn(async () => ({ ...task, status: "IN_PROGRESS" })),
@@ -95,6 +96,21 @@ describe("Telegram MVP handler", () => {
       "42",
     );
     expect(result.messages[0]?.text).toContain("Marketing rahbari");
+  });
+
+  it("confirms a browser login from an active user's private deep link without onboarding", async () => {
+    const service = serviceMock();
+    const code = `wl_${"a".repeat(24)}`;
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 11,
+      message: {
+        message_id: 2, chat: { id: 42, type: "private" },
+        from: { id: 42, is_bot: false, first_name: "Team" }, text: `/start ${code}`,
+      },
+    }));
+    expect(service.approveWebBotLogin).toHaveBeenCalledWith("42", code);
+    expect(service.onboardTelegram).not.toHaveBeenCalled();
+    expect(result.messages[0]?.text).toContain("Web kirish tasdiqlandi");
   });
 
   it("creates an idempotent group task through the notification-aware service", async () => {

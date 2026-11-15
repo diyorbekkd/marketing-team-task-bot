@@ -7,6 +7,20 @@ const TelegramApiResponseSchema = z.object({
   description: z.string().optional(),
 });
 
+const TelegramBotInfoSchema = z.object({
+  ok: z.literal(true),
+  result: z.object({ username: z.string().regex(/^[A-Za-z0-9_]{5,32}$/) }),
+});
+
+export async function getTelegramBotUsername(botToken: string): Promise<string> {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/getMe`, {
+    signal: AbortSignal.timeout(8_000), cache: "no-store",
+  });
+  const parsed = TelegramBotInfoSchema.safeParse(await response.json());
+  if (!response.ok || !parsed.success) throw new Error("Telegram bot nomini aniqlab bo‘lmadi.");
+  return parsed.data.result.username;
+}
+
 export async function sendTelegramMessage(
   botToken: string,
   input: Readonly<{ chatId: number | string; text: string; replyMarkup?: unknown }>,

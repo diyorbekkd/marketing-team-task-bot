@@ -48,6 +48,8 @@ Optional personal plans live in `user_task_plans` keyed by user and task. Shared
 
 Browser code never receives `SUPABASE_SERVICE_ROLE_KEY` or `TELEGRAM_BOT_TOKEN`. During the current server-mediated design, application tables are inaccessible to `anon` and `authenticated`; RLS is enabled with no permissive policies, and only trusted server code receives explicit table privileges through `service_role`.
 
+Bot-confirmed browser login stores one-time token hashes in `web_login_challenges`. `/api/auth/link/start` sets a scoped HttpOnly cookie and returns a Telegram bot deep link. The private `/start wl_...` webhook path resolves the sender through the existing active-user service, then conditionally approves the challenge. `/api/auth/link/complete` conditionally consumes the approved challenge once and issues the ordinary signed session cookie. The table is RLS-enabled and accessible only through the server's service role. No BotFather OAuth client configuration is required for this login path.
+
 Telegram webhook calls must include the configured secret token header. Incoming update JSON is runtime-validated before use.
 
 Mini App authentication will verify Telegram `initData` server-side using Telegram's documented signature algorithm, expiration checks, and the bot secret. The backend derives `telegram_user_id` from verified data and resolves it to an active internal user. A raw browser-provided ID, username, role, or `isHead` flag is never trusted.

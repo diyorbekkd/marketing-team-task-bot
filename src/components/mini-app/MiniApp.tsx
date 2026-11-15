@@ -5,6 +5,7 @@ import { t } from "@/i18n";
 import { CalendarView } from "./CalendarView";
 import { MyDayPanel } from "./MyDayPanel";
 import { TaskPlanningPanel, type Checkpoint, type PersonalPlan } from "./TaskPlanningPanel";
+import { WebBotLogin } from "./WebBotLogin";
 import type { DayPlanGroup } from "@/domain/planning";
 import "./mini-app.css";
 
@@ -552,7 +553,7 @@ export default function MiniApp() {
           ? "Bu Telegram hisobi aktiv jamoa a’zosi emas. Rahbar bilan bog‘laning."
           : webLoginError === "invalid"
             ? "Telegram kirish so‘rovi eskirgan. Qayta urinib ko‘ring."
-            : "Telegram orqali kirib bo‘lmadi. Qayta urinib ko‘ring.");
+            : "Telegram tasdig‘i saytga qaytmadi. Bot orqali kirib ko‘ring.");
       }
       setAuthState("no-telegram");
     })();
@@ -812,9 +813,9 @@ export default function MiniApp() {
           <div className="ma-no-tg-icon" aria-hidden="true">M</div>
           <p>{inactiveMessage ? "Siz faol jamoa tarkibida emassiz." : "Marketing ish maydoniga kiring"}</p>
           <span className="ma-muted">
-            {inactiveMessage ?? authError ?? "Telegram botingizdagi hisob bilan webda ham ishlashingiz mumkin."}
+            {inactiveMessage ?? authError ?? "Botdagi ulangan hisobingiz bilan webda kiring."}
           </span>
-          {!inactiveMessage && <a className="ma-btn primary ma-web-login" href="/api/auth/web/start">Telegram orqali kirish</a>}
+          {!inactiveMessage && <WebBotLogin />}
         </div>
       </div>
     );

@@ -442,6 +442,36 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return data ? mapUser(data) : null;
   }
 
+  async createWebLoginChallenge(input: Parameters<MarketingRepository["createWebLoginChallenge"]>[0]): Promise<void> {
+    const { error } = await this.client.from("web_login_challenges").insert({
+      browser_hash: input.browserHash, code_hash: input.codeHash, expires_at: input.expiresAt,
+    });
+    if (error) throwDataError(error, "Web kirish havolasini yaratib bo‘lmadi.");
+  }
+
+  async approveWebLoginChallenge(input: Parameters<MarketingRepository["approveWebLoginChallenge"]>[0]): Promise<boolean> {
+    const { data, error } = await this.client.from("web_login_challenges")
+      .update({ status: "APPROVED", user_id: input.userId, approved_at: input.now })
+      .eq("code_hash", input.codeHash).eq("status", "PENDING").gt("expires_at", input.now)
+      .select("id").maybeSingle();
+    if (error) throwDataError(error, "Web kirishni tasdiqlab bo‘lmadi.");
+    if (data) return true;
+    const { data: existing, error: lookupError } = await this.client.from("web_login_challenges")
+      .select("status,user_id,expires_at").eq("code_hash", input.codeHash).maybeSingle();
+    if (lookupError) throwDataError(lookupError, "Web kirish havolasi tekshirilmadi.");
+    return Boolean(existing && existing.user_id === input.userId &&
+      (existing.status === "APPROVED" || existing.status === "CONSUMED") && existing.expires_at > input.now);
+  }
+
+  async consumeWebLoginChallenge(input: Parameters<MarketingRepository["consumeWebLoginChallenge"]>[0]): Promise<string | null> {
+    const { data, error } = await this.client.from("web_login_challenges")
+      .update({ status: "CONSUMED", consumed_at: input.now })
+      .eq("browser_hash", input.browserHash).eq("status", "APPROVED").gt("expires_at", input.now)
+      .select("user_id").maybeSingle();
+    if (error) throwDataError(error, "Web kirish sessiyasini yaratib bo‘lmadi.");
+    return data?.user_id ?? null;
+  }
+
   async findUserByUsername(username: string): Promise<User | null> {
     const { data, error } = await this.client
       .from("users")

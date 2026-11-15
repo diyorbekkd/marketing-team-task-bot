@@ -127,6 +127,18 @@ type TaskCheckpointRow = {
   created_at: string;
 }
 
+type WebLoginChallengeRow = {
+  id: string;
+  browser_hash: string;
+  code_hash: string;
+  status: "PENDING" | "APPROVED" | "CONSUMED";
+  user_id: string | null;
+  created_at: string;
+  expires_at: string;
+  approved_at: string | null;
+  consumed_at: string | null;
+}
+
 type DeadlineRequestRow = {
   id: string;
   task_id: string;
@@ -269,6 +281,7 @@ export interface Database {
       task_comments: TableDefinition<TaskCommentRow>;
       user_task_plans: TableDefinition<UserTaskPlanRow>;
       task_checkpoints: TableDefinition<TaskCheckpointRow>;
+      web_login_challenges: TableDefinition<WebLoginChallengeRow>;
       deadline_change_requests: TableDefinition<DeadlineRequestRow>;
       reassign_requests: TableDefinition<ReassignRequestRow>;
       task_revisions: TableDefinition<RevisionRow>;

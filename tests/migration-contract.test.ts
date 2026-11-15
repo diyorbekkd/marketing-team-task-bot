@@ -49,6 +49,10 @@ const workflowEditorMigration = readFileSync(
   new URL("../supabase/migrations/20261115094125_versioned_workflow_template_editor.sql", import.meta.url),
   "utf8",
 );
+const botLinkLoginMigration = readFileSync(
+  new URL("../supabase/migrations/20261115100316_bot_deeplink_web_login.sql", import.meta.url),
+  "utf8",
+);
 
 describe("fast-track database workflow contract", () => {
   it("locks workflow rows and revalidates lifecycle transitions in the transaction", () => {
@@ -223,5 +227,12 @@ describe("production-readiness database contracts", () => {
     expect(workflowEditorMigration).toContain("update public.workflow_templates set is_active = false");
     expect(workflowEditorMigration).not.toContain("update public.workflow_template_steps");
     expect(workflowEditorMigration).toContain("revoke all on function public.save_workflow_template_version");
+  });
+
+  it("stores only one-time login token hashes behind service-role access", () => {
+    expect(botLinkLoginMigration).toContain("browser_hash text not null unique");
+    expect(botLinkLoginMigration).toContain("code_hash text not null unique");
+    expect(botLinkLoginMigration).toContain("alter table public.web_login_challenges enable row level security");
+    expect(botLinkLoginMigration).toContain("revoke all on table public.web_login_challenges from public, anon, authenticated");
   });
 });
