@@ -10,3 +10,12 @@ export async function GET() {
     return errorResponse(error);
   }
 }
+
+export async function POST(request: Request) {
+  try {
+    const actor = await requireRequestActor();
+    return Response.json(await getMarketingService().saveWorkflowTemplate(actor, await request.json()));
+  } catch (error) {
+    return errorResponse(error);
+  }
+}

@@ -142,6 +142,7 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     listUserTaskPlans: vi.fn(async () => []),
     saveUserTaskPlan: vi.fn(),
     listTaskCheckpoints: vi.fn(async () => []),
+    listUserCheckpointsDueBetween: vi.fn(async () => []),
     getTaskCheckpoint: vi.fn(async () => null),
     addTaskCheckpoint: vi.fn(),
     toggleTaskCheckpoint: vi.fn(),
@@ -162,6 +163,7 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     updateRecurringDefinition: vi.fn(),
     generateRecurringOccurrence: vi.fn(async () => null),
     listWorkflowTemplates: vi.fn(async () => []),
+    saveWorkflowTemplateVersion: vi.fn(async () => "91000000-0000-4000-8000-000000000009"),
     startWorkflowRun: vi.fn(async () => task()),
     advanceWorkflowRun: vi.fn(async () => null),
     recoverWorkflowRuns: vi.fn(async () => []),
@@ -273,6 +275,15 @@ describe("MarketingService MVP permissions", () => {
     await expect(service.savePersonalPlan(assignee, ids.task, {
       userId: creator.id, isImportant: true, urgentOverride: null, plannedOn: null, estimatedMinutes: null,
     })).rejects.toThrow();
+  });
+
+  it("loads today's checkpoints only for the signed-in assignee in Tashkent time", async () => {
+    const repo = repository();
+    const service = new MarketingService(repo, notifier());
+    await service.listTodaysCheckpoints(assignee, new Date("2026-11-15T20:00:00Z"));
+    expect(repo.listUserCheckpointsDueBetween).toHaveBeenCalledWith(
+      assignee.id, "2026-11-15T19:00:00.000Z", "2026-11-16T19:00:00.000Z",
+    );
   });
 
   it("rejects checkpoint changes on tasks outside the actor's visibility", async () => {
@@ -1258,6 +1269,23 @@ describe("MarketingService MVP permissions", () => {
   });
 
   describe("marketing workflows", () => {
+    it("lets Head save a new template version but rejects employees and invalid steps", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+      const input = {
+        sourceTemplateId: "91000000-0000-4000-8000-000000000001",
+        name: "Reels yangilangan", description: null,
+        steps: [{ title: "Ssenariy", description: null, assigneeRole: "CONTENT_MARKETER", priority: "normal", dueAfterHours: 24 }],
+      };
+      await expect(service.saveWorkflowTemplate(assignee, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(repo.saveWorkflowTemplateVersion).not.toHaveBeenCalled();
+      await expect(service.saveWorkflowTemplate(head, { ...input, steps: [] })).rejects.toThrow();
+      await expect(service.saveWorkflowTemplate(head, input)).resolves.toMatchObject({ id: expect.any(String) });
+      expect(repo.saveWorkflowTemplateVersion).toHaveBeenCalledWith(expect.objectContaining({
+        actorId: head.id, sourceTemplateId: input.sourceTemplateId, steps: input.steps,
+      }));
+    });
+
     it("allows only Head to start a reusable workflow and notifies its first assignee", async () => {
       const firstTask = task({ workflowRunId: "90000000-0000-4000-8000-000000000001", workflowStepId: "90000000-0000-4000-8000-000000000002" });
       const repo = repository({ startWorkflowRun: vi.fn(async () => firstTask) });

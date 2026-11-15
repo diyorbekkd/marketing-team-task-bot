@@ -149,6 +149,7 @@ export interface MarketingRepository {
     urgentOverride: boolean | null; plannedOn: string | null; estimatedMinutes: number | null;
   }): Promise<UserTaskPlan>;
   listTaskCheckpoints(taskId: string): Promise<TaskCheckpoint[]>;
+  listUserCheckpointsDueBetween(userId: string, from: string, before: string): Promise<TaskCheckpoint[]>;
   getTaskCheckpoint(id: string): Promise<TaskCheckpoint | null>;
   addTaskCheckpoint(input: { taskId: string; actorId: string; title: string; dueAt: string | null }): Promise<TaskCheckpoint>;
   toggleTaskCheckpoint(input: { id: string; actorId: string }): Promise<TaskCheckpoint>;
@@ -205,6 +206,16 @@ export interface MarketingRepository {
     nextOccurrenceAt: string | null;
   }): Promise<Task | null>;
   listWorkflowTemplates(): Promise<WorkflowTemplate[]>;
+  saveWorkflowTemplateVersion(input: {
+    actorId: string;
+    sourceTemplateId: string | null;
+    name: string;
+    description: string | null;
+    steps: Array<{
+      title: string; description: string | null; assigneeRole: TeamRole;
+      priority: TaskPriority; dueAfterHours: number;
+    }>;
+  }): Promise<string>;
   startWorkflowRun(input: {
     templateId: string;
     actorId: string;

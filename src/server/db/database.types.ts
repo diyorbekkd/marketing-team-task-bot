@@ -395,6 +395,16 @@ export interface Database {
         Args: { p_template_id: string; p_actor_id: string; p_subject: string; p_assignee_map: Json };
         Returns: TaskRow;
       };
+      save_workflow_template_version: {
+        Args: {
+          p_actor_id: string;
+          p_source_template_id: string | null;
+          p_name: string;
+          p_description: string | null;
+          p_steps: Json;
+        };
+        Returns: string;
+      };
       advance_workflow_run: {
         Args: { p_completed_task_id: string; p_actor_id: string };
         Returns: TaskRow | null;

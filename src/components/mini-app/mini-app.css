@@ -1558,6 +1558,16 @@
 .ma-workflow-steps li > span { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: var(--primary-soft); color: var(--primary-dark); font-weight: 800; font-size: 0.72rem; }
 .ma-workflow-steps li > div { display: grid; gap: 2px; }
 .ma-workflow-steps small { color: var(--muted); }
+.ma-workflow-editor h3 { margin: 0; }
+.ma-workflow-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ma-workflow-step-editor { display: grid; gap: 7px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); }
+.ma-workflow-step-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ma-workflow-step-heading > div { display: flex; gap: 4px; }
+.ma-workflow-step-heading button { width: 36px; height: 36px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); font: inherit; font-size: 1.1rem; cursor: pointer; }
+.ma-workflow-step-heading button:disabled { opacity: .4; cursor: default; }
+.ma-workflow-step-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ma-workflow-step-fields > div { display: grid; gap: 6px; min-width: 0; }
+.ma-workflow-step-fields > div:first-child { grid-column: 1 / -1; }
 .ma-workflow-assignee { display: grid; gap: 7px; }
 
 @media (min-width: 800px) {
@@ -1589,10 +1599,11 @@
 .ma-planning-checkpoint button { background: transparent; border: 0; color: var(--ink); font-size: 1.25rem; min-width: 34px; min-height: 34px; cursor: pointer; }
 .ma-planning-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
 .ma-planning-add textarea { grid-column: 1 / -1; min-height: 72px; resize: vertical; }
+.ma-checkpoint-add { justify-self: stretch; font-weight: 700; }
 .ma-my-day { display: grid; gap: 9px; }
 .ma-day-summary-card { display: grid; gap: 5px; width: 100%; padding: 13px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); text-align: left; cursor: pointer; }
 .ma-day-summary-card span { color: var(--primary); font-weight: 700; }
-.ma-day-summary-card small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ma-day-summary-card small { color: var(--muted); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .ma-matrix-caption { margin: 5px 0 0; }
 .ma-matrix { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .ma-matrix-cell { display: grid; align-content: start; gap: 4px; min-height: 82px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); font: inherit; font-size: .82rem; text-align: left; cursor: pointer; }
@@ -1604,7 +1615,10 @@
 .ma-planning-back { justify-self: start; border: 0; background: transparent; color: var(--primary); font: inherit; font-weight: 650; cursor: pointer; }
 .ma-planning-task-list { display: grid; gap: 8px; }
 .ma-planning-task-list button { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 56px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
-.ma-planning-task-list button span { flex: 0 0 auto; color: var(--primary); font-size: .78rem; }
+.ma-planning-task-list .ma-day-task-copy { display: grid; flex: 1 1 auto; min-width: 0; gap: 5px; color: var(--ink); }
+.ma-day-task-copy small { color: var(--primary-dark); font-size: .78rem; line-height: 1.35; overflow-wrap: anywhere; }
+.ma-day-task-copy small.is-done { color: var(--muted); text-decoration: line-through; }
+.ma-planning-task-list .ma-day-task-open { flex: 0 0 auto; color: var(--primary); font-size: .78rem; }
 @media (max-width: 420px) {
   .ma-planning-grid { grid-template-columns: 1fr; }
   .ma-planning-add { grid-template-columns: 1fr; }

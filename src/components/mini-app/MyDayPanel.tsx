@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { groupPlannedTasks, type DayPlanGroup, type DayPlanTask } from "@/domain/planning";
-import type { PersonalPlan } from "./TaskPlanningPanel";
+import { groupTodayWork, type DayPlanGroup, type DayPlanTask } from "@/domain/planning";
+import type { Checkpoint, PersonalPlan } from "./TaskPlanningPanel";
 
 const GROUPS: Array<{ key: Exclude<DayPlanGroup, "today">; label: string }> = [
   { key: "important_urgent", label: "Muhim va shoshilinch" },
@@ -11,6 +11,9 @@ const GROUPS: Array<{ key: Exclude<DayPlanGroup, "today">; label: string }> = [
   { key: "later_other", label: "Muhim ham, shoshilinch ham emas" },
   { key: "unclassified", label: "Muhimligi belgilanmagan" },
 ];
+const checkpointTime = new Intl.DateTimeFormat("uz-UZ", {
+  timeZone: "Asia/Tashkent", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
 
 export function MyDayPanel({ tasks, userId, refreshKey, view, onOpen, onBack, onSelectTask }: {
   tasks: DayPlanTask[];
@@ -22,9 +25,12 @@ export function MyDayPanel({ tasks, userId, refreshKey, view, onOpen, onBack, on
   onSelectTask: (id: string) => void;
 }) {
   const [plans, setPlans] = useState<PersonalPlan[]>([]);
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [referenceNow, setReferenceNow] = useState(0);
+  const [referenceNow, setReferenceNow] = useState(() => Date.now());
+  const [retryKey, setRetryKey] = useState(0);
+  const todayKey = new Date(referenceNow + 5 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -34,24 +40,31 @@ export function MyDayPanel({ tasks, userId, refreshKey, view, onOpen, onBack, on
     fetch("/api/plans", { credentials: "same-origin", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("Plans unavailable");
-        return response.json() as Promise<{ plans: PersonalPlan[] }>;
+        return response.json() as Promise<{ plans: PersonalPlan[]; checkpoints: Checkpoint[] }>;
       })
-      .then((result) => { setPlans(result.plans); setReferenceNow(Date.now()); setError(false); setLoading(false); })
+      .then((result) => { setPlans(result.plans); setCheckpoints(result.checkpoints); setReferenceNow(Date.now()); setError(false); setLoading(false); })
       .catch(() => { if (!controller.signal.aborted) { setReferenceNow(Date.now()); setError(true); setLoading(false); } });
     return () => { controller.abort(); window.clearInterval(clock); };
-  }, [refreshKey]);
+  }, [refreshKey, todayKey, retryKey]);
 
-  const grouped = groupPlannedTasks(tasks, plans, userId, new Date(referenceNow));
+  const grouped = groupTodayWork(tasks, plans, checkpoints, userId, new Date(referenceNow));
+  const checkpointCount = grouped.today.reduce((sum, item) => sum + item.checkpoints.length, 0);
+  const completedCount = grouped.today.reduce((sum, item) => sum + item.checkpoints.filter((checkpoint) => checkpoint.completedAt).length, 0);
   if (view) {
-    const title = view === "today" ? "Bugunga rejalangan" : GROUPS.find((group) => group.key === view)?.label ?? "Vazifalar";
+    const title = view === "today" ? "Bugungi ishlar" : GROUPS.find((group) => group.key === view)?.label ?? "Vazifalar";
     return <section className="ma-planning-page" aria-label={title}>
       <button className="ma-planning-back" onClick={onBack}>← Mening kunimga qaytish</button>
       <h1>{title}</h1>
-      <p className="ma-muted">{loading ? "Reja yuklanmoqda…" : `Bugunga rejalangan vazifalar · ${grouped[view].length} ta`}</p>
-      {error && <p className="ma-error" role="alert">Reja yuklanmadi. Sahifani qayta ochib ko‘ring.</p>}
-      {!loading && <div className="ma-planning-task-list">
-        {grouped[view].map((task) => <button key={task.id} onClick={() => onSelectTask(task.id)}>
-          <strong>{task.title}</strong><span>Vazifani ochish →</span>
+      <p className="ma-muted">{loading ? "Bugungi ishlar yuklanmoqda…" : `${grouped[view].length} ta vazifa · checkpoint yoki deadline bugun`}</p>
+      {error && <p className="ma-error" role="alert">Bugungi ishlar yuklanmadi. <button onClick={() => setRetryKey((value) => value + 1)}>Qayta urinish</button></p>}
+      {!loading && !error && <div className="ma-planning-task-list">
+        {grouped[view].map((item) => <button key={item.task.id} onClick={() => onSelectTask(item.task.id)}>
+          <span className="ma-day-task-copy"><strong>{item.task.title}</strong>
+            {item.checkpoints.map((checkpoint, index) => <small key={index} className={checkpoint.completedAt ? "is-done" : ""}>
+              {checkpoint.completedAt ? "✓" : "◷"} {checkpoint.title} · {checkpointTime.format(new Date(checkpoint.dueAt!))}
+            </small>)}
+            {item.deadlineToday && <small>Vazifa muddati bugun</small>}
+          </span><span className="ma-day-task-open">Ochish →</span>
         </button>)}
         {grouped[view].length === 0 && <p className="ma-muted">Bu bo‘limda vazifa yo‘q.</p>}
       </div>}
@@ -60,14 +73,16 @@ export function MyDayPanel({ tasks, userId, refreshKey, view, onOpen, onBack, on
 
   return <section className="ma-section ma-my-day" aria-labelledby="my-day-title">
     <h3 id="my-day-title">Mening kunim</h3>
-    <p className="ma-muted">Rejalangan kun — ishlashni tanlagan kuningiz. Deadline — topshirishning oxirgi muddati.</p>
-    {loading && <p className="ma-muted">Reja yuklanmoqda…</p>}
-    {error && <p className="ma-muted">Shaxsiy reja yuklanmadi. Sahifani yangilab ko‘ring.</p>}
-    {!loading && <><button className="ma-day-summary-card" onClick={() => onOpen("today")}>
-      <strong>Bugunga rejalangan</strong><span>{grouped.today.length} ta vazifa</span>
-      <small>{grouped.today.length ? grouped.today.slice(0, 2).map((task) => task.title).join(" · ") : "Taskni ochib bugunga qo‘shing"}</small>
+    <p className="ma-muted">Bugungi checkpointlar va muddati bugun tugaydigan vazifalar bir joyda.</p>
+    {loading && <p className="ma-muted">Bugungi ishlar yuklanmoqda…</p>}
+    {error && <p className="ma-error" role="alert">Bugungi ishlar yuklanmadi. <button onClick={() => setRetryKey((value) => value + 1)}>Qayta urinish</button></p>}
+    {!loading && !error && <><button className="ma-day-summary-card" onClick={() => onOpen("today")}>
+      <strong>Bugungi ishlar</strong><span>{grouped.today.length} ta vazifa · {checkpointCount} ta checkpoint{completedCount ? ` · ${completedCount} tasi bajarildi` : ""}</span>
+      <small>{grouped.today.length ? grouped.today.slice(0, 2).map((item) =>
+        `${item.task.title}: ${item.checkpoints[0] ? `${item.checkpoints[0].title} · ${checkpointTime.format(new Date(item.checkpoints[0].dueAt!))}` : "deadline bugun"}`,
+      ).join(" · ") : "Vazifada bugungi checkpoint belgilashingiz mumkin"}</small>
     </button>
-    <p className="ma-muted ma-matrix-caption">Quyidagi kartalar faqat bugunga rejalangan vazifalarni guruhlaydi. Belgilanmaganlar ham alohida ko‘rsatiladi.</p>
+    <p className="ma-muted ma-matrix-caption">Quyidagi kartalar bugungi ishlarni muhimlik va shoshilinchlik bo‘yicha ajratadi.</p>
     <div className="ma-matrix" aria-label="Bugungi vazifalar matritsasi">
       {GROUPS.map((group) => <button className="ma-matrix-cell" key={group.key} onClick={() => onOpen(group.key)}>
         <strong>{group.label}</strong><span>{grouped[group.key].length} ta</span>

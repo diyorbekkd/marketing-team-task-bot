@@ -45,6 +45,10 @@ const roleHardeningMigration = readFileSync(
   new URL("../supabase/migrations/20261114164700_role_authorization_hardening.sql", import.meta.url),
   "utf8",
 );
+const workflowEditorMigration = readFileSync(
+  new URL("../supabase/migrations/20261115094125_versioned_workflow_template_editor.sql", import.meta.url),
+  "utf8",
+);
 
 describe("fast-track database workflow contract", () => {
   it("locks workflow rows and revalidates lifecycle transitions in the transaction", () => {
@@ -211,5 +215,13 @@ describe("production-readiness database contracts", () => {
     expect(roleHardeningMigration).toContain("only active Head may change team roles");
     expect(roleHardeningMigration).toContain("head role transfer is outside this flow");
     expect(roleHardeningMigration).toContain("revoke all on function public.update_user_role_with_event");
+  });
+
+  it("versions edited workflow templates without changing historical steps", () => {
+    expect(workflowEditorMigration).toContain("create function public.save_workflow_template_version");
+    expect(workflowEditorMigration).toContain("role = 'HEAD_OF_MARKETING' and is_active");
+    expect(workflowEditorMigration).toContain("update public.workflow_templates set is_active = false");
+    expect(workflowEditorMigration).not.toContain("update public.workflow_template_steps");
+    expect(workflowEditorMigration).toContain("revoke all on function public.save_workflow_template_version");
   });
 });

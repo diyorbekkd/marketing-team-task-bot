@@ -54,7 +54,6 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
 }) {
   const [important, setImportant] = useState(plan?.isImportant === null || plan?.isImportant === undefined ? "" : String(plan.isImportant));
   const [urgent, setUrgent] = useState(plan?.urgentOverride === null || plan?.urgentOverride === undefined ? "" : String(plan.urgentOverride));
-  const [plannedOn, setPlannedOn] = useState(plan?.plannedOn ?? "");
   const [estimate, setEstimate] = useState(plan?.estimatedMinutes?.toString() ?? "");
   const [title, setTitle] = useState("");
   const [dueDateTime, setDueDateTime] = useState("");
@@ -68,7 +67,7 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
       const result = await write<{ plan: PersonalPlan }>(`/api/tasks/${taskId}/plan`, "PUT", {
         isImportant: important === "" ? null : important === "true",
         urgentOverride: urgent === "" ? null : urgent === "true",
-        plannedOn: plannedOn || null,
+        plannedOn: null,
         estimatedMinutes: estimate ? Number(estimate) : null,
       });
       onPlan(result.plan);
@@ -131,9 +130,6 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
           <option value="true">Shoshilinch</option><option value="false">Shoshilinch emas</option>
         </select>
       </label>
-      <label>Rejalangan kun<input type="date" value={plannedOn} onChange={(event) => setPlannedOn(event.target.value)} />
-        <small className="ma-muted">Ishlashni tanlagan kuningiz; task deadline’i o‘zgarmaydi.</small>
-      </label>
       <label>Taxminiy vaqt (daqiqa)<input type="number" min="5" max="1440" step="5" value={estimate} onChange={(event) => setEstimate(event.target.value)} /></label>
     </div>
     <button className="ma-btn secondary" disabled={pending} onClick={savePlan}>Rejani saqlash</button>
@@ -159,7 +155,7 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
             event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 180)}px`;
           }} />
         <input aria-label="Checkpoint sana va vaqti (ixtiyoriy)" type="datetime-local" value={dueDateTime} onChange={(event) => setDueDateTime(event.target.value)} />
-        <button className="ma-btn secondary" disabled={pending || !title.trim()} onClick={addCheckpoint}>Qo‘shish</button>
+        <button className="ma-btn primary ma-checkpoint-add" disabled={pending || !title.trim()} onClick={addCheckpoint}>+ Checkpoint qo‘shish</button>
       </div>}
     </div>
     {error && <p className="ma-error" role="alert">{error}</p>}

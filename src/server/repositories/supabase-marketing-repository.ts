@@ -757,6 +757,17 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return (data ?? []).map(mapTaskCheckpoint);
   }
 
+  async listUserCheckpointsDueBetween(userId: string, from: string, before: string): Promise<TaskCheckpoint[]> {
+    const { data, error } = await this.client.from("task_checkpoints")
+      .select("*,tasks!inner(assignee_id,status)")
+      .eq("tasks.assignee_id", userId)
+      .not("tasks.status", "in", "(DONE,CANCELLED)")
+      .gte("due_at", from).lt("due_at", before)
+      .order("due_at");
+    if (error) throwDataError(error, "Bugungi checkpointlar yuklanmadi.");
+    return (data ?? []).map(mapTaskCheckpoint);
+  }
+
   async getTaskCheckpoint(id: string): Promise<TaskCheckpoint | null> {
     const { data, error } = await this.client.from("task_checkpoints").select("*").eq("id", id).maybeSingle();
     if (error) throwDataError(error, "Checkpoint yuklanmadi.");
@@ -924,13 +935,29 @@ export class SupabaseMarketingRepository implements MarketingRepository {
   }
 
   async listWorkflowTemplates(): Promise<WorkflowTemplate[]> {
-    const [{ data: templates, error: templatesError }, { data: steps, error: stepsError }] = await Promise.all([
-      this.client.from("workflow_templates").select("*").eq("is_active", true).order("name"),
-      this.client.from("workflow_template_steps").select("*").order("position"),
-    ]);
+    const { data: templates, error: templatesError } = await this.client.from("workflow_templates")
+      .select("*").eq("is_active", true).order("name");
     if (templatesError) throwDataError(templatesError, "Ish jarayoni shablonlarini yuklab bo‘lmadi.");
+    if (!templates?.length) return [];
+    const { data: steps, error: stepsError } = await this.client.from("workflow_template_steps")
+      .select("*").in("template_id", templates.map((template) => template.id)).order("position");
     if (stepsError) throwDataError(stepsError, "Ish jarayoni bosqichlarini yuklab bo‘lmadi.");
     return (templates ?? []).map((template) => mapWorkflowTemplate(template, steps ?? []));
+  }
+
+  async saveWorkflowTemplateVersion(input: Parameters<MarketingRepository["saveWorkflowTemplateVersion"]>[0]): Promise<string> {
+    const { data, error } = await this.client.rpc("save_workflow_template_version", {
+      p_actor_id: input.actorId,
+      p_source_template_id: input.sourceTemplateId,
+      p_name: input.name,
+      p_description: input.description,
+      p_steps: input.steps.map((step) => ({
+        title: step.title, description: step.description, assigneeRole: step.assigneeRole,
+        priority: step.priority, dueAfterHours: step.dueAfterHours,
+      })),
+    });
+    if (error || !data) throwDataError(error, "Shablonni saqlab bo‘lmadi.");
+    return z.string().uuid().parse(data);
   }
 
   async startWorkflowRun(input: Parameters<MarketingRepository["startWorkflowRun"]>[0]): Promise<Task> {

@@ -1832,6 +1832,7 @@ function TaskDetailPanel({
   const [blockReason, setBlockReason] = useState("");
   const [showBlockInput, setShowBlockInput] = useState(false);
   const [showRevisionInput, setShowRevisionInput] = useState(false);
+  const [confirmReview, setConfirmReview] = useState(false);
   const [revisionReason, setRevisionReason] = useState("");
   const [showDLRequest, setShowDLRequest] = useState(false);
   const [dlDate, setDlDate] = useState("");
@@ -2110,12 +2111,12 @@ function TaskDetailPanel({
   const actions: { label: string; action: string; variant?: string }[] = [];
   if (task) {
     if (task.status === "ASSIGNED" && isAssignee) actions.push({ label: "Qabul qilish", action: "ACCEPT" });
-    if (task.status === "IN_PROGRESS" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW" });
+    if (task.status === "IN_PROGRESS" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW", variant: "secondary" });
     if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Bloklash", action: "_block", variant: "warn" });
     if (task.status === "BLOCKED" && isAssignee) actions.push({ label: "Davom ettirish", action: "RESUME" });
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Tasdiqlash", action: "APPROVE" });
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Tuzatishga qaytarish", action: "_revision", variant: "warn" });
-    if (task.status === "REVISION" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW" });
+    if (task.status === "REVISION" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW", variant: "secondary" });
     if (!isTerminal(task.status) && (isCreator || isHead)) actions.push({ label: "Bekor qilish", action: "CANCEL", variant: "danger" });
     if (isTerminal(task.status) && isHead) actions.push({ label: "Qayta ochish", action: "REOPEN" });
   }
@@ -2280,6 +2281,16 @@ function TaskDetailPanel({
                       <button className="ma-btn secondary" onClick={() => setShowBlockInput(false)}>Bekor qilish</button>
                     </div>
                   </div>
+                ) : confirmReview ? (
+                  <div className="ma-block-form">
+                    <p>Vazifa tekshiruvchiga yuboriladi. Hali checkpoint qo‘shayotgan bo‘lsangiz, bu amalni bekor qiling.</p>
+                    <div className="ma-form-row">
+                      <button className="ma-btn primary" disabled={actionPending} onClick={async () => {
+                        if (await postAction("SUBMIT_REVIEW")) setConfirmReview(false);
+                      }}>Ha, tekshiruvga yuborish</button>
+                      <button className="ma-btn secondary" onClick={() => setConfirmReview(false)}>Bekor qilish</button>
+                    </div>
+                  </div>
                 ) : showRevisionInput ? (
                   <div className="ma-block-form">
                     <label htmlFor="revision-reason">Tuzatish izohi (ixtiyoriy)</label>
@@ -2320,6 +2331,7 @@ function TaskDetailPanel({
                         onClick={() => {
                           if (a.action === "_block") { setShowBlockInput(true); return; }
                           if (a.action === "_revision") { setShowRevisionInput(true); return; }
+                          if (a.action === "SUBMIT_REVIEW") { setConfirmReview(true); return; }
                           postAction(a.action);
                         }}
                       >
@@ -2498,6 +2510,7 @@ function WorkflowStartPanel({ users, onClose, onStarted }: {
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingTemplates, setEditingTemplates] = useState(false);
 
   const defaultsFor = useCallback((template: WorkflowTemplate) => {
     const next: Partial<Record<Role, string>> = {};
@@ -2508,19 +2521,20 @@ function WorkflowStartPanel({ users, onClose, onStarted }: {
     return next;
   }, [users]);
 
-  useEffect(() => {
-    void (async () => {
-      const { data, error: loadError } = await apiFetch<{ templates: WorkflowTemplate[] }>("/api/workflow-templates");
-      setLoading(false);
-      if (!data) { setError(friendlyError(loadError)); return; }
-      setTemplates(data.templates);
-      const first = data.templates[0];
-      if (first) {
-        setSelectedId(first.id);
-        setAssigneeMap(defaultsFor(first));
-      }
-    })();
+  const loadTemplates = useCallback(async (preferredId?: string) => {
+    const { data, error: loadError } = await apiFetch<{ templates: WorkflowTemplate[] }>("/api/workflow-templates");
+    setLoading(false);
+    if (!data) { setError(friendlyError(loadError)); return; }
+    setError(null);
+    setTemplates(data.templates);
+    const selected = data.templates.find((template) => template.id === preferredId) ?? data.templates[0];
+    if (selected) {
+      setSelectedId(selected.id);
+      setAssigneeMap(defaultsFor(selected));
+    }
   }, [defaultsFor]);
+
+  useEffect(() => { void (async () => { await loadTemplates(); })(); }, [loadTemplates]);
 
   const selected = templates.find((template) => template.id === selectedId) ?? null;
   const roles = selected ? [...new Set(selected.steps.map((step) => step.assigneeRole))] : [];
@@ -2543,8 +2557,12 @@ function WorkflowStartPanel({ users, onClose, onStarted }: {
       <div className="ma-panel">
         <div className="ma-panel-header"><button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button><span className="ma-panel-title">Marketing ish jarayoni</span></div>
         <div className="ma-panel-body">
+          {editingTemplates && <WorkflowTemplateEditor templates={templates} initialTemplateId={selectedId}
+            onCancel={() => setEditingTemplates(false)} onSaved={async (id) => { await loadTemplates(id); setEditingTemplates(false); }} />}
+          {!editingTemplates && <>
           {loading && <div className="ma-center-inline"><div className="ma-spinner" /></div>}
           {!loading && templates.length === 0 && !error && <div className="ma-empty">Ish jarayoni shabloni topilmadi.</div>}
+          <button className="ma-btn secondary" onClick={() => setEditingTemplates(true)}>⚙ Shablonlarni sozlash</button>
           {templates.length > 0 && <div className="ma-block-form">
             <label htmlFor="workflow-template">Shablon</label>
             <select id="workflow-template" value={selectedId} onChange={(event) => {
@@ -2567,10 +2585,129 @@ function WorkflowStartPanel({ users, onClose, onStarted }: {
             <button className="ma-btn primary full" disabled={pending || !subject.trim() || roles.some((role) => !assigneeMap[role])} onClick={start}>{pending ? "Boshlanmoqda…" : "Ish jarayonini boshlash"}</button>
           </div>}
           {error && <div className="ma-error-inline" role="alert">{error}</div>}
+          </>}
         </div>
       </div>
     </div>
   );
+}
+
+interface WorkflowStepDraft {
+  key: string;
+  title: string;
+  description: string;
+  assigneeRole: Role;
+  priority: Priority;
+  dueAfterHours: string;
+}
+
+function workflowStepDraft(step?: WorkflowTemplateStep): WorkflowStepDraft {
+  return {
+    key: crypto.randomUUID(), title: step?.title ?? "", description: step?.description ?? "",
+    assigneeRole: step?.assigneeRole ?? "CONTENT_MARKETER", priority: step?.priority ?? "normal",
+    dueAfterHours: String(step?.dueAfterHours ?? 24),
+  };
+}
+
+function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSaved }: {
+  templates: WorkflowTemplate[];
+  initialTemplateId: string;
+  onCancel: () => void;
+  onSaved: (id: string) => Promise<void>;
+}) {
+  const initial = templates.find((template) => template.id === initialTemplateId) ?? null;
+  const [sourceId, setSourceId] = useState<string | null>(initial?.id ?? null);
+  const [name, setName] = useState(initial?.name ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [steps, setSteps] = useState<WorkflowStepDraft[]>(
+    () => initial?.steps.map(workflowStepDraft) ?? [workflowStepDraft()],
+  );
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const choose = (template: WorkflowTemplate) => {
+    setSourceId(template.id); setName(template.name); setDescription(template.description ?? "");
+    setSteps(template.steps.map(workflowStepDraft)); setError(null);
+  };
+  const updateStep = (key: string, patch: Partial<WorkflowStepDraft>) => {
+    setSteps((current) => current.map((step) => step.key === key ? { ...step, ...patch } : step));
+  };
+  const moveStep = (index: number, direction: -1 | 1) => {
+    setSteps((current) => {
+      const next = [...current];
+      [next[index], next[index + direction]] = [next[index + direction], next[index]];
+      return next;
+    });
+  };
+  const canSave = name.trim() && steps.length > 0 && steps.every((step) =>
+    step.title.trim() && Number.isInteger(Number(step.dueAfterHours)) && Number(step.dueAfterHours) >= 1 && Number(step.dueAfterHours) <= 720);
+  const save = async () => {
+    if (!canSave) return;
+    setPending(true); setError(null);
+    const { data, error: saveError } = await apiFetch<{ id: string }>("/api/workflow-templates", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sourceTemplateId: sourceId, name: name.trim(), description: description.trim() || null,
+        steps: steps.map(({ title, description: stepDescription, assigneeRole, priority, dueAfterHours }) => ({
+          title: title.trim(), description: stepDescription.trim() || null, assigneeRole, priority,
+          dueAfterHours: Number(dueAfterHours),
+        })),
+      }),
+    });
+    if (data?.id) await onSaved(data.id);
+    else setError(friendlyError(saveError) ?? "Shablonni saqlab bo‘lmadi.");
+    setPending(false);
+  };
+
+  return <div className="ma-block-form ma-workflow-editor">
+    <button className="ma-link-btn" onClick={onCancel}>← Ish jarayoniga qaytish</button>
+    <h3>Shablonlarni sozlash</h3>
+    <p className="ma-muted">Faqat yangi ish jarayonlari yangilangan shablondan foydalanadi. Boshlangan jarayonlarning bosqichlari saqlanadi.</p>
+    {templates.length > 0 && <><label htmlFor="template-to-edit">Tahrirlash uchun shablon</label>
+      <select id="template-to-edit" value={sourceId ?? ""} onChange={(event) => {
+        const template = templates.find((item) => item.id === event.target.value);
+        if (template) choose(template);
+      }}>
+        <option value="" disabled>Yangi shablon</option>
+        {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+      </select></>}
+    <div className="ma-workflow-editor-actions">
+      <button className="ma-btn secondary" onClick={() => {
+        setSourceId(null); setName(""); setDescription(""); setSteps([workflowStepDraft()]); setError(null);
+      }}>+ Yangi shablon</button>
+      {sourceId && <button className="ma-btn secondary" onClick={() => {
+        setSourceId(null); setName(`${name} nusxa`); setError(null);
+      }}>Nusxa olish</button>}
+    </div>
+    <label htmlFor="template-name">Shablon nomi</label>
+    <input id="template-name" maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder="Masalan: Yangi kampaniya" />
+    <label htmlFor="template-description">Izoh (ixtiyoriy)</label>
+    <textarea id="template-description" maxLength={2000} rows={2} value={description} onChange={(event) => setDescription(event.target.value)} />
+    <div className="ma-section-head"><h3>Bosqichlar</h3><span className="ma-muted">{steps.length}/50</span></div>
+    {steps.map((step, index) => <div className="ma-workflow-step-editor" key={step.key}>
+      <div className="ma-workflow-step-heading"><strong>{index + 1}. bosqich</strong><div>
+        <button aria-label="Yuqoriga ko‘chirish" disabled={index === 0} onClick={() => moveStep(index, -1)}>↑</button>
+        <button aria-label="Pastga ko‘chirish" disabled={index === steps.length - 1} onClick={() => moveStep(index, 1)}>↓</button>
+        <button aria-label="Bosqichni o‘chirish" disabled={steps.length === 1} onClick={() => setSteps((current) => current.filter((item) => item.key !== step.key))}>×</button>
+      </div></div>
+      <label htmlFor={`step-title-${step.key}`}>Nomi</label>
+      <input id={`step-title-${step.key}`} maxLength={200} value={step.title} onChange={(event) => updateStep(step.key, { title: event.target.value })} placeholder="Bosqich natijasi" />
+      <label htmlFor={`step-description-${step.key}`}>Izoh (ixtiyoriy)</label>
+      <textarea id={`step-description-${step.key}`} maxLength={5000} rows={2} value={step.description} onChange={(event) => updateStep(step.key, { description: event.target.value })} />
+      <div className="ma-workflow-step-fields">
+        <div><label htmlFor={`step-role-${step.key}`}>Mas’ul roli</label><select id={`step-role-${step.key}`} value={step.assigneeRole} onChange={(event) => updateStep(step.key, { assigneeRole: event.target.value as Role })}>
+          {(Object.keys(ROLE_LABELS) as Role[]).map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}
+        </select></div>
+        <div><label htmlFor={`step-priority-${step.key}`}>Ustuvorlik</label><select id={`step-priority-${step.key}`} value={step.priority} onChange={(event) => updateStep(step.key, { priority: event.target.value as Priority })}>
+          {(Object.keys(PRIORITY_LABELS) as Priority[]).map((priority) => <option key={priority} value={priority}>{PRIORITY_LABELS[priority]}</option>)}
+        </select></div>
+        <div><label htmlFor={`step-hours-${step.key}`}>Muddat (soat)</label><input id={`step-hours-${step.key}`} type="number" min={1} max={720} value={step.dueAfterHours} onChange={(event) => updateStep(step.key, { dueAfterHours: event.target.value })} /></div>
+      </div>
+    </div>)}
+    {steps.length < 50 && <button className="ma-btn secondary" onClick={() => setSteps((current) => [...current, workflowStepDraft()])}>+ Bosqich qo‘shish</button>}
+    {error && <div className="ma-error-inline" role="alert">{error}</div>}
+    <button className="ma-btn primary full" disabled={pending || !canSave} onClick={save}>{pending ? "Saqlanmoqda…" : sourceId ? "Yangi versiyani saqlash" : "Shablonni yaratish"}</button>
+  </div>;
 }
 
 // ─── Quick Add Panel ──────────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ import type {
 import { ApplicationError } from "./errors";
 import { z } from "zod";
 import { nextOccurrence, RecurrenceInputSchema, RecurrenceUpdateSchema } from "@/domain/recurrence";
-import { calculateAnalytics, isOpenTask, workloadMetrics } from "@/domain/reporting";
+import { calculateAnalytics, isOpenTask, tashkentDayRange, workloadMetrics } from "@/domain/reporting";
 
 /**
  * Deterministic per-block idempotency key reusing the existing unique
@@ -84,6 +84,19 @@ const StartWorkflowInputSchema = z.object({
   templateId: z.string().uuid(),
   subject: z.string().trim().min(1).max(200),
   assigneeMap: z.partialRecord(z.enum(WORKFLOW_ROLES), z.string().uuid()).default({}),
+}).strict();
+
+const SaveWorkflowTemplateInputSchema = z.object({
+  sourceTemplateId: z.string().uuid().nullable(),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2000).nullable(),
+  steps: z.array(z.object({
+    title: z.string().trim().min(1).max(200),
+    description: z.string().trim().max(5000).nullable(),
+    assigneeRole: z.enum(WORKFLOW_ROLES),
+    priority: z.enum(["high", "normal", "low"]),
+    dueAfterHours: z.number().int().min(1).max(720),
+  }).strict()).min(1).max(50),
 }).strict();
 
 export type TaskScope = "my" | "created" | "team" | "today" | "overdue" | "review";
@@ -730,6 +743,11 @@ export class MarketingService {
     return this.repository.listUserTaskPlans(actor.id);
   }
 
+  listTodaysCheckpoints(actor: User, now = new Date()) {
+    const day = tashkentDayRange(now);
+    return this.repository.listUserCheckpointsDueBetween(actor.id, day.start.toISOString(), day.end.toISOString());
+  }
+
   async savePersonalPlan(actor: User, taskId: string, input: unknown) {
     const parsed = PersonalPlanInputSchema.parse(input);
     await this.requireVisibleTask(actor, taskId);
@@ -953,6 +971,15 @@ export class MarketingService {
   listWorkflowTemplates(actor: User) {
     if (!actor.isActive) throw new ApplicationError("UNAUTHENTICATED", "Aktiv jamoa a’zosi bo‘lishingiz kerak.");
     return this.repository.listWorkflowTemplates();
+  }
+
+  async saveWorkflowTemplate(actor: User, input: unknown) {
+    if (!actor.isActive || !isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Shablonni faqat Marketing rahbari sozlay oladi.");
+    }
+    const parsed = SaveWorkflowTemplateInputSchema.parse(input);
+    const id = await this.repository.saveWorkflowTemplateVersion({ actorId: actor.id, ...parsed });
+    return { id };
   }
 
   async startWorkflow(actor: User, input: unknown) {
