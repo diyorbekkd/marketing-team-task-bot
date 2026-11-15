@@ -64,6 +64,15 @@ describe("report metrics", () => {
     expect(metric.carryOver).toBe(1);
   });
 
+  it("counts only tasks from before the 30-day window in the monthly carry-over card", () => {
+    const now = new Date("2026-11-15T09:00:00Z");
+    const oldOpen = task({ id: crypto.randomUUID(), status: "IN_PROGRESS", completedAt: null, createdAt: "2026-10-01T09:00:00Z" });
+    const newOpen = task({ id: crypto.randomUUID(), status: "IN_PROGRESS", completedAt: null, createdAt: "2026-11-01T09:00:00Z" });
+    const metric = calculateAnalytics({ tasks: [oldOpen, newOpen], events: [], deadlineRequests: [], now, windowDays: 30 });
+    expect(metric.carryOver).toBe(1);
+    expect(metric.workload.open).toBe(2);
+  });
+
   it("attributes a new task's pre-first-transition time to IN_PROGRESS, not ASSIGNED, since it never required Accept", () => {
     // Created directly IN_PROGRESS (the current creation path for every
     // transport): its only transition is straight to REVIEW, with no

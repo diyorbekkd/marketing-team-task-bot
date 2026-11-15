@@ -59,6 +59,9 @@ export interface TaskPageQuery {
   readonly creatorId?: string;
   readonly deadlineFrom?: string;
   readonly deadlineBefore?: string;
+  readonly createdBefore?: string;
+  readonly completedFrom?: string;
+  readonly completedBefore?: string;
   readonly excludeTerminal?: boolean;
   readonly search?: string;
   readonly sort: TaskPageSort;

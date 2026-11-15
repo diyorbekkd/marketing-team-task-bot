@@ -14,7 +14,7 @@ export async function GET(request: Request) {
     const requestedScope = searchParams.get("scope") ?? "my";
     const scope = ScopeSchema.parse(requestedScope);
     const input = Object.fromEntries(
-      ["status", "priority", "assigneeId", "deadlineRange", "search", "sort", "pageSize", "cursor"]
+      ["status", "priority", "assigneeId", "deadlineRange", "reportView", "search", "sort", "pageSize", "cursor"]
         .flatMap((key) => {
           const value = searchParams.get(key);
           return value === null ? [] : [[key, value] as const];
@@ -30,16 +30,14 @@ export async function POST(request: Request) {
   try {
     const actor = await requireRequestActor();
     const result = await getMarketingService().createTaskQueued(actor, await request.json());
-    if (result.notification.status === "QUEUED") {
-      after(async () => {
-        try {
-          await getNotificationRetryService().deliver(25);
-        } catch {
-          // The durable outbox remains available to the scheduled retry worker.
-          console.error(JSON.stringify({ event: "post_response_assignment_delivery_failed", taskId: result.task.id }));
-        }
-      });
-    }
+    after(async () => {
+      try {
+        await getNotificationRetryService().deliver(25);
+      } catch {
+        // The durable outbox remains available to the scheduled retry worker.
+        console.error(JSON.stringify({ event: "post_response_assignment_delivery_failed", taskId: result.task.id }));
+      }
+    });
     return Response.json(result, { status: 201 });
   } catch (error) {
     return errorResponse(error);

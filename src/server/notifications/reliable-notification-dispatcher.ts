@@ -30,6 +30,7 @@ const WorkflowPayloadSchema = z.object({
   kind: z.literal("WORKFLOW"),
   input: z.object({
     event: z.enum([
+      "TASK_CREATED", "REVIEW_SUBMITTED", "TASK_STATUS_UPDATED",
       "DEADLINE_CHANGE_REQUESTED", "DEADLINE_CHANGE_APPROVED", "DEADLINE_CHANGE_REJECTED",
       "REVIEW_REQUESTED", "TASK_ACCEPTED", "TASK_COMPLETED", "REVISION_REQUESTED", "TASK_BLOCKED",
     ]),
@@ -212,8 +213,8 @@ export class ReliableNotificationDispatcher implements NotificationDispatcher, R
 
   async queueWorkflow(input: WorkflowNotificationInput): Promise<void> {
     const recipients = [...new Map(input.recipients.map((recipient) => [recipient.id, recipient])).values()];
-    for (const recipient of recipients) {
-      if (!(await this.preferences(recipient.id)).workflow) continue;
+    const queued = await Promise.allSettled(recipients.map(async (recipient) => {
+      if (!(await this.preferences(recipient.id)).workflow) return;
       const payload = WorkflowPayloadSchema.parse({ kind: "WORKFLOW", input: { ...input, recipients: [recipient] } });
       await this.repository.enqueueNotification({
         dedupeKey: dedupeKey("workflow", {
@@ -228,7 +229,8 @@ export class ReliableNotificationDispatcher implements NotificationDispatcher, R
         taskId: input.task.id,
         payload,
       });
-    }
+    }));
+    if (queued.some((result) => result.status === "rejected")) throw new Error("Workflow notification enqueue failed.");
   }
 
   async notifyReminder(input: ReminderNotificationInput): Promise<ReminderNotificationResult> {

@@ -76,6 +76,21 @@ function workflowMessage(input: WorkflowNotificationInput, appUrl: string): Tele
   const { actor, deadlineRequest, event, task } = input;
 
   switch (event) {
+    case "TASK_CREATED":
+      return {
+        text: ["📋 Vazifa yaratildi", "", `Vazifa: ${task.title}`, `Muddat: ${formatDeadline(task.deadline)}`].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "REVIEW_SUBMITTED":
+      return {
+        text: ["📝 Vazifa tekshiruvga yuborildi", "", `Vazifa: ${task.title}`, "Tasdiqlovchiga xabar yuborilmoqda."].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "TASK_STATUS_UPDATED":
+      return {
+        text: ["🔄 Vazifa holati o‘zgardi", "", `Vazifa: ${task.title}`, `Yangi holat: ${({ ASSIGNED: "Biriktirilgan", IN_PROGRESS: "Jarayonda", BLOCKED: "Bloklangan", REVIEW: "Tekshiruvda", REVISION: "Tuzatishda", DONE: "Bajarilgan", CANCELLED: "Bekor qilingan" } as Record<string, string>)[task.status] ?? task.status}`].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
     case "DEADLINE_CHANGE_REQUESTED": {
       if (!deadlineRequest) throw new Error("Deadline request context is required.");
       return {

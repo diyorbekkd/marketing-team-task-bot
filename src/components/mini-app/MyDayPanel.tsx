@@ -1,79 +1,78 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { groupPlannedTasks, type DayPlanGroup, type DayPlanTask } from "@/domain/planning";
 import type { PersonalPlan } from "./TaskPlanningPanel";
 
-interface DayTask {
-  id: string;
-  title: string;
-  assigneeId: string;
-  status: string;
-  deadline: string;
-}
+const GROUPS: Array<{ key: Exclude<DayPlanGroup, "today">; label: string }> = [
+  { key: "important_urgent", label: "Muhim va shoshilinch" },
+  { key: "important_later", label: "Muhim, shoshilinch emas" },
+  { key: "urgent_other", label: "Shoshilinch, muhim emas" },
+  { key: "later_other", label: "Muhim ham, shoshilinch ham emas" },
+  { key: "unclassified", label: "Muhimligi belgilanmagan" },
+];
 
-function tashkentToday(referenceNow: number) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "Asia/Tashkent", year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(new Date(referenceNow));
-  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-  return `${value("year")}-${value("month")}-${value("day")}`;
-}
-
-export function MyDayPanel({ tasks, userId, refreshKey, onSelectTask }: {
-  tasks: DayTask[];
+export function MyDayPanel({ tasks, userId, refreshKey, view, onOpen, onBack, onSelectTask }: {
+  tasks: DayPlanTask[];
   userId: string;
   refreshKey: number;
+  view: DayPlanGroup | null;
+  onOpen: (view: DayPlanGroup) => void;
+  onBack: () => void;
   onSelectTask: (id: string) => void;
 }) {
   const [plans, setPlans] = useState<PersonalPlan[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [referenceNow, setReferenceNow] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
     const clock = window.setInterval(() => setReferenceNow(Date.now()), 60_000);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
     fetch("/api/plans", { credentials: "same-origin", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("Plans unavailable");
         return response.json() as Promise<{ plans: PersonalPlan[] }>;
       })
-      .then((result) => { setPlans(result.plans); setReferenceNow(Date.now()); setError(false); })
-      .catch(() => { if (!controller.signal.aborted) setError(true); });
+      .then((result) => { setPlans(result.plans); setReferenceNow(Date.now()); setError(false); setLoading(false); })
+      .catch(() => { if (!controller.signal.aborted) { setReferenceNow(Date.now()); setError(true); setLoading(false); } });
     return () => { controller.abort(); window.clearInterval(clock); };
   }, [refreshKey]);
 
-  const planByTask = new Map(plans.map((plan) => [plan.taskId, plan]));
-  const myOpenTasks = tasks.filter((task) => task.assigneeId === userId && !["DONE", "CANCELLED"].includes(task.status));
-  const today = tashkentToday(referenceNow);
-  const selected = myOpenTasks.filter((task) => planByTask.get(task.id)?.plannedOn === today);
-  const groups = [
-    { important: true, urgent: true, label: "Muhim va shoshilinch" },
-    { important: true, urgent: false, label: "Muhim, shoshilinch emas" },
-    { important: false, urgent: true, label: "Shoshilinch, muhim emas" },
-    { important: false, urgent: false, label: "Muhim ham, shoshilinch ham emas" },
-  ];
-  const classified = myOpenTasks.flatMap((task) => {
-    const plan = planByTask.get(task.id);
-    if (plan?.isImportant == null) return [];
-    const urgent = plan.urgentOverride ?? new Date(task.deadline).getTime() <= referenceNow + 48 * 60 * 60 * 1000;
-    return [{ task, important: plan.isImportant, urgent }];
-  });
+  const grouped = groupPlannedTasks(tasks, plans, userId, new Date(referenceNow));
+  if (view) {
+    const title = view === "today" ? "Bugunga rejalangan" : GROUPS.find((group) => group.key === view)?.label ?? "Vazifalar";
+    return <section className="ma-planning-page" aria-label={title}>
+      <button className="ma-planning-back" onClick={onBack}>← Mening kunimga qaytish</button>
+      <h1>{title}</h1>
+      <p className="ma-muted">{loading ? "Reja yuklanmoqda…" : `Bugunga rejalangan vazifalar · ${grouped[view].length} ta`}</p>
+      {error && <p className="ma-error" role="alert">Reja yuklanmadi. Sahifani qayta ochib ko‘ring.</p>}
+      {!loading && <div className="ma-planning-task-list">
+        {grouped[view].map((task) => <button key={task.id} onClick={() => onSelectTask(task.id)}>
+          <strong>{task.title}</strong><span>Vazifani ochish →</span>
+        </button>)}
+        {grouped[view].length === 0 && <p className="ma-muted">Bu bo‘limda vazifa yo‘q.</p>}
+      </div>}
+    </section>;
+  }
 
   return <section className="ma-section ma-my-day" aria-labelledby="my-day-title">
     <h3 id="my-day-title">Mening kunim</h3>
-    <p className="ma-muted">Taskni ochib “Reja va progress” bo‘limida bugunga qo‘shing yoki muhimligini belgilang.</p>
+    <p className="ma-muted">Rejalangan kun — ishlashni tanlagan kuningiz. Deadline — topshirishning oxirgi muddati.</p>
+    {loading && <p className="ma-muted">Reja yuklanmoqda…</p>}
     {error && <p className="ma-muted">Shaxsiy reja yuklanmadi. Sahifani yangilab ko‘ring.</p>}
-    {selected.length > 0 ? <div className="ma-my-day-list">
-      {selected.map((task) => <button key={task.id} onClick={() => onSelectTask(task.id)}>{task.title}</button>)}
-    </div> : <p className="ma-muted">Bugunga hali task tanlanmagan.</p>}
-    <div className="ma-matrix" aria-label="Muhim va shoshilinch matritsasi">
-      {groups.map((group) => {
-        const items = classified.filter((item) => item.important === group.important && item.urgent === group.urgent);
-        return <div className="ma-matrix-cell" key={group.label}>
-          <strong>{group.label}</strong><span>{items.length} ta</span>
-          {items.slice(0, 2).map(({ task }) => <button key={task.id} onClick={() => onSelectTask(task.id)}>{task.title}</button>)}
-        </div>;
-      })}
+    {!loading && <><button className="ma-day-summary-card" onClick={() => onOpen("today")}>
+      <strong>Bugunga rejalangan</strong><span>{grouped.today.length} ta vazifa</span>
+      <small>{grouped.today.length ? grouped.today.slice(0, 2).map((task) => task.title).join(" · ") : "Taskni ochib bugunga qo‘shing"}</small>
+    </button>
+    <p className="ma-muted ma-matrix-caption">Quyidagi kartalar faqat bugunga rejalangan vazifalarni guruhlaydi. Belgilanmaganlar ham alohida ko‘rsatiladi.</p>
+    <div className="ma-matrix" aria-label="Bugungi vazifalar matritsasi">
+      {GROUPS.map((group) => <button className="ma-matrix-cell" key={group.key} onClick={() => onOpen(group.key)}>
+        <strong>{group.label}</strong><span>{grouped[group.key].length} ta</span>
+      </button>)}
     </div>
+    </>}
   </section>;
 }

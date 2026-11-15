@@ -25,6 +25,9 @@ export interface BulkAssignmentNotificationInput {
 }
 
 export type WorkflowNotificationEvent =
+  | "TASK_CREATED"
+  | "REVIEW_SUBMITTED"
+  | "TASK_STATUS_UPDATED"
   | "DEADLINE_CHANGE_REQUESTED"
   | "DEADLINE_CHANGE_APPROVED"
   | "DEADLINE_CHANGE_REJECTED"

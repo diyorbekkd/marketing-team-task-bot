@@ -89,6 +89,7 @@ const StartWorkflowInputSchema = z.object({
 export type TaskScope = "my" | "created" | "team" | "today" | "overdue" | "review";
 
 const TaskPageInputSchema = z.object({
+  reportView: z.enum(["open", "completed", "carry_over", "overdue"]).optional(),
   status: z.enum(["ASSIGNED", "IN_PROGRESS", "BLOCKED", "REVIEW", "REVISION", "DONE", "CANCELLED"]).optional(),
   priority: z.enum(["high", "normal", "low"]).optional(),
   assigneeId: z.string().uuid().optional(),
@@ -385,14 +386,21 @@ export class MarketingService {
       throw new ApplicationError("INVALID_INPUT", "Mas’ul faol jamoa a’zosi bo‘lishi kerak.");
     }
     const task = await this.persistTaskWithAssignee(actor, assignee, parsed);
-    try {
-      const status = await this.notificationQueue.queueAssignment({ task, creator: actor, assignee });
-      return { task, assignee, notification: { status } };
-    } catch {
+    const [assignment, confirmation] = await Promise.allSettled([
+      this.notificationQueue.queueAssignment({ task, creator: actor, assignee }),
+      actor.id !== assignee.id
+        ? this.notificationQueue.queueWorkflow({ event: "TASK_CREATED", task, actor, recipients: [actor] })
+        : Promise.resolve(),
+    ]);
+    if (confirmation.status === "rejected") {
+      console.error(JSON.stringify({ event: "task_creator_confirmation_enqueue_failed", taskId: task.id }));
+    }
+    if (assignment.status === "rejected") {
       // The task has committed. Never make the client retry the creation and duplicate it.
       console.error(JSON.stringify({ event: "task_assignment_enqueue_failed", taskId: task.id }));
       return { task, assignee, notification: { status: "FAILED", reason: "DELIVERY_FAILED" } };
     }
+    return { task, assignee, notification: { status: assignment.value } };
   }
 
   /**
@@ -619,6 +627,10 @@ export class MarketingService {
     const head = isHead(actorFromUser(actor));
     let deadlineFrom: string | undefined;
     let deadlineBefore: string | undefined;
+    let createdBefore: string | undefined;
+    let completedFrom: string | undefined;
+    let completedBefore: string | undefined;
+    let reportStatus: Task["status"] | undefined;
     let excludeTerminal = false;
     if (scope === "overdue") {
       deadlineBefore = now.toISOString();
@@ -645,14 +657,35 @@ export class MarketingService {
       deadlineBefore = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
     }
 
+    if (parsed.reportView) {
+      const periodStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      if (parsed.reportView === "open") excludeTerminal = true;
+      if (parsed.reportView === "completed") {
+        reportStatus = "DONE";
+        completedFrom = periodStart;
+        completedBefore = now.toISOString();
+      }
+      if (parsed.reportView === "carry_over") {
+        createdBefore = periodStart;
+        excludeTerminal = true;
+      }
+      if (parsed.reportView === "overdue") {
+        deadlineBefore = now.toISOString();
+        excludeTerminal = true;
+      }
+    }
+
     const page = await this.repository.listTaskPage({
       visibleToUserId: scope === "my" || (!head && scope !== "created") ? actor.id : undefined,
-      status: scope === "review" ? "REVIEW" : parsed.status,
+      status: reportStatus ?? (scope === "review" ? "REVIEW" : parsed.status),
       priority: parsed.priority,
-      assigneeId: parsed.assigneeId,
+      assigneeId: parsed.reportView && scope === "my" ? actor.id : parsed.assigneeId,
       creatorId: scope === "created" ? actor.id : undefined,
       deadlineFrom,
       deadlineBefore,
+      createdBefore,
+      completedFrom,
+      completedBefore,
       excludeTerminal,
       search: parsed.search,
       sort: parsed.sort,
@@ -825,14 +858,11 @@ export class MarketingService {
     });
 
     if (action.action === "ACCEPT") {
-      // The creator gets notified whenever their task is accepted, regardless of
-      // whether the acceptance came from the Telegram bot or the Mini App — both
-      // transports call this same method. Skip the notification when the creator
-      // accepted their own self-assigned task; there is no one else to inform.
-      if (task.creatorId !== actor.id) {
+      // Browser actions also confirm the result to the actor's bot chat.
+      if (task.creatorId !== actor.id || options.deferNotifications) {
         await this.dispatchWorkflowNotification(
           { event: "TASK_ACCEPTED", task: transitionedTask, actor },
-          [task.creatorId],
+          [task.creatorId, ...(options.deferNotifications ? [actor.id] : [])],
           false,
           options.deferNotifications,
         );
@@ -844,10 +874,16 @@ export class MarketingService {
         true,
         options.deferNotifications,
       );
+      if (options.deferNotifications && actor.id !== task.creatorId && actor.role !== "HEAD_OF_MARKETING") {
+        await this.dispatchWorkflowNotification(
+          { event: "REVIEW_SUBMITTED", task: transitionedTask, actor },
+          [actor.id], false, true,
+        );
+      }
     } else if (action.action === "APPROVE") {
       await this.dispatchWorkflowNotification(
         { event: "TASK_COMPLETED", task: transitionedTask, actor },
-        [task.assigneeId],
+        [task.assigneeId, ...(options.deferNotifications ? [task.creatorId, actor.id] : [])],
         false,
         options.deferNotifications,
       );
@@ -875,16 +911,21 @@ export class MarketingService {
     } else if (action.action === "REQUEST_REVISION") {
       await this.dispatchWorkflowNotification(
         { event: "REVISION_REQUESTED", task: transitionedTask, actor, comment: action.reason },
-        [task.assigneeId],
+        [task.assigneeId, ...(options.deferNotifications ? [actor.id] : [])],
         false,
         options.deferNotifications,
       );
     } else if (action.action === "BLOCK") {
       await this.dispatchWorkflowNotification(
         { event: "TASK_BLOCKED", task: transitionedTask, actor, comment: action.reason },
-        [task.creatorId],
+        [task.creatorId, ...(options.deferNotifications ? [actor.id] : [])],
         true,
         options.deferNotifications,
+      );
+    } else if (options.deferNotifications) {
+      await this.dispatchWorkflowNotification(
+        { event: "TASK_STATUS_UPDATED", task: transitionedTask, actor },
+        [task.creatorId, task.assigneeId, actor.id], false, true,
       );
     }
 
@@ -900,6 +941,13 @@ export class MarketingService {
     }
     await this.repository.togglePostingChecklistItem({ itemId, actorId: actor.id });
     return this.repository.getPostingChecklist(checklist.taskId);
+  }
+
+  async togglePostingChecklistItemFast(actor: User, itemId: string) {
+    if (!actor.isActive) throw new ApplicationError("UNAUTHENTICATED", "Aktiv jamoa a’zosi bo‘lishingiz kerak.");
+    // The atomic RPC verifies the active assignee, task status, and item ID.
+    // Returning its updated row avoids six extra database reads for one tap.
+    return this.repository.togglePostingChecklistItem({ itemId, actorId: actor.id });
   }
 
   listWorkflowTemplates(actor: User) {

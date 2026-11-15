@@ -153,6 +153,18 @@ describe("Telegram notification dispatcher", () => {
       expectedText: string;
     }> = [
       {
+        input: { event: "TASK_CREATED", task, actor: creator, recipients: [creator] },
+        expectedText: "📋 Vazifa yaratildi",
+      },
+      {
+        input: { event: "REVIEW_SUBMITTED", task, actor: assignee, recipients: [assignee] },
+        expectedText: "Tasdiqlovchiga xabar yuborilmoqda.",
+      },
+      {
+        input: { event: "TASK_STATUS_UPDATED", task: { ...task, status: "CANCELLED" }, actor: creator, recipients: [creator] },
+        expectedText: "Yangi holat: Bekor qilingan",
+      },
+      {
         input: {
           event: "DEADLINE_CHANGE_APPROVED",
           task,

@@ -5,6 +5,7 @@ import { t } from "@/i18n";
 import { CalendarView } from "./CalendarView";
 import { MyDayPanel } from "./MyDayPanel";
 import { TaskPlanningPanel, type Checkpoint, type PersonalPlan } from "./TaskPlanningPanel";
+import type { DayPlanGroup } from "@/domain/planning";
 import "./mini-app.css";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -26,6 +27,7 @@ type TaskStatus =
   | "CANCELLED";
 
 type Priority = "low" | "normal" | "high";
+type ThemePreference = "light" | "dark" | "system";
 
 interface User {
   id: string;
@@ -161,6 +163,7 @@ interface TaskQueryOptions {
   assigneeId: string;
   deadlineRange: "" | "today" | "next_7_days" | "overdue";
   sort: "deadline_asc" | "deadline_desc" | "created_desc";
+  reportView?: "open" | "completed" | "carry_over" | "overdue";
 }
 
 interface NotificationPreferences {
@@ -489,6 +492,7 @@ export default function MiniApp() {
   const [roleEditUser, setRoleEditUser] = useState<User | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [themePreference, setThemePreference] = useState<ThemePreference>("light");
   const [taskNotice, setTaskNotice] = useState<{ kind: "success" | "warning"; text: string } | null>(null);
   const [planningRefreshKey, setPlanningRefreshKey] = useState(0);
   // Tracks whether the active team list has ever loaded successfully, so the
@@ -554,19 +558,71 @@ export default function MiniApp() {
     })();
   }, []);
 
-  // Follow Telegram's own theme (independent of the device OS theme, and
-  // not something prefers-color-scheme alone can see) rather than forcing
-  // a fixed light palette inside a dark Telegram client. Runs regardless of
-  // auth state so the loading/no-telegram screens are correct too.
+  // A quiet light palette is the default. The member can choose dark or
+  // follow Telegram/device in Profile; the choice stays on this device.
+  useEffect(() => {
+    const saved = window.localStorage.getItem("marketing-theme");
+    const choice: ThemePreference = saved === "dark" || saved === "system" ? saved : "light";
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setThemePreference(choice);
+  }, []);
+
   useEffect(() => {
     const webApp = window.Telegram?.WebApp;
-    if (!webApp) return;
+    const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
     const applyTheme = () => {
-      document.documentElement.dataset.theme = webApp.colorScheme === "dark" ? "dark" : "light";
+      const dark = webApp ? webApp.colorScheme === "dark" : systemDark.matches;
+      document.documentElement.dataset.theme = themePreference === "system"
+        ? (dark ? "dark" : "light") : themePreference;
     };
     applyTheme();
-    webApp.onEvent("themeChanged", applyTheme);
-    return () => webApp.offEvent("themeChanged", applyTheme);
+    webApp?.onEvent("themeChanged", applyTheme);
+    systemDark.addEventListener("change", applyTheme);
+    return () => {
+      webApp?.offEvent("themeChanged", applyTheme);
+      systemDark.removeEventListener("change", applyTheme);
+    };
+  }, [themePreference]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    let frame = 0;
+    const update = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const root = document.documentElement;
+        const keyboardCovered = window.innerHeight - viewport.height - viewport.offsetTop > 120;
+        if (keyboardCovered) {
+          root.style.setProperty("--ma-keyboard-height", `${viewport.height}px`);
+          root.style.setProperty("--ma-keyboard-top", `${viewport.offsetTop}px`);
+        } else {
+          root.style.removeProperty("--ma-keyboard-height");
+          root.style.removeProperty("--ma-keyboard-top");
+        }
+        const active = document.activeElement;
+        if (!(active instanceof HTMLElement)) return;
+        const panel = active.closest<HTMLElement>(".ma-panel");
+        if (!panel) return;
+        const field = active.getBoundingClientRect();
+        const visible = panel.getBoundingClientRect();
+        if (field.bottom > visible.bottom - 20) panel.scrollTop += field.bottom - visible.bottom + 28;
+        else if (field.top < visible.top + 68) panel.scrollTop -= visible.top + 76 - field.top;
+      });
+    };
+    viewport.addEventListener("resize", update);
+    viewport.addEventListener("scroll", update);
+    document.addEventListener("focusin", update);
+    document.addEventListener("input", update);
+    return () => {
+      viewport.removeEventListener("resize", update);
+      viewport.removeEventListener("scroll", update);
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("input", update);
+      window.cancelAnimationFrame(frame);
+      document.documentElement.style.removeProperty("--ma-keyboard-height");
+      document.documentElement.style.removeProperty("--ma-keyboard-top");
+    };
   }, []);
 
   // Load users (used for later targeted refreshes, e.g. after activating a
@@ -608,6 +664,7 @@ export default function MiniApp() {
       const assigneeId = memberFilter || taskQuery.assigneeId;
       if (assigneeId) params.set("assigneeId", assigneeId);
       if (taskQuery.deadlineRange) params.set("deadlineRange", taskQuery.deadlineRange);
+      if (taskQuery.reportView) params.set("reportView", taskQuery.reportView);
       const { data, error } = await apiFetch<{ tasks: Task[]; pagination: TaskPagination }>(
         `/api/tasks?${params.toString()}`,
         { signal: controller.signal }
@@ -708,14 +765,23 @@ export default function MiniApp() {
 
   const goToFilter = useCallback((f: Filter) => {
     setMemberFilter(null);
+    setTaskQuery((current) => ({ ...current, reportView: undefined }));
     setFilter(f);
     setNav("tasks");
   }, []);
 
   const changeFilter = useCallback((f: Filter) => {
     setMemberFilter(null);
+    setTaskQuery((current) => ({ ...current, reportView: undefined }));
     setFilter(f);
   }, []);
+
+  const openReportTasks = useCallback((reportView: NonNullable<TaskQueryOptions["reportView"]>) => {
+    setMemberFilter(null);
+    setFilter(isHead ? "team" : "my");
+    setTaskQuery({ search: "", status: "", priority: "", assigneeId: "", deadlineRange: "", sort: "deadline_asc", reportView });
+    setNav("tasks");
+  }, [isHead]);
 
   const selectMember = useCallback((userId: string) => {
     setMemberFilter(userId);
@@ -829,7 +895,7 @@ export default function MiniApp() {
             onRetry={() => loadTasks(filter)}
             onSelect={setSelectedTaskId}
             query={taskQuery}
-            onQueryChange={setTaskQuery}
+            onQueryChange={(query) => setTaskQuery({ ...query, reportView: undefined })}
             hasMore={Boolean(tasksNextCursor)}
             loadingMore={loadingMoreTasks}
             onLoadMore={() => { if (tasksNextCursor) void loadTasks(filter, tasksNextCursor); }}
@@ -867,7 +933,7 @@ export default function MiniApp() {
           />
         )}
 
-        {nav === "reports" && <ReportsView isHead={isHead} />}
+        {nav === "reports" && <ReportsView isHead={isHead} onOpenTasks={openReportTasks} />}
       </main>
 
       <BottomNav nav={nav} onChange={setNav} showTeam={isHead} />
@@ -929,6 +995,11 @@ export default function MiniApp() {
       {showProfile && currentUser && (
         <ProfilePanel
           user={currentUser}
+          themePreference={themePreference}
+          onThemePreference={(choice) => {
+            window.localStorage.setItem("marketing-theme", choice);
+            setThemePreference(choice);
+          }}
           onClose={() => setShowProfile(false)}
         />
       )}
@@ -1041,6 +1112,11 @@ function HomeView({
   onGoToFilter: (f: Filter) => void;
   onSelectMember: (userId: string) => void;
 }) {
+  const [planningView, setPlanningView] = useState<DayPlanGroup | null>(null);
+  if (planningView) {
+    return <MyDayPanel tasks={tasks} userId={currentUserId} refreshKey={planningRefreshKey}
+      view={planningView} onOpen={setPlanningView} onBack={() => setPlanningView(null)} onSelectTask={onSelectTask} />;
+  }
   if (loading && tasks.length === 0) {
     return <div className="ma-center-inline"><div className="ma-spinner" aria-label="Yuklanmoqda" /></div>;
   }
@@ -1079,7 +1155,8 @@ function HomeView({
         })}
       </div>
 
-      <MyDayPanel tasks={tasks} userId={currentUserId} refreshKey={planningRefreshKey} onSelectTask={onSelectTask} />
+      <MyDayPanel tasks={tasks} userId={currentUserId} refreshKey={planningRefreshKey}
+        view={null} onOpen={setPlanningView} onBack={() => setPlanningView(null)} onSelectTask={onSelectTask} />
 
       {isHead && (
         <section className="ma-section">
@@ -1337,6 +1414,10 @@ function TasksView({
 
   return (
     <div className="ma-tasks-view">
+      {query.reportView && <div className="ma-report-filter-note">
+        Hisobotdan: {({ open: "Ochiq vazifalar", completed: "So‘nggi 30 kunda bajarilgan", carry_over: "Oldingi davrdan qolgan ochiq", overdue: "Kechikkan ochiq vazifalar" } as const)[query.reportView]}
+        <button onClick={() => onQueryChange({ ...query, reportView: undefined })}>Filtrni tozalash</button>
+      </div>}
       <nav className="ma-filters" aria-label="Vazifa filtrlari">
         {primaryFilters.map((f) => (
           <button
@@ -1611,7 +1692,10 @@ function metricPercent(value: number | null): string {
   return value == null ? "—" : `${Math.round(value * 100)}%`;
 }
 
-function ReportsView({ isHead }: { isHead: boolean }) {
+function ReportsView({ isHead, onOpenTasks }: {
+  isHead: boolean;
+  onOpenTasks: (view: NonNullable<TaskQueryOptions["reportView"]>) => void;
+}) {
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1632,7 +1716,7 @@ function ReportsView({ isHead }: { isHead: boolean }) {
   if (error) return <div className="ma-error" role="alert">{error}<button onClick={load}>Qayta urinish</button></div>;
   if (!data) return null;
   const metric = data.metrics;
-  const maxThroughput = Math.max(metric.created, metric.completed, 1);
+  const maxThroughput = Math.max(metric.workload.open, metric.completed, 1);
 
   return (
     <div className="ma-reports">
@@ -1645,16 +1729,16 @@ function ReportsView({ isHead }: { isHead: boolean }) {
       </div>
 
       <section className="ma-report-card">
-        <h3>Reja va natija</h3>
-        <div className="ma-comparison-row"><span>Yaratilgan</span><strong>{metric.created}</strong></div>
-        <div className="ma-bar"><span style={{ width: `${metric.created / maxThroughput * 100}%` }} /></div>
-        <div className="ma-comparison-row"><span>Bajarilgan</span><strong>{metric.completed}</strong></div>
+        <div className="ma-section-head"><h3>Reja va natija</h3><button className="ma-link-btn" onClick={() => onOpenTasks("open")}>Vazifalarni ko‘rish →</button></div>
+        <button className="ma-comparison-row ma-metric-link" onClick={() => onOpenTasks("open")}><span>Hozir ochiq</span><strong>{metric.workload.open}</strong></button>
+        <div className="ma-bar"><span style={{ width: `${metric.workload.open / maxThroughput * 100}%` }} /></div>
+        <button className="ma-comparison-row ma-metric-link" onClick={() => onOpenTasks("completed")}><span>30 kunda bajarilgan</span><strong>{metric.completed}</strong></button>
         <div className="ma-bar success"><span style={{ width: `${metric.completed / maxThroughput * 100}%` }} /></div>
       </section>
 
       <div className="ma-report-grid">
-        <div className="ma-report-stat"><span>O‘tgan davrdan qolgan</span><strong>{metric.carryOver}</strong></div>
-        <div className="ma-report-stat danger"><span>Hozir kechikkan</span><strong>{metric.currentOverdue}</strong></div>
+        <button className="ma-report-stat ma-report-stat-link" onClick={() => onOpenTasks("carry_over")}><span>Oldingi davrdan qolgan ochiq</span><strong>{metric.carryOver}</strong></button>
+        <button className="ma-report-stat ma-report-stat-link danger" onClick={() => onOpenTasks("overdue")}><span>Hozir kechikkan</span><strong>{metric.currentOverdue}</strong></button>
         <div className="ma-report-stat"><span>Vaqtida</span><strong>{metricPercent(metric.onTimeCompletionRate)}</strong></div>
         <div className="ma-report-stat"><span>Tuzatish ulushi</span><strong>{metricPercent(metric.revisionRate)}</strong></div>
         <div className="ma-report-stat"><span>Muddat so‘rovlari</span><strong>{metric.deadlineChangeRequests}</strong></div>
@@ -1853,15 +1937,32 @@ function TaskDetailPanel({
   const toggleChecklist = async (itemId: string) => {
     setChecklistPendingId(itemId);
     setActionError(null);
-    const { data, error: e } = await apiFetch<{ postingChecklist: PostingChecklist }>(
+    const before = detail?.postingChecklist;
+    setDetail((previous) => previous?.postingChecklist ? {
+      ...previous,
+      postingChecklist: {
+        ...previous.postingChecklist,
+        items: previous.postingChecklist.items.map((item) => item.id === itemId
+          ? { ...item, isCompleted: !item.isCompleted } : item),
+      },
+    } : previous);
+    const { data, error: e } = await apiFetch<{ item: PostingChecklistItem }>(
       `/api/checklist-items/${itemId}/toggle`, { method: "POST" }
     );
     setChecklistPendingId(null);
-    if (e) { setActionError(friendlyError(e)); return; }
-    if (data?.postingChecklist) {
-      haptic("selection");
-      setDetail((previous) => previous ? { ...previous, postingChecklist: data.postingChecklist } : previous);
+    if (e || !data?.item) {
+      setDetail((previous) => previous ? { ...previous, postingChecklist: before ?? previous.postingChecklist } : previous);
+      setActionError(friendlyError(e) ?? "Ro‘yxat yangilanmadi.");
+      return;
     }
+    haptic("selection");
+    setDetail((previous) => previous?.postingChecklist ? {
+      ...previous,
+      postingChecklist: {
+        ...previous.postingChecklist,
+        items: previous.postingChecklist.items.map((item) => item.id === itemId ? data.item : item),
+      },
+    } : previous);
   };
 
   const openEditForm = () => {
@@ -2676,7 +2777,6 @@ function QuickAddPanel({
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Vazifa nomi"
-              autoFocus
             />
           </div>
           <div className="ma-form-group">
@@ -2823,9 +2923,13 @@ function PendingUsersPanel({
 
 function ProfilePanel({
   user,
+  themePreference,
+  onThemePreference,
   onClose,
 }: {
   user: User;
+  themePreference: ThemePreference;
+  onThemePreference: (choice: ThemePreference) => void;
   onClose: () => void;
 }) {
   const [preferences, setPreferences] = useState<NotificationPreferences | null>(null);
@@ -2888,6 +2992,18 @@ function ProfilePanel({
             {user.telegramUsername && <><dt>Telegram</dt><dd>@{user.telegramUsername}</dd></>}
           </dl>
           <p className="ma-muted">Tashkiliy rolni faqat Marketing rahbari o&lsquo;zgartirishi mumkin.</p>
+          <section className="ma-section ma-theme-setting" aria-label="Ko‘rinish sozlamasi">
+            <h3>Ko‘rinish</h3>
+            <p className="ma-muted">O‘qishga qulay rangni tanlang.</p>
+            <div role="group" aria-label="Rang rejimi">
+              {(["light", "dark", "system"] as ThemePreference[]).map((choice) => <button key={choice}
+                className={themePreference === choice ? "active" : ""}
+                aria-pressed={themePreference === choice}
+                onClick={() => onThemePreference(choice)}>
+                {choice === "light" ? "Yorug‘" : choice === "dark" ? "Tungi" : "Qurilmaga mos"}
+              </button>)}
+            </div>
+          </section>
           <section className="ma-section ma-preferences" aria-labelledby="notification-settings-title">
             <div><h3 id="notification-settings-title">Bildirishnomalar</h3><span className="ma-muted">Qaysi Telegram xabarlarini olishni tanlang.</span></div>
             {!preferences && !preferencesError && <div className="ma-spinner" aria-label="Sozlamalar yuklanmoqda" />}

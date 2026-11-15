@@ -536,6 +536,9 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     if (input.creatorId) query = query.eq("creator_id", input.creatorId);
     if (input.deadlineFrom) query = query.gte("deadline", input.deadlineFrom);
     if (input.deadlineBefore) query = query.lt("deadline", input.deadlineBefore);
+    if (input.createdBefore) query = query.lt("created_at", input.createdBefore);
+    if (input.completedFrom) query = query.gte("completed_at", input.completedFrom);
+    if (input.completedBefore) query = query.lt("completed_at", input.completedBefore);
     if (input.excludeTerminal) query = query.not("status", "in", "(DONE,CANCELLED)");
     if (input.search) query = query.ilike("title", `%${input.search}%`);
     if (input.cursor) {

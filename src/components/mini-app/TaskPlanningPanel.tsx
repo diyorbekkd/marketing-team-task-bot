@@ -35,9 +35,10 @@ async function write<T>(url: string, method: string, body?: unknown): Promise<T>
   return result as T;
 }
 
-function tashkentDate(iso: string) {
-  return new Intl.DateTimeFormat("en-CA", {
+function tashkentDateTime(iso: string) {
+  return new Intl.DateTimeFormat("uz-UZ", {
     timeZone: "Asia/Tashkent", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
   }).format(new Date(iso));
 }
 
@@ -56,7 +57,7 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
   const [plannedOn, setPlannedOn] = useState(plan?.plannedOn ?? "");
   const [estimate, setEstimate] = useState(plan?.estimatedMinutes?.toString() ?? "");
   const [title, setTitle] = useState("");
-  const [dueDate, setDueDate] = useState("");
+  const [dueDateTime, setDueDateTime] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const completed = checkpoints.filter((item) => item.completedAt).length;
@@ -83,10 +84,10 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
     try {
       const result = await write<{ checkpoint: Checkpoint }>(`/api/tasks/${taskId}/checkpoints`, "POST", {
         title: title.trim(),
-        dueAt: dueDate ? new Date(`${dueDate}T12:00:00Z`).toISOString() : null,
+        dueAt: dueDateTime ? `${dueDateTime}:00+05:00` : null,
       });
       onCheckpoints([...checkpoints, result.checkpoint]);
-      setTitle(""); setDueDate("");
+      setTitle(""); setDueDateTime("");
       onRefreshDetail();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Checkpoint qo‘shilmadi.");
@@ -130,7 +131,9 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
           <option value="true">Shoshilinch</option><option value="false">Shoshilinch emas</option>
         </select>
       </label>
-      <label>Rejalangan kun<input type="date" value={plannedOn} onChange={(event) => setPlannedOn(event.target.value)} /></label>
+      <label>Rejalangan kun<input type="date" value={plannedOn} onChange={(event) => setPlannedOn(event.target.value)} />
+        <small className="ma-muted">Ishlashni tanlagan kuningiz; task deadline’i o‘zgarmaydi.</small>
+      </label>
       <label>Taxminiy vaqt (daqiqa)<input type="number" min="5" max="1440" step="5" value={estimate} onChange={(event) => setEstimate(event.target.value)} /></label>
     </div>
     <button className="ma-btn secondary" disabled={pending} onClick={savePlan}>Rejani saqlash</button>
@@ -144,14 +147,18 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
           {item.completedAt ? "☑" : "☐"}
         </button>
         <span className={item.completedAt ? "completed" : ""}>{item.title}
-          {item.dueAt && <small className="ma-muted"> · {tashkentDate(item.dueAt)}</small>}
+          {item.dueAt && <small className="ma-muted"> · {tashkentDateTime(item.dueAt)}</small>}
         </span>
         <button type="button" disabled={pending} onClick={() => removeCheckpoint(item.id)} aria-label={`${item.title} checkpointini o‘chirish`}>×</button>
       </div>)}
       {!terminal && checkpoints.length < 50 && <div className="ma-planning-add">
-        <input aria-label="Yangi checkpoint" placeholder="Natija yoki oraliq maqsad" maxLength={200}
-          value={title} onChange={(event) => setTitle(event.target.value)} />
-        <input aria-label="Checkpoint sanasi (ixtiyoriy)" type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} />
+        <textarea aria-label="Yangi checkpoint" placeholder="Natija yoki oraliq maqsad" maxLength={200} rows={2}
+          value={title} onChange={(event) => setTitle(event.target.value)}
+          onInput={(event) => {
+            event.currentTarget.style.height = "auto";
+            event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 180)}px`;
+          }} />
+        <input aria-label="Checkpoint sana va vaqti (ixtiyoriy)" type="datetime-local" value={dueDateTime} onChange={(event) => setDueDateTime(event.target.value)} />
         <button className="ma-btn secondary" disabled={pending || !title.trim()} onClick={addCheckpoint}>Qo‘shish</button>
       </div>}
     </div>

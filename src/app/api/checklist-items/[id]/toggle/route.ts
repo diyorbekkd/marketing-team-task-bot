@@ -6,8 +6,8 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   try {
     const actor = await requireRequestActor();
     const { id } = await context.params;
-    const postingChecklist = await getMarketingService().togglePostingChecklistItem(actor, id);
-    return Response.json({ postingChecklist });
+    const item = await getMarketingService().togglePostingChecklistItemFast(actor, id);
+    return Response.json({ item });
   } catch (error) {
     return errorResponse(error);
   }

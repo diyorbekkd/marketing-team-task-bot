@@ -246,9 +246,19 @@ describe("MarketingService MVP permissions", () => {
 
     expect(result.status).toBe("DONE");
     expect(queue.queueWorkflow).toHaveBeenCalledWith(expect.objectContaining({
-      event: "TASK_COMPLETED", recipients: [assignee],
+      event: "TASK_COMPLETED", recipients: [assignee, creator],
     }));
     expect(notifications.notifyWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("confirms a browser review submission to the employee's own bot chat", async () => {
+    const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })) });
+    const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+    await new MarketingService(repo, notifier(), queue)
+      .performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }, { deferNotifications: true });
+    expect(queue.queueWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "REVIEW_SUBMITTED", recipients: [assignee],
+    }));
   });
 
   it("keeps personal planning scoped to the signed-in user", async () => {
@@ -344,6 +354,24 @@ describe("MarketingService MVP permissions", () => {
       creatorId: assignee.id,
       deadlineFrom: "2026-09-06T10:00:00.000Z",
       deadlineBefore: "2026-09-13T10:00:00.000Z",
+    }));
+  });
+
+  it("scopes report drill-downs to the employee and matches the report period", async () => {
+    const repo = repository({ listTaskPage: vi.fn(async () => ({ tasks: [], hasMore: false })) });
+    const service = new MarketingService(repo, notifier());
+    const now = new Date("2026-11-15T09:00:00.000Z");
+
+    await service.listTaskPage(assignee, "my", { reportView: "carry_over" }, now);
+    expect(repo.listTaskPage).toHaveBeenLastCalledWith(expect.objectContaining({
+      visibleToUserId: assignee.id, assigneeId: assignee.id,
+      createdBefore: "2026-10-16T09:00:00.000Z", excludeTerminal: true,
+    }));
+
+    await service.listTaskPage(assignee, "my", { reportView: "completed" }, now);
+    expect(repo.listTaskPage).toHaveBeenLastCalledWith(expect.objectContaining({
+      assigneeId: assignee.id, status: "DONE",
+      completedFrom: "2026-10-16T09:00:00.000Z", completedBefore: now.toISOString(),
     }));
   });
 
@@ -545,6 +573,7 @@ describe("MarketingService MVP permissions", () => {
 
     expect(result).toEqual({ task: created, assignee, notification: { status: "QUEUED" } });
     expect(queue.queueAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
+    expect(queue.queueWorkflow).toHaveBeenCalledWith({ event: "TASK_CREATED", task: created, actor: creator, recipients: [creator] });
     expect(notifications.notifyAssignment).not.toHaveBeenCalled();
   });
 
@@ -880,6 +909,16 @@ describe("MarketingService MVP permissions", () => {
       await expect(service.togglePostingChecklistItem(creator, checklist.items[0].id)).rejects.toMatchObject({ code: "FORBIDDEN" });
       await service.togglePostingChecklistItem(assignee, checklist.items[0].id);
       expect(repo.togglePostingChecklistItem).toHaveBeenCalledWith({ itemId: checklist.items[0].id, actorId: assignee.id });
+    });
+
+    it("uses the database permission check directly for a fast browser checklist toggle", async () => {
+      const updated = { ...checklist.items[0], isCompleted: true };
+      const repo = repository({ togglePostingChecklistItem: vi.fn(async () => updated) });
+      const result = await new MarketingService(repo, notifier()).togglePostingChecklistItemFast(assignee, updated.id);
+      expect(result).toEqual(updated);
+      expect(repo.togglePostingChecklistItem).toHaveBeenCalledWith({ itemId: updated.id, actorId: assignee.id });
+      expect(repo.getPostingChecklistByItemId).not.toHaveBeenCalled();
+      expect(repo.getPostingChecklist).not.toHaveBeenCalled();
     });
 
     it("allows sending to review once every checklist item is complete", async () => {

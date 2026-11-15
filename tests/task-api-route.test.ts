@@ -46,7 +46,7 @@ describe("Mini App task creation route", () => {
     }));
 
     expect(createTaskQueued).toHaveBeenCalledWith({ id: "creator" }, input);
-    expect(after).not.toHaveBeenCalled();
+    expect(after).toHaveBeenCalledOnce();
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual(result);
   });
