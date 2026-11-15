@@ -84,7 +84,7 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
     try {
       const result = await write<{ checkpoint: Checkpoint }>(`/api/tasks/${taskId}/checkpoints`, "POST", {
         title: title.trim(),
-        dueAt: dueDateTime ? `${dueDateTime}:00+05:00` : null,
+        dueAt: dueDateTime ? `${dueDateTime}${dueDateTime.length === 16 ? ":00" : ""}+05:00` : null,
       });
       onCheckpoints([...checkpoints, result.checkpoint]);
       setTitle(""); setDueDateTime("");
