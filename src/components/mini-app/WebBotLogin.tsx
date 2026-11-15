@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-interface LoginLink { url: string; expiresAt: number }
+interface LoginLink { url: string; expiresAt: number; webhookReady: boolean | null }
 
 export function WebBotLogin() {
   const [link, setLink] = useState<LoginLink | null>(null);
@@ -14,9 +14,9 @@ export function WebBotLogin() {
     setCreating(true); setError(null);
     try {
       const response = await fetch("/api/auth/link/start", { method: "POST", credentials: "same-origin" });
-      const result = await response.json() as { url?: string; expiresIn?: number; error?: string };
+      const result = await response.json() as { url?: string; expiresIn?: number; webhookReady?: boolean | null; error?: string };
       if (!response.ok || !result.url || !result.expiresIn) throw new Error(result.error ?? "Havola yaratilmadi.");
-      setLink({ url: result.url, expiresAt: Date.now() + result.expiresIn * 1000 });
+      setLink({ url: result.url, expiresAt: Date.now() + result.expiresIn * 1000, webhookReady: result.webhookReady ?? null });
       setWaiting(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Havola yaratilmadi. Qayta urinib ko‘ring.");
@@ -65,6 +65,7 @@ export function WebBotLogin() {
     </button> : <>
       <a className="ma-btn primary ma-web-login" href={link.url} target="_blank" rel="noopener noreferrer">Telegram botni ochish →</a>
       <span className="ma-muted">Botda Start bosing, so‘ng shu sahifaga qayting. Havola 10 daqiqa amal qiladi.</span>
+      {link.webhookReady === false && <span className="ma-error-inline" role="alert">Test bot bu Preview serveriga ulanmagan. Botdagi Start javob bermasa, webhook manzilini yangilash kerak.</span>}
       {waiting && <span className="ma-muted" role="status">Bot tasdig‘i kutilmoqda…</span>}
       <button className="ma-link-btn" onClick={createLink} disabled={creating}>Yangi havola yaratish</button>
     </>}

@@ -815,7 +815,7 @@ export default function MiniApp() {
           <span className="ma-muted">
             {inactiveMessage ?? authError ?? "Botdagi ulangan hisobingiz bilan webda kiring."}
           </span>
-          {!inactiveMessage && <WebBotLogin />}
+          <WebBotLogin />
         </div>
       </div>
     );

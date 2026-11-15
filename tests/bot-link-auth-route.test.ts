@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
-const { getTelegramBotUsername, createWebBotLogin, consumeWebBotLogin } = vi.hoisted(() => ({
-  getTelegramBotUsername: vi.fn(), createWebBotLogin: vi.fn(), consumeWebBotLogin: vi.fn(),
+const { getTelegramBotUsername, getTelegramWebhookUrl, createWebBotLogin, consumeWebBotLogin } = vi.hoisted(() => ({
+  getTelegramBotUsername: vi.fn(), getTelegramWebhookUrl: vi.fn(), createWebBotLogin: vi.fn(), consumeWebBotLogin: vi.fn(),
 }));
 
-vi.mock("../src/telegram/client", () => ({ getTelegramBotUsername }));
+vi.mock("../src/telegram/client", () => ({ getTelegramBotUsername, getTelegramWebhookUrl }));
 vi.mock("../src/server/config", () => ({
   getTelegramConfig: () => ({ botToken: "test-token", webhookSecret: "a-safe-test-webhook-secret" }),
 }));
@@ -16,6 +16,7 @@ vi.mock("../src/server/application", () => ({
 describe("bot deep-link browser login", () => {
   beforeEach(() => {
     getTelegramBotUsername.mockReset().mockResolvedValue("ibox_task_test_bot");
+    getTelegramWebhookUrl.mockReset().mockResolvedValue("https://tasks.example.com/api/telegram/webhook");
     createWebBotLogin.mockReset().mockResolvedValue({
       code: `wl_${"a".repeat(24)}`, browserToken: "b".repeat(43), expiresAt: new Date("2026-11-15T10:10:00Z"),
     });
@@ -27,6 +28,7 @@ describe("bot deep-link browser login", () => {
     const response = await POST(new NextRequest("https://tasks.example.com/api/auth/link/start", { method: "POST" }));
     const result = await response.json();
     expect(result.url).toBe(`https://t.me/ibox_task_test_bot?start=wl_${"a".repeat(24)}`);
+    expect(result.webhookReady).toBe(true);
     expect(response.headers.get("set-cookie")).toContain("marketing_web_bot_login=");
     expect(response.headers.get("set-cookie")).toContain("HttpOnly");
     expect(response.headers.get("set-cookie")).toContain("SameSite=strict");
