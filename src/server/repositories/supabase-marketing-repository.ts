@@ -27,6 +27,7 @@ import type {
   User,
   UserTaskPlan,
   WorkflowTemplate,
+  WorkflowPlan,
 } from "@/domain/models";
 import { getSupabaseAdminClient } from "@/server/db/supabase";
 
@@ -69,6 +70,8 @@ const TaskRowSchema = z.object({
   scheduled_occurrence_at: z.string().nullable().default(null),
   workflow_run_id: z.string().uuid().nullable().default(null),
   workflow_step_id: z.string().uuid().nullable().default(null),
+  participant_ids: z.array(z.string().uuid()).default([]),
+  workflow_next_deadline: z.string().nullable().default(null),
 });
 
 const TaskCommentRowSchema = z.object({
@@ -132,6 +135,8 @@ const WorkflowTemplateStepRowSchema = z.object({
   title: z.string(), description: z.string().nullable(),
   assignee_role: z.enum(["OPERATOR_VIDEO_EDITOR", "CONTENT_MARKETER", "DIGITAL_MARKETER", "SMM_MANAGER", "HEAD_OF_MARKETING"]),
   priority: z.enum(["high", "normal", "low"]), due_after_hours: z.number().int(),
+  estimated_minutes: z.number().int().nullable().default(null),
+  checkpoint_titles: z.array(z.string()).default([]),
 });
 
 const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
@@ -263,6 +268,8 @@ function mapTask(input: unknown): Task {
     scheduledOccurrenceAt: row.scheduled_occurrence_at,
     workflowRunId: row.workflow_run_id,
     workflowStepId: row.workflow_step_id,
+    participantIds: row.participant_ids,
+    workflowNextDeadline: row.workflow_next_deadline,
   };
 }
 
@@ -336,6 +343,8 @@ function mapWorkflowTemplate(input: unknown, rawSteps: unknown[]): WorkflowTempl
       assigneeRole: step.assignee_role,
       priority: step.priority,
       dueAfterHours: step.due_after_hours,
+      estimatedMinutes: step.estimated_minutes,
+      checkpointTitles: step.checkpoint_titles,
     }));
   return {
     id: row.id,
@@ -991,7 +1000,8 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       p_description: input.description,
       p_steps: input.steps.map((step) => ({
         title: step.title, description: step.description, assigneeRole: step.assigneeRole,
-        priority: step.priority, dueAfterHours: step.dueAfterHours,
+        priority: step.priority, estimatedMinutes: step.estimatedMinutes,
+        checkpointTitles: step.checkpointTitles,
       })),
     });
     if (error || !data) throwDataError(error, "Shablonni saqlab bo‘lmadi.");
@@ -999,13 +1009,80 @@ export class SupabaseMarketingRepository implements MarketingRepository {
   }
 
   async startWorkflowRun(input: Parameters<MarketingRepository["startWorkflowRun"]>[0]): Promise<Task> {
-    const { data, error } = await this.client.rpc("start_workflow_run", {
+    const { data, error } = await this.client.rpc("start_workflow_run_v2", {
       p_template_id: input.templateId,
       p_actor_id: input.actorId,
       p_subject: input.subject,
-      p_assignee_map: input.assigneeMap,
+      p_first_deadline: input.firstDeadline,
+      p_step_assignments: input.stepAssignments,
     });
     if (error || !data) throwDataError(error, "Ish jarayonini boshlab bo‘lmadi.");
+    return mapTask(rpcRecord(data));
+  }
+
+  async getWorkflowPlan(runId: string): Promise<WorkflowPlan | null> {
+    const { data: run, error } = await this.client.from("workflow_runs").select("*").eq("id", runId).maybeSingle();
+    if (error) throwDataError(error, "Ish rejasi yuklanmadi.");
+    if (!run || run.step_assignments === null) return null;
+    const plans = await this.loadWorkflowPlans([run]);
+    return plans[0] ?? null;
+  }
+
+  async listWorkflowPlans(userId: string, isHead: boolean): Promise<WorkflowPlan[]> {
+    const { data: runs, error } = await this.client.from("workflow_runs")
+      .select("*").not("step_assignments", "is", null).order("created_at", { ascending: false }).limit(100);
+    if (error) throwDataError(error, "Ish rejalari yuklanmadi.");
+    const visible = (runs ?? []).filter((run) => {
+      if (isHead || run.created_by === userId) return true;
+      const assignments = run.step_assignments as Record<string, { ownerId?: string; participantIds?: string[] }> | null;
+      return Object.values(assignments ?? {}).some((step) => step.ownerId === userId || step.participantIds?.includes(userId));
+    });
+    return this.loadWorkflowPlans(visible);
+  }
+
+  private async loadWorkflowPlans(runs: Array<{
+    id: string; template_id: string; subject: string; status: "ACTIVE" | "COMPLETED" | "CANCELLED";
+    current_position: number; step_assignments: unknown;
+  }>): Promise<WorkflowPlan[]> {
+    if (runs.length === 0) return [];
+    const templateIds = [...new Set(runs.map((run) => run.template_id))];
+    const [{ data: templates, error: templateError }, { data: steps, error: stepError }, { data: tasks, error: taskError }] = await Promise.all([
+      this.client.from("workflow_templates").select("id,name").in("id", templateIds),
+      this.client.from("workflow_template_steps").select("*").in("template_id", templateIds).order("position"),
+      this.client.from("tasks").select("id,workflow_run_id,workflow_step_id,status,deadline").in("workflow_run_id", runs.map((run) => run.id)),
+    ]);
+    if (templateError || stepError || taskError) throwDataError(templateError ?? stepError ?? taskError, "Ish rejasi yuklanmadi.");
+    return runs.map((run) => {
+      const assignments = run.step_assignments as Record<string, { ownerId: string; participantIds: string[] }>;
+      return {
+        id: run.id, subject: run.subject, status: run.status, currentPosition: run.current_position,
+        templateName: templates?.find((template) => template.id === run.template_id)?.name ?? run.subject,
+        steps: (steps ?? []).filter((step) => step.template_id === run.template_id).map((step) => {
+          const task = (tasks ?? []).find((item) => item.workflow_run_id === run.id && item.workflow_step_id === step.id);
+          return {
+            id: step.id, position: step.position, title: step.title,
+            ownerId: assignments[step.id]?.ownerId ?? "", participantIds: assignments[step.id]?.participantIds ?? [],
+            estimatedMinutes: step.estimated_minutes, checkpointTitles: step.checkpoint_titles,
+            taskId: task?.id ?? null, taskStatus: task?.status ?? null, deadline: task?.deadline ?? null,
+          };
+        }),
+      };
+    });
+  }
+
+  async submitWorkflowStepForReview(input: Parameters<MarketingRepository["submitWorkflowStepForReview"]>[0]): Promise<Task> {
+    const { data, error } = await this.client.rpc("submit_workflow_step_for_review", {
+      p_task_id: input.taskId, p_actor_id: input.actorId, p_next_deadline: input.nextDeadline,
+    });
+    if (error || !data) throwDataError(error, "Tekshiruvga yuborib bo‘lmadi.");
+    return mapTask(rpcRecord(data));
+  }
+
+  async completeSelfOwnedTask(input: Parameters<MarketingRepository["completeSelfOwnedTask"]>[0]): Promise<Task> {
+    const { data, error } = await this.client.rpc("complete_self_owned_task", {
+      p_task_id: input.taskId, p_actor_id: input.actorId, p_next_deadline: input.nextDeadline,
+    });
+    if (error || !data) throwDataError(error, "Vazifani tasdiqlab bo‘lmadi.");
     return mapTask(rpcRecord(data));
   }
 

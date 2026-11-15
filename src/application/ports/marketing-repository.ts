@@ -15,6 +15,7 @@ import type {
   User,
   UserTaskPlan,
   WorkflowTemplate,
+  WorkflowPlan,
 } from "@/domain/models";
 
 export interface TelegramIdentityInput {
@@ -217,15 +218,20 @@ export interface MarketingRepository {
     description: string | null;
     steps: Array<{
       title: string; description: string | null; assigneeRole: TeamRole;
-      priority: TaskPriority; dueAfterHours: number;
+      priority: TaskPriority; estimatedMinutes: number | null; checkpointTitles: string[];
     }>;
   }): Promise<string>;
   startWorkflowRun(input: {
     templateId: string;
     actorId: string;
     subject: string;
-    assigneeMap: Record<string, string>;
+    firstDeadline: string;
+    stepAssignments: Record<string, { ownerId: string; participantIds: string[] }>;
   }): Promise<Task>;
+  getWorkflowPlan(runId: string): Promise<WorkflowPlan | null>;
+  listWorkflowPlans(userId: string, isHead: boolean): Promise<WorkflowPlan[]>;
+  submitWorkflowStepForReview(input: { taskId: string; actorId: string; nextDeadline: string | null }): Promise<Task>;
+  completeSelfOwnedTask(input: { taskId: string; actorId: string; nextDeadline: string | null }): Promise<Task>;
   advanceWorkflowRun(input: { completedTaskId: string; actorId: string }): Promise<Task | null>;
   recoverWorkflowRuns(): Promise<Task[]>;
 

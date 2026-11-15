@@ -6,6 +6,7 @@ export const TASK_ACTIONS = [
   "BLOCK",
   "RESUME",
   "SUBMIT_REVIEW",
+  "COMPLETE_SELF",
   "APPROVE",
   "REQUEST_REVISION",
   "CANCEL",
@@ -19,6 +20,7 @@ export const TaskActionInputSchema = z
   .object({
     action: TaskActionSchema,
     reason: z.string().trim().max(5000).optional(),
+    nextDeadline: z.string().datetime({ offset: true }).optional(),
   })
   .superRefine((input, context) => {
     if (input.action === "BLOCK" && !input.reason) {
@@ -31,6 +33,7 @@ const TRANSITIONS: Readonly<Record<TaskAction, readonly TaskStatus[]>> = {
   BLOCK: ["IN_PROGRESS", "REVISION"],
   RESUME: ["BLOCKED", "REVISION"],
   SUBMIT_REVIEW: ["IN_PROGRESS", "REVISION"],
+  COMPLETE_SELF: ["IN_PROGRESS", "REVISION"],
   APPROVE: ["REVIEW"],
   REQUEST_REVISION: ["REVIEW"],
   CANCEL: ["ASSIGNED", "IN_PROGRESS", "BLOCKED", "REVIEW", "REVISION"],
@@ -42,6 +45,7 @@ const TARGET_STATUS: Readonly<Record<TaskAction, TaskStatus>> = {
   BLOCK: "BLOCKED",
   RESUME: "IN_PROGRESS",
   SUBMIT_REVIEW: "REVIEW",
+  COMPLETE_SELF: "DONE",
   APPROVE: "DONE",
   REQUEST_REVISION: "REVISION",
   CANCEL: "CANCELLED",

@@ -1561,6 +1561,9 @@
 .ma-workflow-steps li > span { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: var(--primary-soft); color: var(--primary-dark); font-weight: 800; font-size: 0.72rem; }
 .ma-workflow-steps li > div { display: grid; gap: 2px; }
 .ma-workflow-steps small { color: var(--muted); }
+.ma-workflow-participants { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; max-height: 170px; overflow-y: auto; }
+.ma-workflow-participants label { display: flex; align-items: center; gap: 7px; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 0.85rem; }
+.ma-workflow-participants input { width: auto; margin: 0; }
 .ma-workflow-editor h3 { margin: 0; }
 .ma-workflow-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .ma-workflow-archive-confirm { padding: 12px; border: 1px solid var(--warning); border-radius: var(--radius-sm); background: var(--warning-soft); }

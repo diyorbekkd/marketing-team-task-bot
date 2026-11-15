@@ -42,9 +42,10 @@ function tashkentDateTime(iso: string) {
   }).format(new Date(iso));
 }
 
-export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan, onCheckpoints, onRefreshPlan, onRefreshDetail }: {
+export function TaskPlanningPanel({ taskId, terminal, canEditCheckpoints = true, plan, checkpoints, onPlan, onCheckpoints, onRefreshPlan, onRefreshDetail }: {
   taskId: string;
   terminal: boolean;
+  canEditCheckpoints?: boolean;
   plan: PersonalPlan | null;
   checkpoints: Checkpoint[];
   onPlan: (plan: PersonalPlan) => void;
@@ -141,16 +142,16 @@ export function TaskPlanningPanel({ taskId, terminal, plan, checkpoints, onPlan,
       <h3>Checkpointlar {checkpoints.length > 0 && <span className="ma-muted">{completed}/{checkpoints.length}</span>}</h3>
       {checkpoints.length > 0 && <progress max={checkpoints.length} value={completed} aria-label="Checkpoint progressi" />}
       {checkpoints.map((item) => <div className="ma-planning-checkpoint" key={item.id}>
-        <button type="button" disabled={pending} onClick={() => toggleCheckpoint(item.id)}
+        <button type="button" disabled={pending || !canEditCheckpoints} onClick={() => toggleCheckpoint(item.id)}
           aria-label={`${item.title}: ${item.completedAt ? "qayta ochish" : "bajarildi deb belgilash"}`}>
           {item.completedAt ? "☑" : "☐"}
         </button>
         <span className={item.completedAt ? "completed" : ""}>{item.title}
           {item.dueAt && <small className="ma-muted"> · {tashkentDateTime(item.dueAt)}</small>}
         </span>
-        <button type="button" disabled={pending} onClick={() => removeCheckpoint(item.id)} aria-label={`${item.title} checkpointini o‘chirish`}>×</button>
+        {canEditCheckpoints && <button type="button" disabled={pending} onClick={() => removeCheckpoint(item.id)} aria-label={`${item.title} checkpointini o‘chirish`}>×</button>}
       </div>)}
-      {!terminal && checkpoints.length < 50 && <div className="ma-planning-add">
+      {!terminal && canEditCheckpoints && checkpoints.length < 50 && <div className="ma-planning-add">
         <textarea aria-label="Yangi checkpoint" placeholder="Natija yoki oraliq maqsad" maxLength={200} rows={2}
           value={title} onChange={(event) => setTitle(event.target.value)}
           onInput={(event) => {

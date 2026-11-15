@@ -1,10 +1,10 @@
 # Ketma-ket vazifalar uchun taklif
 
-Bu hujjat 2026-11-15 dagi mahsulot muhokamasi uchun. Hozirgi workflow qoidalarini hali o‘zgartirmaydi.
+Bu hujjat 2026-11-15 dagi mahsulot qarori va staging implementatsiyasini qayd qiladi.
 
 ## Hozirgi holat
 
-Workflow shablonining har bosqichida `due_after_hours` bor. Birinchi va keyingi vazifa ochilishi bilanoq shu davomiylik deadlinega aylanadi. Har bosqichda bitta assignee bor; boshqa ishtirokchilar alohida ko‘rsatilmaydi. Bir bosqich tasdiqlanganda keyingisi avtomatik yaratiladi. Bu foydalanuvchi kutayotgan topshirish va muddat belgilash tartibiga mos emas.
+Eski workflow runlarda `due_after_hours` deadlinega aylangan. Bu qoida faqat oldin boshlangan runlar yakunlanguncha saqlanadi. Yangi runlar muddatni aniq kiritadi.
 
 ## Taklif etilgan tartib
 
@@ -18,3 +18,12 @@ Workflow shablonining har bosqichida `due_after_hours` bor. Birinchi va keyingi 
 ## Kelishilgan qaror
 
 Navbati kelmagan bosqichlar faqat umumiy jarayon rejasida ko‘rinadi. Oldingi bosqich tasdiqlangach, keyingisi aniq deadline bilan oddiy vazifaga aylanadi. Deadline hali noma’lum bosqichlar ochiq/kechikkan vazifalar statistikasiga kirmaydi. Bu tanlov foydalanuvchi tomonidan tasdiqlandi.
+
+## Stagingda bajarildi
+
+- Shablon versiyasida taxminiy daqiqa va checkpoint namunalari saqlanadi. Eski shablonlarning soatlari taxminiy daqiqaga ko‘chirildi; yangi runlarda avtomatik deadline yaratmaydi.
+- Boshlovchi har bosqichga bitta mas’ul va ixtiyoriy ishtirokchilarni, birinchi bosqichga aniq muddatni tanlaydi. Umumiy reja barcha shu jarayonga aloqador foydalanuvchilarga ko‘rinadi.
+- Keyingi bosqich topshirishda uning muddati kiritiladi; tasdiqdan keyin atomik bazaviy funksiya task va checkpointlarni yaratadi. Eski runlar oldingi qoidada davom etadi.
+- Yaratuvchi va mas’ul bir odam bo‘lsa, vazifani to‘g‘ridan-to‘g‘ri yakunlay oladi. Status, tarix va keyingi bosqich bir xil servis orqali boshqariladi.
+- Ishtirokchilar reja va faol vazifani ko‘radi, izoh/material qo‘sha oladi. Status va checkpointlarni mas’ul/yaratuvchi boshqaradi. Telegram reja va faollashgan bosqich haqida xabar beradi.
+- Staging SQL tranzaksiyasida yaratish → topshirish → tasdiq → keyingi bosqich → o‘z vazifasini yakunlash zanjiri tekshirildi va rollback qilindi.

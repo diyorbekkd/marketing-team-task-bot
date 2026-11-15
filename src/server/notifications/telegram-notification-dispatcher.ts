@@ -76,6 +76,16 @@ function workflowMessage(input: WorkflowNotificationInput, appUrl: string): Tele
   const { actor, deadlineRequest, event, task } = input;
 
   switch (event) {
+    case "WORKFLOW_PLAN_SHARED":
+      return {
+        text: ["🧭 Ish jarayoni rejasi", "", `Loyiha: ${task.title.split(" — ")[0]}`, "", input.comment ?? "", "", "Bosqich navbati kelganda vazifa va uning aniq muddati yuboriladi."].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "WORKFLOW_STEP_ACTIVATED":
+      return {
+        text: ["▶️ Siz ishtirok etadigan bosqich boshlandi", "", `Vazifa: ${task.title}`, `Muddat: ${formatDeadline(task.deadline)}`].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
     case "TASK_CREATED":
       return {
         text: ["📋 Vazifa yaratildi", "", `Vazifa: ${task.title}`, `Muddat: ${formatDeadline(task.deadline)}`].join("\n"),

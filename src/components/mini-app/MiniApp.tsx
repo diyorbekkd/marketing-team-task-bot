@@ -55,6 +55,9 @@ interface Task {
   updatedAt: string;
   recurringDefinitionId?: string | null;
   scheduledOccurrenceAt?: string | null;
+  workflowRunId?: string | null;
+  participantIds?: string[];
+  workflowNextDeadline?: string | null;
 }
 
 interface TaskEvent {
@@ -100,6 +103,7 @@ interface TaskDetail {
   recurringDefinition: RecurringDefinition | null;
   personalPlan?: PersonalPlan | null;
   checkpoints?: Checkpoint[];
+  workflowPlan?: WorkflowPlan | null;
 }
 
 interface PostingChecklistItem {
@@ -183,6 +187,19 @@ interface WorkflowTemplateStep {
   assigneeRole: Role;
   priority: Priority;
   dueAfterHours: number;
+  estimatedMinutes: number | null;
+  checkpointTitles: string[];
+}
+
+interface WorkflowPlan {
+  id: string;
+  subject: string;
+  templateName: string;
+  status: "ACTIVE" | "COMPLETED" | "CANCELLED";
+  currentPosition: number;
+  steps: Array<{ id: string; position: number; title: string; ownerId: string; participantIds: string[];
+    estimatedMinutes: number | null; checkpointTitles: string[]; taskId: string | null;
+    taskStatus: string | null; deadline: string | null }>;
 }
 
 interface WorkflowTemplate {
@@ -490,6 +507,7 @@ export default function MiniApp() {
   const [showPendingUsers, setShowPendingUsers] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [showWorkflow, setShowWorkflow] = useState(false);
+  const [showWorkflowPlans, setShowWorkflowPlans] = useState(false);
   const [openWorkflowInTemplates, setOpenWorkflowInTemplates] = useState(false);
   const [roleEditUser, setRoleEditUser] = useState<User | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
@@ -863,6 +881,7 @@ export default function MiniApp() {
             +
           </button>
           {isHead && <button className="ma-icon-btn" onClick={() => { setOpenWorkflowInTemplates(false); setShowWorkflow(true); }} aria-label="Ish jarayonini boshlash">⚡</button>}
+          <button className="ma-icon-btn" onClick={() => setShowWorkflowPlans(true)} aria-label="Ish rejalari">☷</button>
         </div>
       </header>
 
@@ -999,6 +1018,9 @@ export default function MiniApp() {
           }}
         />
       )}
+
+      {showWorkflowPlans && <WorkflowPlansPanel users={users} onClose={() => setShowWorkflowPlans(false)}
+        onSelectTask={(id) => { setShowWorkflowPlans(false); setSelectedTaskId(id); }} />}
 
       {showPendingUsers && (
         <PendingUsersPanel
@@ -1856,6 +1878,8 @@ function TaskDetailPanel({
   const [showBlockInput, setShowBlockInput] = useState(false);
   const [showRevisionInput, setShowRevisionInput] = useState(false);
   const [confirmReview, setConfirmReview] = useState(false);
+  const [nextWorkflowDeadline, setNextWorkflowDeadline] = useState("");
+  const [completionAction, setCompletionAction] = useState<"SUBMIT_REVIEW" | "COMPLETE_SELF">("SUBMIT_REVIEW");
   const [revisionReason, setRevisionReason] = useState("");
   const [showDLRequest, setShowDLRequest] = useState(false);
   const [dlDate, setDlDate] = useState("");
@@ -2139,18 +2163,25 @@ function TaskDetailPanel({
   const pendingDL = dlRequests.filter((r) => r.status === "PENDING");
   const postingChecklist = detail?.postingChecklist;
   const postingComplete = !postingChecklist || postingChecklist.items.every((item) => item.isCompleted);
+  const workflowPlan = detail?.workflowPlan;
+  const nextWorkflowStep = workflowPlan?.steps.find((step) => step.position > workflowPlan.currentPosition);
+  const selfOwned = Boolean(task && task.creatorId === currentUser.id && task.assigneeId === currentUser.id);
   const recurringDefinition = detail?.recurringDefinition;
   const canManageRecurrence = Boolean(task && (isHead || task.creatorId === currentUser.id || recurringDefinition?.createdBy === currentUser.id));
 
   const actions: { label: string; action: string; variant?: string }[] = [];
   if (task) {
     if (task.status === "ASSIGNED" && isAssignee) actions.push({ label: "Qabul qilish", action: "ACCEPT" });
-    if (task.status === "IN_PROGRESS" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW", variant: "primary" });
+    if (task.status === "IN_PROGRESS" && isAssignee && postingComplete) actions.push(selfOwned
+      ? { label: "Bajarildi — tasdiqlash", action: "COMPLETE_SELF", variant: "primary" }
+      : { label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW", variant: "primary" });
     if (task.status === "IN_PROGRESS" && isAssignee) actions.push({ label: "Bloklash", action: "_block", variant: "warn" });
     if (task.status === "BLOCKED" && isAssignee) actions.push({ label: "Davom ettirish", action: "RESUME" });
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Tasdiqlash", action: "APPROVE" });
     if (task.status === "REVIEW" && (isCreator || isHead)) actions.push({ label: "Tuzatishga qaytarish", action: "_revision", variant: "warn" });
-    if (task.status === "REVISION" && isAssignee && postingComplete) actions.push({ label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW", variant: "primary" });
+    if (task.status === "REVISION" && isAssignee && postingComplete) actions.push(selfOwned
+      ? { label: "Bajarildi — tasdiqlash", action: "COMPLETE_SELF", variant: "primary" }
+      : { label: "Tekshiruvga yuborish", action: "SUBMIT_REVIEW", variant: "primary" });
     if (!isTerminal(task.status) && (isCreator || isHead)) actions.push({ label: "Bekor qilish", action: "CANCEL", variant: "danger" });
     if (isTerminal(task.status) && isHead) actions.push({ label: "Qayta ochish", action: "REOPEN" });
   }
@@ -2192,6 +2223,16 @@ function TaskDetailPanel({
               <dt>Publikatsiya</dt><dd>{fmtDateTime(task.publicationAt)}</dd>
               {task.blockedReason && <><dt>Blok sababi</dt><dd className="ma-overdue-text">{task.blockedReason}</dd></>}
             </dl>
+
+            {workflowPlan && <section className="ma-section">
+              <div className="ma-section-head"><h3>Ish jarayoni rejasi</h3><small>{workflowPlan.templateName}</small></div>
+              <ol className="ma-workflow-steps">{workflowPlan.steps.map((step) => <li key={step.id}>
+                <span>{step.position}</span><div><strong>{step.title}</strong>
+                  <small>{users.find((user) => user.id === step.ownerId)?.displayName ?? "—"} · {step.taskId ? (step.taskStatus === "DONE" ? "Bajarildi" : "Ochiq") : "Rejada"}</small>
+                  {step.deadline && <small>Muddat: {fmtDateTime(step.deadline)}</small>}
+                  {step.participantIds.length > 0 && <small>Ishtirokchilar: {step.participantIds.map((id) => users.find((user) => user.id === id)?.displayName ?? "—").join(", ")}</small>}
+                </div></li>)}</ol>
+            </section>}
 
             {showEdit && (
               <section className="ma-section ma-edit-card" aria-labelledby="edit-task-title">
@@ -2255,6 +2296,7 @@ function TaskDetailPanel({
               key={`${taskId}:${detail?.personalPlan?.updatedAt ?? "new"}`}
               taskId={taskId}
               terminal={isTerminal(task.status)}
+              canEditCheckpoints={isHead || isCreator || isAssignee}
               plan={detail?.personalPlan ?? null}
               checkpoints={detail?.checkpoints ?? []}
               onPlan={(plan) => setDetail((previous) => previous ? { ...previous, personalPlan: plan } : previous)}
@@ -2317,11 +2359,16 @@ function TaskDetailPanel({
                   </div>
                 ) : confirmReview ? (
                   <div className="ma-block-form">
-                    <p>Vazifani tekshiruvga yuborasizmi?</p>
+                    <p>{completionAction === "COMPLETE_SELF" ? "Vazifani bevosita tasdiqlaysizmi?" : "Vazifani tekshiruvga yuborasizmi?"}</p>
+                    {nextWorkflowStep && <>
+                      <label htmlFor="next-workflow-deadline">Keyingi bosqich: {nextWorkflowStep.title}. Uning muddati</label>
+                      <input id="next-workflow-deadline" type="datetime-local" value={nextWorkflowDeadline} onChange={(event) => setNextWorkflowDeadline(event.target.value)} />
+                      <p className="ma-muted">Mas’ul: {users.find((user) => user.id === nextWorkflowStep.ownerId)?.displayName ?? "—"}. Vazifa tasdiqlangach ochiladi.</p>
+                    </>}
                     <div className="ma-form-row">
-                      <button className="ma-btn primary" disabled={actionPending || checklistPendingIds.size > 0} onClick={async () => {
-                        if (await postAction("SUBMIT_REVIEW")) setConfirmReview(false);
-                      }}>Ha, tekshiruvga yuborish</button>
+                      <button className="ma-btn primary" disabled={actionPending || checklistPendingIds.size > 0 || Boolean(nextWorkflowStep && !nextWorkflowDeadline)} onClick={async () => {
+                        if (await postAction(completionAction, nextWorkflowStep ? { nextDeadline: localDatetimeToISO(nextWorkflowDeadline) } : undefined)) setConfirmReview(false);
+                      }}>{completionAction === "COMPLETE_SELF" ? "Ha, tasdiqlash" : "Ha, tekshiruvga yuborish"}</button>
                       <button className="ma-btn secondary" onClick={() => setConfirmReview(false)}>Bekor qilish</button>
                     </div>
                   </div>
@@ -2361,11 +2408,11 @@ function TaskDetailPanel({
                       <button
                         key={a.action}
                         className={`ma-btn ${a.variant ?? "primary"}`}
-                        disabled={actionPending || (a.action === "SUBMIT_REVIEW" && checklistPendingIds.size > 0)}
+                        disabled={actionPending || (["SUBMIT_REVIEW", "COMPLETE_SELF"].includes(a.action) && checklistPendingIds.size > 0)}
                         onClick={() => {
                           if (a.action === "_block") { setShowBlockInput(true); return; }
                           if (a.action === "_revision") { setShowRevisionInput(true); return; }
-                          if (a.action === "SUBMIT_REVIEW") { setConfirmReview(true); return; }
+                          if (a.action === "SUBMIT_REVIEW" || a.action === "COMPLETE_SELF") { setCompletionAction(a.action); setConfirmReview(true); return; }
                           postAction(a.action);
                         }}
                       >
@@ -2532,6 +2579,41 @@ function TaskDetailPanel({
   );
 }
 
+function WorkflowPlansPanel({ users, onClose, onSelectTask }: {
+  users: User[]; onClose: () => void; onSelectTask: (id: string) => void;
+}) {
+  const [plans, setPlans] = useState<WorkflowPlan[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void apiFetch<{ plans: WorkflowPlan[] }>("/api/workflows").then(({ data, error: loadError }) => {
+      setLoading(false);
+      if (data) setPlans(data.plans);
+      else setError(friendlyError(loadError));
+    });
+  }, []);
+  return <div className="ma-overlay" role="dialog" aria-modal="true" aria-label="Ish rejalari" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="ma-panel"><div className="ma-panel-header"><button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button><span className="ma-panel-title">Ish rejalari</span></div>
+      <div className="ma-panel-body">
+        {loading && <div className="ma-center-inline"><div className="ma-spinner" /></div>}
+        {error && <div className="ma-error-inline" role="alert">{error}</div>}
+        {!loading && plans.length === 0 && !error && <div className="ma-empty">Hozircha ish rejasi yo‘q.</div>}
+        {plans.map((plan) => <section className="ma-section" key={plan.id}>
+          <div className="ma-section-head"><h3>{plan.subject}</h3><small>{plan.status === "ACTIVE" ? "Jarayonda" : "Yakunlangan"}</small></div>
+          <p className="ma-muted">{plan.templateName}</p>
+          <ol className="ma-workflow-steps">{plan.steps.map((step) => <li key={step.id}>
+            <span>{step.position}</span><div><strong>{step.title}</strong>
+              <small>Mas’ul: {users.find((user) => user.id === step.ownerId)?.displayName ?? "—"}
+                {step.taskId ? ` · ${step.taskStatus === "DONE" ? "Bajarildi" : "Ochiq"}` : " · Rejada"}
+                {step.deadline ? ` · ${fmtDateTime(step.deadline)}` : ""}</small>
+              {step.participantIds.length > 0 && <small>Ishtirokchilar: {step.participantIds.map((id) => users.find((user) => user.id === id)?.displayName ?? "—").join(", ")}</small>}
+              {step.taskId && <button className="ma-link-btn" onClick={() => onSelectTask(step.taskId!)}>Vazifani ochish →</button>}
+            </div></li>)}</ol>
+        </section>)}
+      </div></div>
+  </div>;
+}
+
 function WorkflowStartPanel({ users, initialEditor, onClose, onStarted }: {
   users: User[];
   initialEditor: boolean;
@@ -2541,17 +2623,18 @@ function WorkflowStartPanel({ users, initialEditor, onClose, onStarted }: {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [subject, setSubject] = useState("");
-  const [assigneeMap, setAssigneeMap] = useState<Partial<Record<Role, string>>>({});
+  const [stepAssignments, setStepAssignments] = useState<Record<string, { ownerId: string; participantIds: string[] }>>({});
+  const [firstDeadline, setFirstDeadline] = useState("");
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingTemplates, setEditingTemplates] = useState(initialEditor);
 
   const defaultsFor = useCallback((template: WorkflowTemplate) => {
-    const next: Partial<Record<Role, string>> = {};
-    for (const role of new Set(template.steps.map((step) => step.assigneeRole))) {
-      const candidate = users.find((user) => user.isActive && user.role === role);
-      if (candidate) next[role] = candidate.id;
+    const next: Record<string, { ownerId: string; participantIds: string[] }> = {};
+    for (const step of template.steps) {
+      const candidate = users.find((user) => user.isActive && user.role === step.assigneeRole);
+      next[step.id] = { ownerId: candidate?.id ?? "", participantIds: [] };
     }
     return next;
   }, [users]);
@@ -2565,25 +2648,25 @@ function WorkflowStartPanel({ users, initialEditor, onClose, onStarted }: {
     const selected = data.templates.find((template) => template.id === preferredId) ?? data.templates[0];
     if (selected) {
       setSelectedId(selected.id);
-      setAssigneeMap(defaultsFor(selected));
+      setStepAssignments(defaultsFor(selected));
     } else {
       setSelectedId("");
-      setAssigneeMap({});
+      setStepAssignments({});
     }
   }, [defaultsFor]);
 
   useEffect(() => { void (async () => { await loadTemplates(); })(); }, [loadTemplates]);
 
   const selected = templates.find((template) => template.id === selectedId) ?? null;
-  const roles = selected ? [...new Set(selected.steps.map((step) => step.assigneeRole))] : [];
   const start = async () => {
-    if (!selected || !subject.trim()) return;
+    if (!selected || !subject.trim() || !firstDeadline) return;
     setPending(true);
     setError(null);
     const { data, error: startError } = await apiFetch<{ task: Task }>("/api/workflows", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ templateId: selected.id, subject: subject.trim(), assigneeMap }),
+      body: JSON.stringify({ templateId: selected.id, subject: subject.trim(),
+        firstDeadline: localDatetimeToISO(firstDeadline), stepAssignments }),
     });
     setPending(false);
     if (data?.task) onStarted(data.task);
@@ -2607,21 +2690,36 @@ function WorkflowStartPanel({ users, initialEditor, onClose, onStarted }: {
             <select id="workflow-template" value={selectedId} onChange={(event) => {
               const template = templates.find((item) => item.id === event.target.value);
               setSelectedId(event.target.value);
-              if (template) setAssigneeMap(defaultsFor(template));
+              if (template) setStepAssignments(defaultsFor(template));
             }}>
               {templates.map((template) => <option value={template.id} key={template.id}>{template.name}</option>)}
             </select>
             {selected?.description && <p className="ma-muted">{selected.description}</p>}
             <label htmlFor="workflow-subject">Loyiha yoki kontent nomi</label>
             <input id="workflow-subject" value={subject} maxLength={200} onChange={(event) => setSubject(event.target.value)} placeholder="Masalan: Yangi filial Reels" />
-            {selected && <ol className="ma-workflow-steps">
-              {selected.steps.map((step) => <li key={step.id}><span>{step.position}</span><div><strong>{step.title}</strong><small>{ROLE_LABELS[step.assigneeRole]} · {step.dueAfterHours} soat</small></div></li>)}
-            </ol>}
-            {roles.map((role) => <div className="ma-workflow-assignee" key={role}>
-              <label htmlFor={`workflow-role-${role}`}>{ROLE_LABELS[role]}</label>
-              <PersonPickerField id={`workflow-role-${role}`} users={users.filter((user) => user.isActive && user.role === role)} selectedId={assigneeMap[role] ?? null} onSelect={(userId) => setAssigneeMap((current) => ({ ...current, [role]: userId }))} pickerTitle={ROLE_LABELS[role]} placeholder="Xodimni tanlang" />
+            <label htmlFor="workflow-first-deadline">Birinchi bosqich muddati</label>
+            <input id="workflow-first-deadline" type="datetime-local" value={firstDeadline} onChange={(event) => setFirstDeadline(event.target.value)} />
+            <p className="ma-muted">Keyingi bosqichlar hozircha reja. Ularning muddati avvalgi bosqich topshirilganda belgilanadi.</p>
+            {selected?.steps.map((step) => <div className="ma-workflow-step-editor" key={step.id}>
+              <strong>{step.position}. {step.title}</strong>
+              <small>{ROLE_LABELS[step.assigneeRole]}{step.estimatedMinutes ? ` · taxminan ${step.estimatedMinutes} daqiqa` : ""}</small>
+              {step.checkpointTitles.length > 0 && <small>Checkpointlar: {step.checkpointTitles.join(", ")}</small>}
+              <label htmlFor={`workflow-owner-${step.id}`}>Mas’ul</label>
+              <PersonPickerField id={`workflow-owner-${step.id}`} users={users.filter((user) => user.isActive)}
+                selectedId={stepAssignments[step.id]?.ownerId ?? null}
+                onSelect={(ownerId) => setStepAssignments((current) => ({ ...current,
+                  [step.id]: { ownerId: ownerId ?? "", participantIds: (current[step.id]?.participantIds ?? []).filter((id) => id !== ownerId) },
+                }))} pickerTitle="Mas’ulni tanlang" placeholder="Mas’ulni tanlang" />
+              <label>Ishtirokchilar (ixtiyoriy)</label>
+              <div className="ma-workflow-participants">{users.filter((user) => user.isActive && user.id !== stepAssignments[step.id]?.ownerId).map((user) => <label key={user.id}>
+                <input type="checkbox" checked={stepAssignments[step.id]?.participantIds.includes(user.id) ?? false}
+                  onChange={(event) => setStepAssignments((current) => ({ ...current, [step.id]: {
+                    ownerId: current[step.id]?.ownerId ?? "", participantIds: event.target.checked
+                      ? [...(current[step.id]?.participantIds ?? []), user.id]
+                      : (current[step.id]?.participantIds ?? []).filter((id) => id !== user.id),
+                  } }))} /> {user.displayName}</label>)}</div>
             </div>)}
-            <button className="ma-btn primary full" disabled={pending || !subject.trim() || roles.some((role) => !assigneeMap[role])} onClick={start}>{pending ? "Boshlanmoqda…" : "Ish jarayonini boshlash"}</button>
+            <button className="ma-btn primary full" disabled={pending || !subject.trim() || !firstDeadline || !selected?.steps.every((step) => stepAssignments[step.id]?.ownerId)} onClick={start}>{pending ? "Boshlanmoqda…" : "Ish jarayonini boshlash"}</button>
           </div>}
           {error && <div className="ma-error-inline" role="alert">{error}</div>}
           </>}
@@ -2637,14 +2735,16 @@ interface WorkflowStepDraft {
   description: string;
   assigneeRole: Role;
   priority: Priority;
-  dueAfterHours: string;
+  estimatedMinutes: string;
+  checkpointTitles: string;
 }
 
 function workflowStepDraft(step?: WorkflowTemplateStep): WorkflowStepDraft {
   return {
     key: crypto.randomUUID(), title: step?.title ?? "", description: step?.description ?? "",
     assigneeRole: step?.assigneeRole ?? "CONTENT_MARKETER", priority: step?.priority ?? "normal",
-    dueAfterHours: String(step?.dueAfterHours ?? 24),
+    estimatedMinutes: step?.estimatedMinutes ? String(step.estimatedMinutes) : "",
+    checkpointTitles: step?.checkpointTitles.join("\n") ?? "",
   };
 }
 
@@ -2681,7 +2781,8 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
     });
   };
   const canSave = name.trim() && steps.length > 0 && steps.every((step) =>
-    step.title.trim() && Number.isInteger(Number(step.dueAfterHours)) && Number(step.dueAfterHours) >= 1 && Number(step.dueAfterHours) <= 720);
+    step.title.trim() && (!step.estimatedMinutes || (Number.isInteger(Number(step.estimatedMinutes)) && Number(step.estimatedMinutes) >= 5 && Number(step.estimatedMinutes) <= 10080))
+      && step.checkpointTitles.split("\n").filter((title) => title.trim()).length <= 50);
   const save = async () => {
     if (!canSave) return;
     setPending(true); setError(null);
@@ -2689,9 +2790,10 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sourceTemplateId: sourceId, name: name.trim(), description: description.trim() || null,
-        steps: steps.map(({ title, description: stepDescription, assigneeRole, priority, dueAfterHours }) => ({
+        steps: steps.map(({ title, description: stepDescription, assigneeRole, priority, estimatedMinutes, checkpointTitles }) => ({
           title: title.trim(), description: stepDescription.trim() || null, assigneeRole, priority,
-          dueAfterHours: Number(dueAfterHours),
+          estimatedMinutes: estimatedMinutes ? Number(estimatedMinutes) : null,
+          checkpointTitles: checkpointTitles.split("\n").map((item) => item.trim()).filter(Boolean),
         })),
       }),
     });
@@ -2713,7 +2815,7 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
     <button className="ma-link-btn" onClick={onCancel}>← Ish jarayoniga qaytish</button>
     <h3>Shablonlarni sozlash</h3>
     <p className="ma-muted">Faqat yangi ish jarayonlari yangilangan shablondan foydalanadi. Boshlangan jarayonlarning bosqichlari saqlanadi.</p>
-    <p className="ma-muted">Hozirgi versiyada “Muddat (soat)” vazifa ochilganda avtomatik deadline bo‘ladi. Bu qoida qayta ishlab chiqilmoqda.</p>
+    <p className="ma-muted">Taxminiy vaqt rejalash uchun. Vazifa muddati alohida belgilanadi.</p>
     {templates.length > 0 && <><label htmlFor="template-to-edit">Tahrirlash uchun shablon</label>
       <select id="template-to-edit" value={sourceId ?? ""} onChange={(event) => {
         const template = templates.find((item) => item.id === event.target.value);
@@ -2760,8 +2862,10 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
         <div><label htmlFor={`step-priority-${step.key}`}>Ustuvorlik</label><select id={`step-priority-${step.key}`} value={step.priority} onChange={(event) => updateStep(step.key, { priority: event.target.value as Priority })}>
           {(Object.keys(PRIORITY_LABELS) as Priority[]).map((priority) => <option key={priority} value={priority}>{PRIORITY_LABELS[priority]}</option>)}
         </select></div>
-        <div><label htmlFor={`step-hours-${step.key}`}>Muddat (soat)</label><input id={`step-hours-${step.key}`} type="number" min={1} max={720} value={step.dueAfterHours} onChange={(event) => updateStep(step.key, { dueAfterHours: event.target.value })} /></div>
+        <div><label htmlFor={`step-hours-${step.key}`}>Taxminiy vaqt (daqiqa, ixtiyoriy)</label><input id={`step-hours-${step.key}`} type="number" min={5} max={10080} value={step.estimatedMinutes} onChange={(event) => updateStep(step.key, { estimatedMinutes: event.target.value })} /></div>
       </div>
+      <label htmlFor={`step-checkpoints-${step.key}`}>Checkpoint namunalari (har satrda bittadan, ixtiyoriy)</label>
+      <textarea id={`step-checkpoints-${step.key}`} rows={3} value={step.checkpointTitles} onChange={(event) => updateStep(step.key, { checkpointTitles: event.target.value })} />
     </div>)}
     {steps.length < 50 && <button className="ma-btn secondary" onClick={() => setSteps((current) => [...current, workflowStepDraft()])}>+ Bosqich qo‘shish</button>}
     {error && <div className="ma-error-inline" role="alert">{error}</div>}

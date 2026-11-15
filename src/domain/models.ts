@@ -127,6 +127,8 @@ export const TaskSchema = z.object({
   scheduledOccurrenceAt: z.string().nullable().optional(),
   workflowRunId: z.string().uuid().nullable().optional(),
   workflowStepId: z.string().uuid().nullable().optional(),
+  participantIds: z.array(z.string().uuid()).optional(),
+  workflowNextDeadline: z.string().nullable().optional(),
 });
 
 export const WorkflowTemplateStepSchema = z.object({
@@ -138,6 +140,8 @@ export const WorkflowTemplateStepSchema = z.object({
   assigneeRole: TeamRoleSchema,
   priority: TaskPrioritySchema,
   dueAfterHours: z.number().int().positive(),
+  estimatedMinutes: z.number().int().positive().nullable().default(null),
+  checkpointTitles: z.array(z.string()).default([]),
 });
 
 export const WorkflowTemplateSchema = z.object({
@@ -149,6 +153,26 @@ export const WorkflowTemplateSchema = z.object({
   isSystem: z.boolean(),
   steps: z.array(WorkflowTemplateStepSchema),
 });
+
+export interface WorkflowPlan {
+  id: string;
+  subject: string;
+  templateName: string;
+  status: "ACTIVE" | "COMPLETED" | "CANCELLED";
+  currentPosition: number;
+  steps: Array<{
+    id: string;
+    position: number;
+    title: string;
+    ownerId: string;
+    participantIds: string[];
+    estimatedMinutes: number | null;
+    checkpointTitles: string[];
+    taskId: string | null;
+    taskStatus: string | null;
+    deadline: string | null;
+  }>;
+}
 
 export const TaskCommentSchema = z.object({
   id: z.string().uuid(),

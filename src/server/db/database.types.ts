@@ -44,6 +44,8 @@ type TaskRow = {
   scheduled_occurrence_at: string | null;
   workflow_run_id: string | null;
   workflow_step_id: string | null;
+  participant_ids: string[];
+  workflow_next_deadline: string | null;
 }
 
 type WorkflowTemplateRow = {
@@ -67,6 +69,8 @@ type WorkflowTemplateStepRow = {
   assignee_role: UserRow["role"];
   priority: TaskRow["priority"];
   due_after_hours: number;
+  estimated_minutes: number | null;
+  checkpoint_titles: string[];
 }
 
 type WorkflowRunRow = {
@@ -80,6 +84,7 @@ type WorkflowRunRow = {
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  step_assignments: Json | null;
 }
 
 type TaskCommentRow = {
@@ -406,6 +411,18 @@ export interface Database {
       };
       start_workflow_run: {
         Args: { p_template_id: string; p_actor_id: string; p_subject: string; p_assignee_map: Json };
+        Returns: TaskRow;
+      };
+      start_workflow_run_v2: {
+        Args: { p_template_id: string; p_actor_id: string; p_subject: string; p_first_deadline: string; p_step_assignments: Json };
+        Returns: TaskRow;
+      };
+      submit_workflow_step_for_review: {
+        Args: { p_task_id: string; p_actor_id: string; p_next_deadline: string | null };
+        Returns: TaskRow;
+      };
+      complete_self_owned_task: {
+        Args: { p_task_id: string; p_actor_id: string; p_next_deadline: string | null };
         Returns: TaskRow;
       };
       save_workflow_template_version: {

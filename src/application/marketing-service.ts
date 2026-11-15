@@ -84,7 +84,10 @@ const WORKFLOW_ROLES = [
 const StartWorkflowInputSchema = z.object({
   templateId: z.string().uuid(),
   subject: z.string().trim().min(1).max(200),
-  assigneeMap: z.partialRecord(z.enum(WORKFLOW_ROLES), z.string().uuid()).default({}),
+  firstDeadline: z.string().datetime({ offset: true }),
+  stepAssignments: z.record(z.string().uuid(), z.object({
+    ownerId: z.string().uuid(), participantIds: z.array(z.string().uuid()).max(30),
+  }).strict()),
 }).strict();
 
 const SaveWorkflowTemplateInputSchema = z.object({
@@ -96,7 +99,8 @@ const SaveWorkflowTemplateInputSchema = z.object({
     description: z.string().trim().max(5000).nullable(),
     assigneeRole: z.enum(WORKFLOW_ROLES),
     priority: z.enum(["high", "normal", "low"]),
-    dueAfterHours: z.number().int().min(1).max(720),
+    estimatedMinutes: z.number().int().min(5).max(10080).nullable(),
+    checkpointTitles: z.array(z.string().trim().min(1).max(200)).max(50),
   }).strict()).min(1).max(50),
 }).strict();
 
@@ -753,7 +757,7 @@ export class MarketingService {
 
   async getTaskDetails(actor: User, taskId: string) {
     const task = await this.requireVisibleTask(actor, taskId);
-    const [events, comments, requests, postingChecklist, recurringDefinition, personalPlan, checkpoints] = await Promise.all([
+    const [events, comments, requests, postingChecklist, recurringDefinition, personalPlan, checkpoints, workflowPlan] = await Promise.all([
       this.repository.listTaskEvents(taskId),
       this.repository.listTaskComments(taskId),
       this.repository.listDeadlineChangeRequests({ taskId }),
@@ -761,6 +765,7 @@ export class MarketingService {
       this.repository.getRecurringDefinitionForTask(taskId),
       this.repository.getUserTaskPlan(actor.id, taskId),
       this.repository.listTaskCheckpoints(taskId),
+      task.workflowRunId ? this.repository.getWorkflowPlan(task.workflowRunId) : Promise.resolve(null),
     ]);
     return {
       task,
@@ -771,6 +776,7 @@ export class MarketingService {
       recurringDefinition,
       personalPlan,
       checkpoints,
+      workflowPlan,
     };
   }
 
@@ -791,21 +797,30 @@ export class MarketingService {
 
   async addCheckpoint(actor: User, taskId: string, input: unknown) {
     const parsed = CheckpointInputSchema.parse(input);
-    await this.requireVisibleTask(actor, taskId);
+    const task = await this.requireVisibleTask(actor, taskId);
+    if (actor.role !== "HEAD_OF_MARKETING" && task.creatorId !== actor.id && task.assigneeId !== actor.id) {
+      throw new ApplicationError("FORBIDDEN", "Checkpointni faqat mas’ul yoki yaratuvchi o‘zgartira oladi.");
+    }
     return this.repository.addTaskCheckpoint({ taskId, actorId: actor.id, title: parsed.title, dueAt: parsed.dueAt ?? null });
   }
 
   async toggleCheckpoint(actor: User, id: string) {
     const checkpoint = await this.repository.getTaskCheckpoint(id);
     if (!checkpoint) throw new ApplicationError("NOT_FOUND", "Checkpoint topilmadi.");
-    await this.requireVisibleTask(actor, checkpoint.taskId);
+    const task = await this.requireVisibleTask(actor, checkpoint.taskId);
+    if (actor.role !== "HEAD_OF_MARKETING" && task.creatorId !== actor.id && task.assigneeId !== actor.id) {
+      throw new ApplicationError("FORBIDDEN", "Checkpointni faqat mas’ul yoki yaratuvchi o‘zgartira oladi.");
+    }
     return this.repository.toggleTaskCheckpoint({ id, actorId: actor.id });
   }
 
   async removeCheckpoint(actor: User, id: string) {
     const checkpoint = await this.repository.getTaskCheckpoint(id);
     if (!checkpoint) throw new ApplicationError("NOT_FOUND", "Checkpoint topilmadi.");
-    await this.requireVisibleTask(actor, checkpoint.taskId);
+    const task = await this.requireVisibleTask(actor, checkpoint.taskId);
+    if (actor.role !== "HEAD_OF_MARKETING" && task.creatorId !== actor.id && task.assigneeId !== actor.id) {
+      throw new ApplicationError("FORBIDDEN", "Checkpointni faqat mas’ul yoki yaratuvchi o‘zgartira oladi.");
+    }
     await this.repository.removeTaskCheckpoint({ id, actorId: actor.id });
     return { ok: true };
   }
@@ -874,6 +889,9 @@ export class MarketingService {
   ): Promise<Task> {
     const action = TaskActionInputSchema.parse(input);
     const task = await this.requireVisibleTask(actor, taskId);
+    if (action.action === "SUBMIT_REVIEW" && task.creatorId === actor.id && task.assigneeId === actor.id) {
+      return this.performTaskAction(actor, taskId, { ...action, action: "COMPLETE_SELF" }, options);
+    }
     const actorContext = actorFromUser(actor);
     const access = taskAccess(task);
 
@@ -881,7 +899,7 @@ export class MarketingService {
       throw new ApplicationError("CONFLICT", `${action.action} amali vazifaning ${task.status} holatida bajarilmaydi.`);
     }
 
-    const assigneeAction = ["ACCEPT", "BLOCK", "RESUME", "SUBMIT_REVIEW"].includes(action.action);
+    const assigneeAction = ["ACCEPT", "BLOCK", "RESUME", "SUBMIT_REVIEW", "COMPLETE_SELF"].includes(action.action);
     const reviewerAction = ["APPROVE", "REQUEST_REVISION"].includes(action.action);
     if (assigneeAction && !isAssignee(actorContext, access)) {
       throw new ApplicationError("FORBIDDEN", "Bu amalni faqat vazifa mas’uli bajara oladi.");
@@ -889,8 +907,19 @@ export class MarketingService {
     if (reviewerAction && !isHead(actorContext) && !isCreator(actorContext, access)) {
       throw new ApplicationError("FORBIDDEN", "Vazifani faqat yaratuvchi yoki Marketing rahbari tekshira oladi.");
     }
+    if (action.action === "COMPLETE_SELF" && (task.creatorId !== actor.id || task.assigneeId !== actor.id)) {
+      throw new ApplicationError("FORBIDDEN", "Vazifani faqat yaratuvchi va mas’ul bir odam bo‘lsa bevosita tasdiqlash mumkin.");
+    }
+    const workflowPlan = task.workflowRunId && ["SUBMIT_REVIEW", "COMPLETE_SELF"].includes(action.action)
+      ? await this.repository.getWorkflowPlan(task.workflowRunId) : null;
+    const isNewWorkflow = Boolean(workflowPlan);
+    const hasNextStep = workflowPlan?.steps.some((step) => step.position > workflowPlan.currentPosition) ?? false;
+    if (["SUBMIT_REVIEW", "COMPLETE_SELF"].includes(action.action) && hasNextStep &&
+      (!action.nextDeadline || Date.parse(action.nextDeadline) <= Date.now())) {
+      throw new ApplicationError("INVALID_INPUT", "Keyingi bosqichning aniq muddatini ilovada belgilang.");
+    }
 
-    if (action.action === "SUBMIT_REVIEW") {
+    if (action.action === "SUBMIT_REVIEW" || action.action === "COMPLETE_SELF") {
       const checklist = await this.repository.getPostingChecklist(taskId);
       if (checklist && checklist.items.some((item) => !item.isCompleted)) {
         throw new ApplicationError("INVALID_INPUT", "Tekshiruvga yuborishdan oldin joylash ro‘yxatidagi barcha bandlarni bajaring.");
@@ -903,12 +932,13 @@ export class MarketingService {
       throw new ApplicationError("FORBIDDEN", "Vazifani faqat Marketing rahbari qayta ocha oladi.");
     }
 
-    const transitionedTask = await this.repository.transitionTask({
-      taskId,
-      actorId: actor.id,
-      newStatus: statusForAction(action.action),
-      reason: action.reason,
-    });
+    const transitionedTask = action.action === "COMPLETE_SELF"
+      ? await this.repository.completeSelfOwnedTask({ taskId, actorId: actor.id, nextDeadline: action.nextDeadline ?? null })
+      : action.action === "SUBMIT_REVIEW" && isNewWorkflow
+        ? await this.repository.submitWorkflowStepForReview({ taskId, actorId: actor.id, nextDeadline: action.nextDeadline ?? null })
+        : await this.repository.transitionTask({
+          taskId, actorId: actor.id, newStatus: statusForAction(action.action), reason: action.reason,
+        });
 
     if (action.action === "ACCEPT") {
       // Browser actions also confirm the result to the actor's bot chat.
@@ -933,7 +963,7 @@ export class MarketingService {
           [actor.id], false, true,
         );
       }
-    } else if (action.action === "APPROVE") {
+    } else if (action.action === "APPROVE" || action.action === "COMPLETE_SELF") {
       await this.dispatchWorkflowNotification(
         { event: "TASK_COMPLETED", task: transitionedTask, actor },
         [task.assigneeId, ...(options.deferNotifications ? [task.creatorId, actor.id] : [])],
@@ -949,6 +979,12 @@ export class MarketingService {
               const creator = await this.repository.getUserById(nextTask.creatorId);
               if (assignee?.isActive) {
                 await this.notificationQueue.queueAssignment({ task: nextTask, assignee, creator: creator ?? actor });
+              }
+              if (nextTask.participantIds?.length) {
+                await this.dispatchWorkflowNotification(
+                  { event: "WORKFLOW_STEP_ACTIVATED", task: nextTask, actor },
+                  nextTask.participantIds, false, true,
+                );
               }
             } else {
               await this.notifyGeneratedWorkflowTask(nextTask, actor);
@@ -1033,14 +1069,36 @@ export class MarketingService {
       throw new ApplicationError("FORBIDDEN", "Workflow’ni faqat Marketing rahbari boshlashi mumkin.");
     }
     const parsed = StartWorkflowInputSchema.parse(input);
+    if (Date.parse(parsed.firstDeadline) <= Date.now()) {
+      throw new ApplicationError("INVALID_INPUT", "Birinchi bosqich muddati kelajakda bo‘lishi kerak.");
+    }
+    const template = (await this.repository.listWorkflowTemplates()).find((item) => item.id === parsed.templateId);
+    if (!template || template.steps.length !== Object.keys(parsed.stepAssignments).length ||
+      template.steps.some((step) => !parsed.stepAssignments[step.id]?.ownerId)) {
+      throw new ApplicationError("INVALID_INPUT", "Har bir bosqich uchun mas’ulni tanlang.");
+    }
+    const involvedIds = [...new Set(Object.values(parsed.stepAssignments).flatMap((step) => [step.ownerId, ...step.participantIds]))];
+    const involved = await Promise.all(involvedIds.map((id) => this.repository.getUserById(id)));
+    if (involved.some((user) => !user?.isActive)) {
+      throw new ApplicationError("INVALID_INPUT", "Bosqich mas’uli va ishtirokchilari faol bo‘lishi kerak.");
+    }
     const task = await this.repository.startWorkflowRun({
       templateId: parsed.templateId,
       actorId: actor.id,
       subject: parsed.subject,
-      assigneeMap: parsed.assigneeMap,
+      firstDeadline: parsed.firstDeadline,
+      stepAssignments: parsed.stepAssignments,
     });
     const notification = await this.notifyGeneratedWorkflowTask(task, actor);
+    const summary = template.steps.map((step) => `${step.position}. ${step.title}`).join("\n").slice(0, 3000);
+    await this.dispatchWorkflowNotification(
+      { event: "WORKFLOW_PLAN_SHARED", task, actor, comment: summary }, involvedIds, false, Boolean(this.notificationQueue),
+    );
     return { task, notification };
+  }
+
+  listWorkflowPlans(actor: User) {
+    return this.repository.listWorkflowPlans(actor.id, actor.role === "HEAD_OF_MARKETING");
   }
 
   async recoverWorkflowRuns() {
@@ -1055,11 +1113,18 @@ export class MarketingService {
       this.repository.getUserById(task.assigneeId),
     ]);
     if (!assignee?.isActive) return { status: "FAILED" as const, reason: "ASSIGNEE_NOT_ONBOARDED" as const };
-    return this.notificationDispatcher.notifyAssignment({
+    const result = await this.notificationDispatcher.notifyAssignment({
       task,
       creator: creator ?? fallbackCreator ?? assignee,
       assignee,
     });
+    if (task.participantIds?.length) {
+      await this.dispatchWorkflowNotification(
+        { event: "WORKFLOW_STEP_ACTIVATED", task, actor: creator ?? fallbackCreator ?? assignee },
+        task.participantIds, false, Boolean(this.notificationQueue),
+      );
+    }
+    return result;
   }
 
   async createRecurrence(actor: User, taskId: string, input: unknown, now = new Date()) {
@@ -1400,7 +1465,7 @@ export class MarketingService {
     if (!task) {
       throw new ApplicationError("NOT_FOUND", "Vazifa topilmadi.");
     }
-    if (!isHead(actorFromUser(actor)) && task.creatorId !== actor.id && task.assigneeId !== actor.id) {
+    if (!isHead(actorFromUser(actor)) && task.creatorId !== actor.id && task.assigneeId !== actor.id && !task.participantIds?.includes(actor.id)) {
       throw new ApplicationError("FORBIDDEN", "Bu vazifaga kirish huquqingiz yo‘q.");
     }
     return task;

@@ -35,7 +35,9 @@ export type WorkflowNotificationEvent =
   | "TASK_ACCEPTED"
   | "TASK_COMPLETED"
   | "REVISION_REQUESTED"
-  | "TASK_BLOCKED";
+  | "TASK_BLOCKED"
+  | "WORKFLOW_PLAN_SHARED"
+  | "WORKFLOW_STEP_ACTIVATED";
 
 export interface WorkflowNotificationInput {
   readonly event: WorkflowNotificationEvent;

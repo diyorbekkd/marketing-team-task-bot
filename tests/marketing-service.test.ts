@@ -169,6 +169,10 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     archiveWorkflowTemplate: vi.fn(async () => true),
     saveWorkflowTemplateVersion: vi.fn(async () => "91000000-0000-4000-8000-000000000009"),
     startWorkflowRun: vi.fn(async () => task()),
+    getWorkflowPlan: vi.fn(async () => null),
+    listWorkflowPlans: vi.fn(async () => []),
+    submitWorkflowStepForReview: vi.fn(async () => task({ status: "REVIEW" })),
+    completeSelfOwnedTask: vi.fn(async () => task({ status: "DONE" })),
     advanceWorkflowRun: vi.fn(async () => null),
     recoverWorkflowRuns: vi.fn(async () => []),
     claimReportDelivery: vi.fn(async () => true),
@@ -1303,6 +1307,60 @@ describe("MarketingService MVP permissions", () => {
   });
 
   describe("marketing workflows", () => {
+    const handoffPlan = {
+      id: "90000000-0000-4000-8000-000000000001", subject: "Kampaniya", templateName: "Kontent",
+      status: "ACTIVE" as const, currentPosition: 1,
+      steps: [
+        { id: "90000000-0000-4000-8000-000000000002", position: 1, title: "Ssenariy", ownerId: assignee.id,
+          participantIds: [], estimatedMinutes: 90, checkpointTitles: [], taskId: ids.task, taskStatus: "IN_PROGRESS", deadline: "2099-09-08T14:00:00.000Z" },
+        { id: "90000000-0000-4000-8000-000000000003", position: 2, title: "Syomka", ownerId: creator.id,
+          participantIds: [], estimatedMinutes: 60, checkpointTitles: [], taskId: null, taskStatus: null, deadline: null },
+      ],
+    };
+
+    it("requires the next exact deadline before an owner submits a workflow step", async () => {
+      const current = task({ status: "IN_PROGRESS", workflowRunId: handoffPlan.id });
+      const repo = repository({ getTask: vi.fn(async () => current), getWorkflowPlan: vi.fn(async () => handoffPlan) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.performTaskAction(assignee, current.id, { action: "SUBMIT_REVIEW" }))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.submitWorkflowStepForReview).not.toHaveBeenCalled();
+      await service.performTaskAction(assignee, current.id, { action: "SUBMIT_REVIEW", nextDeadline: "2099-09-09T14:00:00.000Z" });
+      expect(repo.submitWorkflowStepForReview).toHaveBeenCalledWith({ taskId: current.id, actorId: assignee.id,
+        nextDeadline: "2099-09-09T14:00:00.000Z" });
+    });
+
+    it("lets a creator who owns the task finish directly, while another owner cannot", async () => {
+      const current = task({ status: "IN_PROGRESS", creatorId: head.id, assigneeId: head.id, workflowRunId: handoffPlan.id });
+      const repo = repository({ getTask: vi.fn(async () => current), getWorkflowPlan: vi.fn(async () => handoffPlan),
+        completeSelfOwnedTask: vi.fn(async () => ({ ...current, status: "DONE" as const, completedAt: "2099-09-08T14:00:00.000Z" })) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.performTaskAction(assignee, current.id, { action: "COMPLETE_SELF", nextDeadline: "2099-09-09T14:00:00.000Z" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      await service.performTaskAction(head, current.id, { action: "COMPLETE_SELF", nextDeadline: "2099-09-09T14:00:00.000Z" });
+      expect(repo.completeSelfOwnedTask).toHaveBeenCalledWith({ taskId: current.id, actorId: head.id,
+        nextDeadline: "2099-09-09T14:00:00.000Z" });
+      expect(repo.advanceWorkflowRun).toHaveBeenCalled();
+    });
+
+    it("treats a self-owned review request from the bot as direct completion", async () => {
+      const current = task({ status: "IN_PROGRESS", creatorId: head.id, assigneeId: head.id });
+      const repo = repository({ getTask: vi.fn(async () => current),
+        completeSelfOwnedTask: vi.fn(async () => ({ ...current, status: "DONE" as const })) });
+      await new MarketingService(repo, notifier()).performTaskAction(head, current.id, { action: "SUBMIT_REVIEW" });
+      expect(repo.completeSelfOwnedTask).toHaveBeenCalledWith({ taskId: current.id, actorId: head.id, nextDeadline: null });
+      expect(repo.transitionTask).not.toHaveBeenCalled();
+    });
+
+    it("shows a workflow task to its participant but prevents status changes", async () => {
+      const current = task({ participantIds: [unrelated.id] });
+      const repo = repository({ getTask: vi.fn(async () => current) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.getTaskDetails(unrelated, current.id)).resolves.toMatchObject({ task: current });
+      await expect(service.performTaskAction(unrelated, current.id, { action: "ACCEPT" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
     it("lets only active Head archive an active template", async () => {
       const repo = repository();
       const service = new MarketingService(repo, notifier());
@@ -1322,7 +1380,7 @@ describe("MarketingService MVP permissions", () => {
       const input = {
         sourceTemplateId: "91000000-0000-4000-8000-000000000001",
         name: "Reels yangilangan", description: null,
-        steps: [{ title: "Ssenariy", description: null, assigneeRole: "CONTENT_MARKETER", priority: "normal", dueAfterHours: 24 }],
+        steps: [{ title: "Ssenariy", description: null, assigneeRole: "CONTENT_MARKETER", priority: "normal", estimatedMinutes: 90, checkpointTitles: ["Matn tayyor"] }],
       };
       await expect(service.saveWorkflowTemplate(assignee, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
       expect(repo.saveWorkflowTemplateVersion).not.toHaveBeenCalled();
@@ -1335,10 +1393,17 @@ describe("MarketingService MVP permissions", () => {
 
     it("allows only Head to start a reusable workflow and notifies its first assignee", async () => {
       const firstTask = task({ workflowRunId: "90000000-0000-4000-8000-000000000001", workflowStepId: "90000000-0000-4000-8000-000000000002" });
-      const repo = repository({ startWorkflowRun: vi.fn(async () => firstTask) });
+      const stepId = "90000000-0000-4000-8000-000000000002";
+      const repo = repository({ startWorkflowRun: vi.fn(async () => firstTask), listWorkflowTemplates: vi.fn(async () => [{
+        id: "91000000-0000-4000-8000-000000000001", slug: "reels", name: "Reels", description: null,
+        isActive: true, isSystem: true, steps: [{ id: stepId, templateId: "91000000-0000-4000-8000-000000000001",
+          position: 1, title: "Ssenariy", description: null, assigneeRole: "CONTENT_MARKETER" as const, priority: "normal" as const,
+          dueAfterHours: 24, estimatedMinutes: 90, checkpointTitles: [] }],
+      }]) });
       const notifications = notifier();
       const service = new MarketingService(repo, notifications);
-      const input = { templateId: "91000000-0000-4000-8000-000000000001", subject: "Yangi filial" };
+      const input = { templateId: "91000000-0000-4000-8000-000000000001", subject: "Yangi filial",
+        firstDeadline: "2099-09-08T14:00:00.000Z", stepAssignments: { [stepId]: { ownerId: assignee.id, participantIds: [creator.id] } } };
 
       await expect(service.startWorkflow(creator, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
       await expect(service.startWorkflow(head, input)).resolves.toMatchObject({ task: firstTask });
