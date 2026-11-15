@@ -88,6 +88,15 @@ describe("durable Telegram notification outbox", () => {
     expect(inner.notifyWorkflow).not.toHaveBeenCalled();
   });
 
+  it("queues the new plan and step activation messages with valid retry payloads", async () => {
+    const repo = repository();
+    const queue = new ReliableNotificationDispatcher(repo, dispatcher());
+    for (const event of ["WORKFLOW_PLAN_SHARED", "WORKFLOW_STEP_ACTIVATED"] as const) {
+      await queue.queueWorkflow({ event, task, actor: creator, recipients: [assignee] });
+    }
+    expect(repo.enqueueNotification).toHaveBeenCalledTimes(2);
+  });
+
   it("claims before sending and marks the per-recipient row sent", async () => {
     const repo = repository();
     const inner = dispatcher();
