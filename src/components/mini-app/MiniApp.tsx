@@ -6,6 +6,7 @@ import { CalendarView } from "./CalendarView";
 import { MyDayPanel } from "./MyDayPanel";
 import { TaskPlanningPanel, type Checkpoint, type PersonalPlan } from "./TaskPlanningPanel";
 import { WebBotLogin } from "./WebBotLogin";
+import { AssistantPanel } from "./AssistantPanel";
 import type { DayPlanGroup } from "@/domain/planning";
 import "./mini-app.css";
 
@@ -508,6 +509,7 @@ export default function MiniApp() {
   const [showProfile, setShowProfile] = useState(false);
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [showWorkflowPlans, setShowWorkflowPlans] = useState(false);
+  const [showAssistant, setShowAssistant] = useState(false);
   const [openWorkflowInTemplates, setOpenWorkflowInTemplates] = useState(false);
   const [roleEditUser, setRoleEditUser] = useState<User | null>(null);
   const [deactivateTarget, setDeactivateTarget] = useState<User | null>(null);
@@ -864,6 +866,7 @@ export default function MiniApp() {
           <span className="ma-username">{currentUser?.displayName}</span>
         </button>
         <div className="ma-topbar-actions">
+          <button className="ma-icon-btn ma-assistant-trigger" onClick={() => setShowAssistant(true)} aria-label="AI yordamchi">✦</button>
           {isHead && pendingUsers.length > 0 && (
             <button
               className="ma-badge-btn"
@@ -967,6 +970,8 @@ export default function MiniApp() {
       </main>
 
       <BottomNav nav={nav} onChange={setNav} showTeam={isHead} />
+
+      {showAssistant && <AssistantPanel onClose={() => setShowAssistant(false)} />}
 
       {selectedTaskId && (
         <TaskDetailPanel

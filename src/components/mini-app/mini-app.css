@@ -1140,6 +1140,23 @@
   gap: 20px;
 }
 
+/* Assistant stays inside the existing keyboard-aware sheet. */
+.ma-assistant-trigger { color: var(--primary); font-size: 1.25rem; }
+.ma-assistant-panel { height: min(760px, calc(var(--ma-keyboard-height, 100dvh) - 12px)); }
+.ma-assistant-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+.ma-assistant-intro { color: var(--muted); line-height: 1.5; }
+.ma-assistant-turn { display: flex; flex-direction: column; gap: 8px; }
+.ma-assistant-user { align-self: flex-end; max-width: 85%; padding: 10px 14px; border-radius: 16px 16px 4px 16px; background: var(--primary); color: #fff; white-space: pre-wrap; }
+.ma-assistant-reply { align-self: flex-start; max-width: 95%; padding: 10px 14px; border-radius: 16px 16px 16px 4px; background: var(--paper); color: var(--ink); line-height: 1.5; white-space: pre-wrap; }
+.ma-assistant-suggestions { display: flex; gap: 8px; overflow-x: auto; padding: 8px 18px; }
+.ma-assistant-suggestions button { flex: 0 0 auto; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 8px 10px; border-radius: 999px; }
+.ma-assistant-form { border-top: 1px solid var(--line); padding: 12px 18px calc(12px + env(safe-area-inset-bottom)); display: flex; gap: 8px; flex-wrap: wrap; }
+.ma-assistant-form textarea { flex: 1; min-width: 0; resize: vertical; max-height: 130px; border: 1px solid var(--line); border-radius: 12px; padding: 10px; background: var(--paper); color: var(--ink); font: inherit; }
+.ma-assistant-form button { border: 0; border-radius: 12px; padding: 0 16px; background: var(--primary); color: #fff; font-weight: 700; }
+.ma-assistant-form button:disabled, .ma-assistant-suggestions button:disabled { opacity: .5; }
+.ma-assistant-error { width: 100%; margin: 0; color: var(--danger, #b91c1c); }
+.ma-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+
 @media (max-width: 639px) {
   /* iOS WebKit zooms an entire form when a focused control is below 16px. */
   .ma-shell input, .ma-shell select, .ma-shell textarea { font-size: 16px; }

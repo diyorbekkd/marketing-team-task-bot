@@ -10,7 +10,11 @@ Marketing Team Task Bot is a deterministic task-management system for one five-p
 4. Who has too much workload and who has capacity?
 5. Which marketing workflow stage repeatedly becomes a bottleneck?
 
-The production application does not use AI. Metrics and reports are calculated from current records and immutable history.
+Metrics and reports are calculated from current records and immutable history. The Head later authorized an optional AI work assistant for planning and SOP questions; its suggestions never change factual reports or task state.
+
+## AI work assistant (authorized 2026-11-17)
+
+Active team members can ask the assistant in the bot's private chat or the Mini App. It can summarize the open tasks already visible to that member, suggest a daily order, break work into steps, and answer questions from the Head-approved SOP file. Head may ask about team-wide work; employees see only their own task scope. The assistant cannot create, edit, approve, or complete tasks. It must say when an SOP rule is not yet written. Telegram group messages remain outside AI chat. A per-user allowance of 30 prompts per Tashkent day and a short answer cap limit cost; model access is server-side only. Conversation history is private to its user.
 
 ## Team and identities
 
@@ -229,4 +233,4 @@ The Reports view uses a 30-day window by default. Employee data is attributed by
 
 Subtasks and lightweight Telegram message relay remain planned. Relay should use Telegram copy/forward semantics and should not require permanent application storage of the message body or file.
 
-MVP explicitly excludes AI features, categories, advanced project management, effort points, time tracking, real-time chat/presence, Google Calendar, Notion, Bitrix, Gantt charts, salary/KPI features, gamification, and a generalized branching workflow engine.
+The original MVP excluded AI features, categories, advanced project management, effort points, time tracking, real-time chat/presence, Google Calendar, Notion, Bitrix, Gantt charts, salary/KPI features, gamification, and a generalized branching workflow engine. The later AI assistant scope is defined above.

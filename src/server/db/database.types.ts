@@ -87,6 +87,20 @@ type WorkflowRunRow = {
   step_assignments: Json | null;
 }
 
+type AssistantTurnRow = {
+  id: string;
+  user_id: string;
+  request_key: string;
+  source: "WEB" | "TELEGRAM";
+  user_text: string;
+  answer_text: string | null;
+  status: "PENDING" | "COMPLETE" | "FAILED";
+  input_tokens: number | null;
+  output_tokens: number | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
 type TaskCommentRow = {
   id: string;
   task_id: string;
@@ -301,9 +315,19 @@ export interface Database {
       workflow_templates: TableDefinition<WorkflowTemplateRow>;
       workflow_template_steps: TableDefinition<WorkflowTemplateStepRow>;
       workflow_runs: TableDefinition<WorkflowRunRow>;
+      assistant_turns: TableDefinition<AssistantTurnRow>;
     };
     Views: Record<never, never>;
     Functions: {
+      claim_assistant_turn: {
+        Args: { p_user_id: string; p_request_key: string; p_source: string; p_user_text: string };
+        Returns: Json;
+      };
+      finish_assistant_turn: {
+        Args: { p_turn_id: string; p_user_id: string; p_answer_text: string | null;
+          p_input_tokens: number | null; p_output_tokens: number | null };
+        Returns: AssistantTurnRow;
+      };
       register_telegram_user: {
         Args: {
           p_telegram_user_id: string;

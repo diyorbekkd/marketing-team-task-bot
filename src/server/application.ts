@@ -7,6 +7,9 @@ import { SupabaseMarketingRepository } from "@/server/repositories/supabase-mark
 import { ReportingService } from "@/application/reporting-service";
 import { ReminderService } from "@/application/reminder-service";
 import { NotificationRetryService, ReliableNotificationDispatcher } from "@/server/notifications/reliable-notification-dispatcher";
+import { AssistantService } from "@/application/assistant-service";
+import { GatewayAssistantModel } from "@/server/assistant/gateway-assistant-model";
+import { SupabaseAssistantRepository } from "@/server/repositories/supabase-assistant-repository";
 
 let service: MarketingService | undefined;
 let reportingService: ReportingService | undefined;
@@ -14,6 +17,14 @@ let reminderService: ReminderService | undefined;
 let telegramDispatcher: TelegramNotificationDispatcher | undefined;
 let reliableDispatcher: ReliableNotificationDispatcher | undefined;
 let notificationRetryService: NotificationRetryService | undefined;
+let assistantService: AssistantService | undefined;
+
+export function getAssistantService(): AssistantService {
+  if (!assistantService) assistantService = new AssistantService(
+    new SupabaseAssistantRepository(), new GatewayAssistantModel(), getMarketingService(),
+  );
+  return assistantService;
+}
 
 function getTelegramDispatcher() {
   if (!telegramDispatcher) {

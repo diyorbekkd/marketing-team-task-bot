@@ -2,6 +2,12 @@
 
 Each sprint is intentionally bounded. Later-sprint work should not leak into an earlier sprint without an explicit scope change.
 
+## AI work assistant — authorized 2026-11-17
+
+- Private bot and Mini App conversations share one actor-scoped service.
+- Provide daily planning, task decomposition, and approved SOP answers without task mutation.
+- Bound spending with a daily allowance and output-token cap; keep credentials server-side and verify on staging before production.
+
 ## Sprint 0 — Foundation
 
 - Establish repository standards, documentation, and quality commands.

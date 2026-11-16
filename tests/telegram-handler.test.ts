@@ -3,6 +3,7 @@ import { ApplicationError } from "../src/application/errors";
 import type { MarketingService } from "../src/application/marketing-service";
 import type { Task, User } from "../src/domain/models";
 import { createTelegramUpdateHandler } from "../src/telegram/handler";
+import type { AssistantService } from "../src/application/assistant-service";
 import { TelegramUpdateSchema } from "../src/telegram/update";
 
 const actor: User = {
@@ -73,6 +74,26 @@ describe("Telegram MVP handler", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("answers a private question through the scoped assistant but ignores group conversation", async () => {
+    const service = serviceMock();
+    const assistant = { respond: vi.fn(async () => ({ status: "COMPLETE", answer: "Avval muhim ishni bajaring.", reused: false })) } as unknown as AssistantService;
+    const handler = createTelegramUpdateHandler(service, handlerConfig, assistant);
+    const privateUpdate = TelegramUpdateSchema.parse({
+      update_id: 812, message: { message_id: 10, chat: { id: 42, type: "private" },
+        from: { id: 42, is_bot: false, first_name: "Team" }, text: "Bugun nimadan boshlay?" },
+    });
+    expect((await handler(privateUpdate)).messages[0]?.text).toContain("muhim ishni");
+    expect(assistant.respond).toHaveBeenCalledWith(actor, {
+      source: "TELEGRAM", requestKey: "tg_812", text: "Bugun nimadan boshlay?",
+    });
+    const groupUpdate = TelegramUpdateSchema.parse({
+      update_id: 813, message: { message_id: 11, chat: { id: -100123, type: "supergroup" },
+        from: { id: 42, is_bot: false, first_name: "Team" }, text: "Bugun nimadan boshlay?" },
+    });
+    expect((await handler(groupUpdate)).messages).toEqual([]);
+    expect(assistant.respond).toHaveBeenCalledTimes(1);
   });
 
   it("onboards a private-chat user from Telegram identity", async () => {

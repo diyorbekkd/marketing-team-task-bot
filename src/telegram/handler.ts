@@ -1,4 +1,5 @@
 import { ApplicationError } from "@/application/errors";
+import type { AssistantService } from "@/application/assistant-service";
 import type { MarketingService } from "@/application/marketing-service";
 import type { Task, User } from "@/domain/models";
 import type { PostingChecklist } from "@/domain/models";
@@ -209,7 +210,7 @@ async function handleTaskCreationText(
   return { messages: [{ chatId, text: lines.join("\n") }] };
 }
 
-export function createTelegramUpdateHandler(service: MarketingService, config: TelegramHandlerConfig) {
+export function createTelegramUpdateHandler(service: MarketingService, config: TelegramHandlerConfig, assistant?: AssistantService) {
   return async function handle(update: TelegramUpdate): Promise<TelegramHandlerResult> {
     try {
       if (update.callback_query?.data) {
@@ -302,7 +303,7 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
           messages: [{
             chatId: message.chat.id,
             text: user.isActive
-              ? `Xush kelibsiz, ${user.displayName}. Rolingiz: ${uz.role[user.role]}. Vazifalarni boshqarish uchun Mini App’ni oching.`
+              ? `Xush kelibsiz, ${user.displayName}. Rolingiz: ${uz.role[user.role]}. Vazifalarni boshqarish uchun Mini App’ni oching. Savol yoki reja uchun shu chatga yozing — AI yordamchi javob beradi.`
               : user.deactivatedAt
                 ? "Siz hozir faol marketing jamoasida emassiz. Marketing rahbari bilan bog‘laning."
                 : `Rahmat, ${user.displayName}. Hisobingiz Marketing rahbari tomonidan faollashtirilishini kutmoqda.`,
@@ -381,6 +382,14 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
         throw new ApplicationError("FORBIDDEN", "Vazifalarni faqat belgilangan marketing guruhida yaratish mumkin.");
       }
 
+      if (isPrivateChat && assistant && (firstWord === "/ai" || !firstWord.startsWith("/"))) {
+        const question = firstWord === "/ai" ? text.replace(/^\/ai(?:@\w+)?\s*/i, "").trim() : text;
+        if (!question) return { messages: [{ chatId: message.chat.id, text: "Nimani rejalash yoki aniqlashtirish kerak? Savolingizni yozing." }] };
+        const response = await assistant.respond(actor, {
+          source: "TELEGRAM", requestKey: `tg_${update.update_id}`, text: question,
+        });
+        return { messages: [{ chatId: message.chat.id, text: response.answer?.slice(0, 3500) ?? "Javob tayyorlanmoqda. Birozdan keyin qayta urinib ko‘ring." }] };
+      }
       return { messages: [] };
     } catch (error) {
       const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;

@@ -4,7 +4,7 @@ These rules apply to every coding agent working in this repository.
 
 1. Inspect the repository, branch, status, and nearby code before editing. Do not work directly on `main`; use the branch assigned to the task.
 2. Read `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`, and the relevant sprint scope in `docs/SPRINTS.md` before major work.
-3. The production product must not use AI. AI tools are development aids only.
+3. The user authorized an optional AI work assistant on 2026-11-17. It may read actor-scoped tasks and Head-approved SOP text for suggestions, but must not mutate tasks or replace deterministic reports. The earlier AI exclusion no longer applies to this bounded assistant.
 4. Respect the active sprint. Do not implement later-sprint features unless the user explicitly changes scope.
 5. Do not silently alter unrelated behavior or overwrite unrelated user work.
 6. Use TypeScript with strict typing and runtime validation at external boundaries.

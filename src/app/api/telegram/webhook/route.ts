@@ -1,9 +1,11 @@
 import { ConfigurationError, getTeamBootstrapConfig, getTelegramConfig } from "@/server/config";
-import { getMarketingService } from "@/server/application";
+import { getAssistantService, getMarketingService } from "@/server/application";
 import { answerTelegramCallback, sendTelegramMessage } from "@/telegram/client";
 import { createTelegramUpdateHandler } from "@/telegram/handler";
 import { TelegramUpdateSchema } from "@/telegram/update";
 import { isValidWebhookSecret } from "@/telegram/webhook-security";
+
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
   let config: ReturnType<typeof getTelegramConfig>;
@@ -55,7 +57,7 @@ export async function POST(request: Request) {
   const result = await createTelegramUpdateHandler(getMarketingService(), {
     marketingGroupId: teamConfig.groupId,
     headTelegramUserId: teamConfig.headTelegramUserId,
-  })(parsed.data);
+  }, getAssistantService())(parsed.data);
   if (result.callbackQueryId) {
     await answerTelegramCallback(config.botToken, result.callbackQueryId);
   }
