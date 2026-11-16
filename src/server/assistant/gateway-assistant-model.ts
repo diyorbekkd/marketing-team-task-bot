@@ -35,7 +35,9 @@ export class GatewayAssistantModel implements AssistantModel {
     const localNow = new Intl.DateTimeFormat("sv-SE", {
       timeZone: "Asia/Tashkent", dateStyle: "short", timeStyle: "short",
     }).format(new Date());
-    const result = await generateText({
+    let result: Awaited<ReturnType<typeof generateText>>;
+    try {
+      result = await generateText({
       model: process.env.AI_GATEWAY_MODEL || DEFAULT_MODEL,
       instructions: [
         "Sen marketing jamoasining do‘stona, puxta va qisqa gapiradigan ish yordamchisisan. Foydalanuvchining tilida javob ber; odatda o‘zbekcha.",
@@ -58,7 +60,25 @@ export class GatewayAssistantModel implements AssistantModel {
       ],
       maxOutputTokens: 700,
       abortSignal: AbortSignal.timeout(20_000),
-    });
+      });
+    } catch (error) {
+      // Record only Gateway's error classification, never prompts, task data,
+      // credentials, or the request body. This distinguishes billing/policy
+      // refusals from model and network failures in Preview runtime logs.
+      let cause: unknown = error;
+      for (let depth = 0; depth < 3 && cause && typeof cause === "object"; depth++) {
+        const gatewayError = cause as { name?: string; type?: string; statusCode?: number;
+          message?: string; ruleId?: string; cause?: unknown };
+        if (gatewayError.name?.startsWith("Gateway")) {
+          console.error(JSON.stringify({ event: "assistant_gateway_error", name: gatewayError.name,
+            type: gatewayError.type, statusCode: gatewayError.statusCode,
+            message: gatewayError.message?.slice(0, 300), ruleId: gatewayError.ruleId }));
+          break;
+        }
+        cause = gatewayError.cause;
+      }
+      throw error;
+    }
     if (!result.text.trim()) throw new ApplicationError("INTEGRATION_UNAVAILABLE", "AI javob qaytarmadi. Qayta urinib ko‘ring.");
     return { answer: result.text, inputTokens: result.usage.inputTokens ?? null,
       outputTokens: result.usage.outputTokens ?? null };
