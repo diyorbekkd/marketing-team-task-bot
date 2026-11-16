@@ -18,7 +18,9 @@ async function approvedKnowledge(): Promise<string> {
 
 export class GatewayAssistantModel implements AssistantModel {
   isAvailable(): boolean {
-    return Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN);
+    // On Vercel the SDK reads the short-lived OIDC token from the current
+    // request context. It is not necessarily present in process.env at runtime.
+    return Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || process.env.VERCEL_ENV);
   }
 
   async generate(input: Parameters<AssistantModel["generate"]>[0]) {

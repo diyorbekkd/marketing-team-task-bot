@@ -6,7 +6,7 @@ The Head authorized a friendly, task-aware assistant for the private Telegram bo
 
 1. Apply `20261116192837_assistant_turns.sql` to the staging Supabase project only. The migration creates a server-only conversation table and service-role RPCs.
 2. In the Vercel team that owns this project, open **AI Gateway** and add a payment method or credits. Set a **$25 monthly project budget** before live tests. A ChatGPT subscription does not cover Gateway/API usage.
-3. Ensure this Vercel project can use an OIDC token for AI Gateway, or create an AI Gateway key and set `AI_GATEWAY_API_KEY` in Vercel **Preview** environment variables. Never use a `NEXT_PUBLIC_` prefix. `AI_GATEWAY_MODEL` defaults to `openai/gpt-6.1-terra`.
+3. Vercel AI SDK reads the deployment's rotating OIDC token from the request context. An extra API key is normally unnecessary. For local development, create an AI Gateway key and set `AI_GATEWAY_API_KEY` server-side. Never use a `NEXT_PUBLIC_` prefix. `AI_GATEWAY_MODEL` defaults to `openai/gpt-6.1-terra`.
 4. Redeploy Preview after changing environment variables. Sign in as a test team member, open **✦ Ish yordamchisi**, and ask “Bugun nimadan boshlay?”. Ask the same question in a private bot chat after its webhook points to Preview. Telegram group messages do not call AI.
 5. Check task scope with a normal member and the Head. The model sees at most 20 open, scoped tasks per answer. Verify that it says no approved SOP exists when asked for an unwritten rule. Check Vercel AI Gateway usage and costs.
 
