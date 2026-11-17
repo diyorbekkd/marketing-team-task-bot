@@ -55,7 +55,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
       <div className="ma-panel-header"><button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button><span className="ma-panel-title">✦ Ish yordamchisi</span></div>
       <div className="ma-assistant-messages">
         <div className="ma-assistant-intro">Salom! Vazifalarni birga tartiblaymiz. Reja tuzish, ishni qismlarga bo‘lish yoki SOP haqida savol bering.</div>
-        {!available && <div className="ma-notice warning">AI yordamchi hali serverda ulanmagan. Rahbar AI Gateway hisobini faollashtirishi kerak.</div>}
+        {!available && <div className="ma-notice warning">AI yordamchi hali serverda ulanmagan. Rahbar OpenAI API kalitini qo‘shishi kerak.</div>}
         {turns.map((turn) => <div key={turn.id} className="ma-assistant-turn">
           <div className="ma-assistant-user">{turn.userText}</div>
           <div className="ma-assistant-reply">{turn.answerText ?? "O‘ylayapman…"}</div>

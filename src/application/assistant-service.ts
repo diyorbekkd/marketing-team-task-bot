@@ -29,7 +29,7 @@ export class AssistantService {
     if (!actor.isActive) throw new ApplicationError("FORBIDDEN", "AI yordamchidan faqat faol jamoa a’zolari foydalana oladi.");
     const parsed = TurnInputSchema.parse(input);
     if (!this.model.isAvailable()) {
-      throw new ApplicationError("INTEGRATION_UNAVAILABLE", "AI yordamchi hali ulanmagan. Rahbar Vercel AI Gateway to‘lovini faollashtirishi kerak.");
+      throw new ApplicationError("INTEGRATION_UNAVAILABLE", "AI yordamchi hali ulanmagan. Rahbar OpenAI API kalitini serverga qo‘shishi kerak.");
     }
     const claimed = await this.repository.claim({ userId: actor.id, ...parsed });
     if (!claimed.fresh) {

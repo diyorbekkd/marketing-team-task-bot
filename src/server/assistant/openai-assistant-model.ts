@@ -3,10 +3,11 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { generateText } from "ai";
+import { openai } from "@ai-sdk/openai";
 import type { AssistantModel } from "@/application/ports/assistant-model";
 import { ApplicationError } from "@/application/errors";
 
-const DEFAULT_MODEL = "openai/gpt-6.1-terra";
+const DEFAULT_MODEL = "gpt-6.1-terra";
 
 async function approvedKnowledge(): Promise<string> {
   try {
@@ -16,11 +17,9 @@ async function approvedKnowledge(): Promise<string> {
   }
 }
 
-export class GatewayAssistantModel implements AssistantModel {
+export class OpenAIAssistantModel implements AssistantModel {
   isAvailable(): boolean {
-    // On Vercel the SDK reads the short-lived OIDC token from the current
-    // request context. It is not necessarily present in process.env at runtime.
-    return Boolean(process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || process.env.VERCEL_ENV);
+    return Boolean(process.env.OPENAI_API_KEY);
   }
 
   async generate(input: Parameters<AssistantModel["generate"]>[0]) {
@@ -38,7 +37,7 @@ export class GatewayAssistantModel implements AssistantModel {
     let result: Awaited<ReturnType<typeof generateText>>;
     try {
       result = await generateText({
-      model: process.env.AI_GATEWAY_MODEL || DEFAULT_MODEL,
+      model: openai(process.env.OPENAI_MODEL || DEFAULT_MODEL),
       instructions: [
         "Sen marketing jamoasining do‘stona, puxta va qisqa gapiradigan ish yordamchisisan. Foydalanuvchining tilida javob ber; odatda o‘zbekcha.",
         "Vazifalarni rejalash, kichik amallarga bo‘lish, muhimlik va muddatni baholash, bloklarni aniqlash va SOP savollariga javob berishga yordam ber.",
@@ -60,22 +59,20 @@ export class GatewayAssistantModel implements AssistantModel {
       ],
       maxOutputTokens: 700,
       abortSignal: AbortSignal.timeout(20_000),
+      providerOptions: { openai: { reasoningEffort: "low", store: false } },
       });
     } catch (error) {
-      // Record only Gateway's error classification, never prompts, task data,
-      // credentials, or the request body. This distinguishes billing/policy
-      // refusals from model and network failures in Preview runtime logs.
+      // Record the API failure class only. Prompts, task data, credentials,
+      // and the provider response body must stay out of runtime logs.
       let cause: unknown = error;
       for (let depth = 0; depth < 3 && cause && typeof cause === "object"; depth++) {
-        const gatewayError = cause as { name?: string; type?: string; statusCode?: number;
-          message?: string; ruleId?: string; cause?: unknown };
-        if (gatewayError.name?.startsWith("Gateway")) {
-          console.error(JSON.stringify({ event: "assistant_gateway_error", name: gatewayError.name,
-            type: gatewayError.type, statusCode: gatewayError.statusCode,
-            message: gatewayError.message?.slice(0, 300), ruleId: gatewayError.ruleId }));
+        const apiError = cause as { name?: string; statusCode?: number; cause?: unknown };
+        if (apiError.statusCode || apiError.name?.includes("APICall")) {
+          console.error(JSON.stringify({ event: "assistant_openai_error", name: apiError.name,
+            statusCode: apiError.statusCode }));
           break;
         }
-        cause = gatewayError.cause;
+        cause = apiError.cause;
       }
       throw error;
     }

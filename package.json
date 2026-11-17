@@ -20,6 +20,7 @@
     "supabase:status": "supabase status"
   },
   "dependencies": {
+    "@ai-sdk/openai": "4.0.118",
     "@supabase/supabase-js": "2.115.0",
     "ai": "7.0.173",
     "jose": "6.2.17",

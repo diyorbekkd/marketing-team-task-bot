@@ -8,7 +8,7 @@ import { ReportingService } from "@/application/reporting-service";
 import { ReminderService } from "@/application/reminder-service";
 import { NotificationRetryService, ReliableNotificationDispatcher } from "@/server/notifications/reliable-notification-dispatcher";
 import { AssistantService } from "@/application/assistant-service";
-import { GatewayAssistantModel } from "@/server/assistant/gateway-assistant-model";
+import { OpenAIAssistantModel } from "@/server/assistant/openai-assistant-model";
 import { SupabaseAssistantRepository } from "@/server/repositories/supabase-assistant-repository";
 
 let service: MarketingService | undefined;
@@ -21,7 +21,7 @@ let assistantService: AssistantService | undefined;
 
 export function getAssistantService(): AssistantService {
   if (!assistantService) assistantService = new AssistantService(
-    new SupabaseAssistantRepository(), new GatewayAssistantModel(), getMarketingService(),
+    new SupabaseAssistantRepository(), new OpenAIAssistantModel(), getMarketingService(),
   );
   return assistantService;
 }
