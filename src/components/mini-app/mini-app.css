@@ -53,6 +53,15 @@
 .ma-checklist-card p { margin: 10px 0 0; }
 
 .ma-recurrence-card { display: flex; flex-direction: column; gap: 9px; }
+.ma-video-brief { display: grid; gap: 10px; }
+.ma-video-brief .ma-section-head { margin-bottom: 0; }
+.ma-video-brief p { margin: 0; }
+.ma-video-kind-actions, .ma-video-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.ma-video-fields > div { display: grid; gap: 6px; min-width: 0; }
+.ma-video-summary { display: grid; gap: 7px; padding: 11px 12px; border-radius: var(--radius-sm); background: var(--paper); font-size: .84rem; overflow-wrap: anywhere; }
+.ma-video-summary strong { color: var(--primary-dark); }
+.ma-video-summary a { color: var(--primary-dark); font-weight: 650; }
+@media (max-width: 380px) { .ma-video-kind-actions, .ma-video-fields { grid-template-columns: 1fr; } }
 .ma-recurrence-status { width: fit-content; }
 .ma-recurrence-status.paused { background: var(--warning-soft); color: var(--warning-text); }
 .ma-recurrence-status.stopped { background: var(--danger-soft); color: var(--danger-text); }
@@ -770,6 +779,8 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
 }
+.ma-task-search label { grid-column: 1 / -1; color: var(--ink); font-size: .82rem; font-weight: 650; }
+.ma-task-search-clear { grid-column: 1 / -1; justify-self: start; }
 
 .ma-task-search input,
 .ma-task-query-controls select {
@@ -1543,6 +1554,7 @@
 .ma-calendar-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .ma-calendar-legend i { width: 8px; height: 8px; border-radius: 999px; background: var(--primary); }
 .ma-calendar-legend i.publication { background: #8b5cf6; }
+.ma-calendar-legend i.shoot { background: var(--warning); }
 .ma-calendar-days { display: grid; gap: 10px; }
 .ma-calendar-day { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--card); padding: 12px; min-height: 82px; }
 .ma-calendar-day.today { border-color: var(--primary); box-shadow: inset 3px 0 0 var(--primary); }
@@ -1551,6 +1563,7 @@
 .ma-calendar-day > p { margin: 8px 0 0; }
 .ma-calendar-entry { width: 100%; display: grid; gap: 3px; text-align: left; border: 0; border-left: 3px solid var(--primary); border-radius: 10px; background: var(--paper); color: var(--ink); padding: 9px 10px; margin-top: 7px; }
 .ma-calendar-entry.publication { border-left-color: #8b5cf6; }
+.ma-calendar-entry.shoot { border-left-color: var(--warning); }
 .ma-calendar-entry span, .ma-calendar-entry small { color: var(--muted); font-size: 11px; }
 .ma-calendar-entry strong { font-size: 13px; }
 .ma-detail-top { justify-content: space-between; }

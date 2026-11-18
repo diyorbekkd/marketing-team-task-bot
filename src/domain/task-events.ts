@@ -35,6 +35,8 @@ export const TASK_EVENT_TYPES = [
   "CHECKPOINT_COMPLETED",
   "CHECKPOINT_REOPENED",
   "CHECKPOINT_REMOVED",
+  "VIDEO_BRIEF_SAVED",
+  "SHOOT_CONFIRMED",
 ] as const;
 
 export const TaskEventTypeSchema = z.enum(TASK_EVENT_TYPES);

@@ -27,4 +27,15 @@ describe("today's work matrix", () => {
     expect(groups.later_other.map((item) => item.task.id)).toEqual(["checkpoint"]);
     expect(Object.values(groups).slice(1).reduce((sum, items) => sum + items.length, 0)).toBe(groups.today.length);
   });
+
+  it("includes a confirmed shoot today even when the task deadline is later", () => {
+    const groups = groupTodayWork([
+      { id: "shoot", title: "Intervyu", assigneeId: "operator", status: "IN_PROGRESS",
+        deadline: "2026-11-20T13:00:00Z", shootAt: "2026-11-18T05:00:00Z" },
+      { id: "unconfirmed", title: "Keyingi syomka", assigneeId: "operator", status: "IN_PROGRESS",
+        deadline: "2026-11-20T13:00:00Z", shootAt: null },
+    ], [], [], "operator", new Date("2026-11-18T04:00:00Z"));
+    expect(groups.today.map((item) => item.task.id)).toEqual(["shoot"]);
+    expect(groups.today[0].shootToday).toBe(true);
+  });
 });

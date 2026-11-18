@@ -127,6 +127,8 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     }),
     reassignTask: vi.fn(async ({ taskId, newAssigneeId }) => task({ id: taskId, assigneeId: newAssigneeId })),
     createTask: vi.fn(),
+    getTaskVideoBrief: vi.fn(async () => null),
+    saveTaskVideoBrief: vi.fn(),
     updateTask: vi.fn(async ({ patch }) => task(patch)),
     getTask: vi.fn(async () => task()),
     listTaskPage: vi.fn(async () => ({ tasks: [task()], hasMore: false })),
@@ -1387,7 +1389,8 @@ describe("MarketingService MVP permissions", () => {
       await expect(service.saveWorkflowTemplate(head, { ...input, steps: [] })).rejects.toThrow();
       await expect(service.saveWorkflowTemplate(head, input)).resolves.toMatchObject({ id: expect.any(String) });
       expect(repo.saveWorkflowTemplateVersion).toHaveBeenCalledWith(expect.objectContaining({
-        actorId: head.id, sourceTemplateId: input.sourceTemplateId, steps: input.steps,
+        actorId: head.id, sourceTemplateId: input.sourceTemplateId,
+        steps: [{ ...input.steps[0], videoKind: null }],
       }));
     });
 
@@ -1448,6 +1451,83 @@ describe("MarketingService MVP permissions", () => {
       const repo = repository({ getUserById: vi.fn(async () => neverActivated) });
       await expect(new MarketingService(repo, notifier()).reactivateUser(head, neverActivated.id))
         .rejects.toMatchObject({ code: "INVALID_INPUT" });
+    });
+  });
+
+  describe("video production handoff", () => {
+    const operator = user(ids.assignee, "OPERATOR_VIDEO_EDITOR");
+    const proposedShoot = {
+      kind: "SHOOT" as const,
+      scenarioUrl: "https://example.com/scenario",
+      onCameraPerson: "Mijoz vakili",
+      location: "Toshkent ofisi",
+      scheduledAt: "2099-11-20T10:00:00+05:00",
+      durationMinutes: 90,
+    };
+
+    it("lets the creator propose a shoot and only its assignee confirm it", async () => {
+      const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator :
+        [head, creator, unrelated].find((candidate) => candidate.id === id) ?? null),
+        saveTaskVideoBrief: vi.fn(async () => ({
+        taskId: ids.task, kind: "SHOOT" as const, scenarioUrl: proposedShoot.scenarioUrl,
+        onCameraPerson: proposedShoot.onCameraPerson, location: proposedShoot.location,
+        scheduledAt: proposedShoot.scheduledAt, durationMinutes: 90,
+        confirmedBy: null, confirmedAt: null, footageUrl: null, outputSpec: null,
+        editLevel: null, updatedAt: "2099-11-01T00:00:00Z",
+      })) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.saveVideoBrief(operator, ids.task, proposedShoot)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.saveVideoBrief(creator, ids.task, proposedShoot)).resolves.toMatchObject({ kind: "SHOOT" });
+      expect(repo.saveTaskVideoBrief).toHaveBeenCalledWith(expect.objectContaining({ actorId: creator.id, confirm: false }));
+      await expect(service.confirmShoot(creator, ids.task)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await service.confirmShoot(operator, ids.task);
+      expect(repo.saveTaskVideoBrief).toHaveBeenCalledWith(expect.objectContaining({ actorId: operator.id, confirm: true }));
+    });
+
+    it("holds shoot completion until the operator has confirmed the booking", async () => {
+      const brief = { taskId: ids.task, kind: "SHOOT" as const,
+        scenarioUrl: proposedShoot.scenarioUrl, onCameraPerson: proposedShoot.onCameraPerson,
+        location: proposedShoot.location, scheduledAt: proposedShoot.scheduledAt,
+        durationMinutes: 90, confirmedBy: null, confirmedAt: null,
+        footageUrl: null, outputSpec: null, editLevel: null,
+        updatedAt: "2099-11-01T00:00:00Z" };
+      const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })),
+        getTaskVideoBrief: vi.fn(async () => brief) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.transitionTask).not.toHaveBeenCalled();
+      vi.mocked(repo.getTaskVideoBrief).mockResolvedValueOnce({ ...brief, confirmedBy: operator.id, confirmedAt: "2099-11-19T00:00:00Z" });
+      await service.performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" });
+      expect(repo.transitionTask).toHaveBeenCalled();
+    });
+
+    it("holds edit completion until footage and effort level are set", async () => {
+      const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })),
+        getTaskVideoBrief: vi.fn(async () => ({ taskId: ids.task, kind: "EDIT" as const, scenarioUrl: null,
+          onCameraPerson: null, location: null, scheduledAt: null, durationMinutes: null,
+          confirmedBy: null, confirmedAt: null, footageUrl: null, outputSpec: null,
+          editLevel: null, updatedAt: "2099-11-01T00:00:00Z" })) });
+      await expect(new MarketingService(repo, notifier()).performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.transitionTask).not.toHaveBeenCalled();
+    });
+
+    it("rejects a video workflow assigned to a non-operator", async () => {
+      const stepId = "90000000-0000-4000-8000-000000000044";
+      const templateId = "91000000-0000-4000-8000-000000000044";
+      const repo = repository({ listWorkflowTemplates: vi.fn(async () => [{
+        id: templateId, slug: "video-test", name: "Video", description: null,
+        isActive: true, isSystem: false, steps: [{ id: stepId, templateId, position: 1,
+          title: "Syomka", description: null, assigneeRole: "OPERATOR_VIDEO_EDITOR" as const,
+          priority: "normal" as const, dueAfterHours: 24, estimatedMinutes: 90,
+          checkpointTitles: [], videoKind: "SHOOT" as const }],
+      }]) });
+      await expect(new MarketingService(repo, notifier()).startWorkflow(head, {
+        templateId, subject: "Mijoz videosi", firstDeadline: "2099-11-19T10:00:00Z",
+        stepAssignments: { [stepId]: { ownerId: assignee.id, participantIds: [] } },
+      })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.startWorkflowRun).not.toHaveBeenCalled();
     });
   });
 });

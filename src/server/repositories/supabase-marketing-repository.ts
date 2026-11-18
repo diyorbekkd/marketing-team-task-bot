@@ -21,6 +21,7 @@ import type {
   PostingChecklistItem,
   RecurringDefinition,
   Task,
+  TaskVideoBrief,
   TaskComment,
   TaskCheckpoint,
   TaskEvent,
@@ -60,6 +61,7 @@ const TaskRowSchema = z.object({
   creator_id: z.string().uuid(),
   assignee_id: z.string().uuid(),
   deadline: z.string(),
+  shoot_at: z.string().nullable().default(null),
   publication_at: z.string().nullable().default(null),
   blocked_reason: z.string().nullable(),
   completed_at: z.string().nullable(),
@@ -95,6 +97,16 @@ const TaskCheckpointRowSchema = z.object({
   id: z.string().uuid(), task_id: z.string().uuid(), title: z.string(),
   due_at: z.string().nullable(), position: z.number().int(), created_by: z.string().uuid(),
   completed_by: z.string().uuid().nullable(), completed_at: z.string().nullable(), created_at: z.string(),
+});
+
+const TaskVideoBriefRowSchema = z.object({
+  task_id: z.string().uuid(), kind: z.enum(["SHOOT", "EDIT"]),
+  scenario_url: z.string().nullable(), on_camera_person: z.string().nullable(),
+  location: z.string().nullable(), scheduled_at: z.string().nullable(),
+  duration_minutes: z.number().int().nullable(), confirmed_by: z.string().uuid().nullable(),
+  confirmed_at: z.string().nullable(), footage_url: z.string().nullable(),
+  output_spec: z.string().nullable(), edit_level: z.enum(["SIMPLE", "STANDARD", "COMPLEX"]).nullable(),
+  updated_at: z.string(),
 });
 
 const NotificationOutboxRowSchema = z.object({
@@ -137,6 +149,7 @@ const WorkflowTemplateStepRowSchema = z.object({
   priority: z.enum(["high", "normal", "low"]), due_after_hours: z.number().int(),
   estimated_minutes: z.number().int().nullable().default(null),
   checkpoint_titles: z.array(z.string()).default([]),
+  video_kind: z.enum(["SHOOT", "EDIT"]).nullable().default(null),
 });
 
 const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
@@ -162,6 +175,7 @@ const EventRowSchema = z.object({
     "PUBLICATION_DATE_CHANGED", "COMMENT_ADDED", "RESULT_SUBMITTED", "WORKFLOW_STARTED",
     "WORKFLOW_STEP_ACTIVATED", "WORKFLOW_COMPLETED",
     "CHECKPOINT_ADDED", "CHECKPOINT_COMPLETED", "CHECKPOINT_REOPENED", "CHECKPOINT_REMOVED",
+    "VIDEO_BRIEF_SAVED", "SHOOT_CONFIRMED",
   ]),
   old_value: z.unknown(),
   new_value: z.unknown(),
@@ -258,6 +272,7 @@ function mapTask(input: unknown): Task {
     creatorId: row.creator_id,
     assigneeId: row.assignee_id,
     deadline: row.deadline,
+    shootAt: row.shoot_at,
     publicationAt: row.publication_at,
     blockedReason: row.blocked_reason,
     completedAt: row.completed_at,
@@ -304,6 +319,18 @@ function mapTaskCheckpoint(input: unknown): TaskCheckpoint {
   };
 }
 
+function mapTaskVideoBrief(input: unknown): TaskVideoBrief {
+  const row = TaskVideoBriefRowSchema.parse(input);
+  return {
+    taskId: row.task_id, kind: row.kind, scenarioUrl: row.scenario_url,
+    onCameraPerson: row.on_camera_person, location: row.location,
+    scheduledAt: row.scheduled_at, durationMinutes: row.duration_minutes,
+    confirmedBy: row.confirmed_by, confirmedAt: row.confirmed_at,
+    footageUrl: row.footage_url, outputSpec: row.output_spec,
+    editLevel: row.edit_level, updatedAt: row.updated_at,
+  };
+}
+
 function mapNotificationOutbox(input: unknown): NotificationOutboxRecord {
   const row = NotificationOutboxRowSchema.parse(input);
   return {
@@ -345,6 +372,7 @@ function mapWorkflowTemplate(input: unknown, rawSteps: unknown[]): WorkflowTempl
       dueAfterHours: step.due_after_hours,
       estimatedMinutes: step.estimated_minutes,
       checkpointTitles: step.checkpoint_titles,
+      videoKind: step.video_kind,
     }));
   return {
     id: row.id,
@@ -543,6 +571,24 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     });
     if (error || !data) throwDataError(error, "Vazifani yaratib bo‘lmadi.");
     return mapTask(rpcRecord(data));
+  }
+
+  async getTaskVideoBrief(taskId: string): Promise<TaskVideoBrief | null> {
+    const { data, error } = await this.client.from("task_video_briefs").select("*").eq("task_id", taskId).maybeSingle();
+    if (error) throwDataError(error, "Video brifni yuklab bo‘lmadi.");
+    return data ? mapTaskVideoBrief(data) : null;
+  }
+
+  async saveTaskVideoBrief(input: Parameters<MarketingRepository["saveTaskVideoBrief"]>[0]): Promise<TaskVideoBrief> {
+    const { data, error } = await this.client.rpc("save_task_video_brief", {
+      p_task_id: input.taskId, p_actor_id: input.actorId, p_kind: input.kind,
+      p_brief: input.brief, p_confirm: input.confirm,
+    });
+    if (error?.code === "23505" && input.confirm) {
+      throw new ApplicationError("CONFLICT", "Operator shu vaqtda boshqa tasdiqlangan syomkada band.");
+    }
+    if (error || !data) throwDataError(error, "Video brifni saqlab bo‘lmadi.");
+    return mapTaskVideoBrief(rpcRecord(data));
   }
 
   async updateTask(input: Parameters<MarketingRepository["updateTask"]>[0]): Promise<Task> {
@@ -1002,6 +1048,7 @@ export class SupabaseMarketingRepository implements MarketingRepository {
         title: step.title, description: step.description, assigneeRole: step.assigneeRole,
         priority: step.priority, estimatedMinutes: step.estimatedMinutes,
         checkpointTitles: step.checkpointTitles,
+        videoKind: step.videoKind,
       })),
     });
     if (error || !data) throwDataError(error, "Shablonni saqlab bo‘lmadi.");

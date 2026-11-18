@@ -8,6 +8,7 @@ export interface DayPlanTask {
   assigneeId: string;
   status: string;
   deadline: string;
+  shootAt?: string | null;
 }
 
 export interface DayPlanEntry {
@@ -27,6 +28,7 @@ export interface DayWorkItem<T extends DayPlanTask> {
   task: T;
   checkpoints: DayCheckpoint[];
   deadlineToday: boolean;
+  shootToday: boolean;
 }
 
 export function groupTodayWork<T extends DayPlanTask>(
@@ -48,8 +50,9 @@ export function groupTodayWork<T extends DayPlanTask>(
     if (task.assigneeId !== userId || task.status === "DONE" || task.status === "CANCELLED") continue;
     const taskCheckpoints = checkpointsByTask.get(task.id) ?? [];
     const deadlineToday = tashkentDateKey(new Date(task.deadline)) === today;
-    if (!deadlineToday && taskCheckpoints.length === 0) continue;
-    const item = { task, checkpoints: taskCheckpoints, deadlineToday };
+    const shootToday = Boolean(task.shootAt && tashkentDateKey(new Date(task.shootAt)) === today);
+    if (!deadlineToday && !shootToday && taskCheckpoints.length === 0) continue;
+    const item = { task, checkpoints: taskCheckpoints, deadlineToday, shootToday };
     result.today.push(item);
     const plan = byTask.get(task.id);
     if (plan?.isImportant == null) {

@@ -60,6 +60,8 @@ Application services receive an `ActorContext` created only after server verific
 
 ## Supabase access
 
+`task_video_briefs` stores one typed video brief per ordinary task. A workflow task insert trigger attaches an empty brief when its versioned template step declares `video_kind`; the plan still opens one task at a time. A narrow service-role RPC saves the required fields or confirms a shoot in a transaction with an immutable `task_events` entry. Confirmation serializes on the operator row and rejects overlapping confirmed shoots. `tasks.shoot_at` mirrors only a confirmed start time so My Day and Calendar can read it in their existing task queries. Editing a shoot proposal or reassigning its task clears that mirror and its confirmation. Browser roles have no table or RPC access.
+
 The backend uses a server-only Supabase client with disabled session persistence. The service-role key is used only in the trusted Node.js runtime. No direct database client is created in the Mini App during Sprint 0.
 
 Tables live in `public` for conventional Supabase tooling but are opt-in locked: explicit grants are revoked from public clients, RLS is enabled, and no browser policies are installed. If direct authenticated reads become useful later, they require narrowly scoped policies derived from verified identities and a documented security review.

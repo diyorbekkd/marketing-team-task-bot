@@ -33,6 +33,7 @@ type TaskRow = {
   creator_id: string;
   assignee_id: string;
   deadline: string;
+  shoot_at: string | null;
   publication_at: string | null;
   blocked_reason: string | null;
   source_telegram_update_id: number | null;
@@ -71,6 +72,23 @@ type WorkflowTemplateStepRow = {
   due_after_hours: number;
   estimated_minutes: number | null;
   checkpoint_titles: string[];
+  video_kind: "SHOOT" | "EDIT" | null;
+}
+
+type TaskVideoBriefRow = {
+  task_id: string;
+  kind: "SHOOT" | "EDIT";
+  scenario_url: string | null;
+  on_camera_person: string | null;
+  location: string | null;
+  scheduled_at: string | null;
+  duration_minutes: number | null;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  footage_url: string | null;
+  output_spec: string | null;
+  edit_level: "SIMPLE" | "STANDARD" | "COMPLEX" | null;
+  updated_at: string;
 }
 
 type WorkflowRunRow = {
@@ -314,11 +332,17 @@ export interface Database {
       user_notification_preferences: TableDefinition<NotificationPreferencesRow>;
       workflow_templates: TableDefinition<WorkflowTemplateRow>;
       workflow_template_steps: TableDefinition<WorkflowTemplateStepRow>;
+      task_video_briefs: TableDefinition<TaskVideoBriefRow>;
       workflow_runs: TableDefinition<WorkflowRunRow>;
       assistant_turns: TableDefinition<AssistantTurnRow>;
     };
     Views: Record<never, never>;
     Functions: {
+      save_task_video_brief: {
+        Args: { p_task_id: string; p_actor_id: string; p_kind: "SHOOT" | "EDIT";
+          p_brief: Json; p_confirm: boolean };
+        Returns: TaskVideoBriefRow;
+      };
       claim_assistant_turn: {
         Args: { p_user_id: string; p_request_key: string; p_source: string; p_user_text: string };
         Returns: Json;

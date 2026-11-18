@@ -19,7 +19,7 @@ export const uz = {
     high: "Yuqori",
   },
   role: {
-    OPERATOR_VIDEO_EDITOR: "Video montajchi",
+    OPERATOR_VIDEO_EDITOR: "Video operator / montajchi",
     CONTENT_MARKETER: "Kontent marketolog",
     DIGITAL_MARKETER: "Digital marketolog",
     SMM_MANAGER: "SMM Manager",

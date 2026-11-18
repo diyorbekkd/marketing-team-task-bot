@@ -117,6 +117,7 @@ export const TaskSchema = z.object({
   creatorId: z.string().uuid(),
   assigneeId: z.string().uuid(),
   deadline: z.string(),
+  shootAt: z.string().nullable().optional(),
   publicationAt: z.string().nullable(),
   blockedReason: z.string().nullable(),
   completedAt: z.string().nullable(),
@@ -131,6 +132,24 @@ export const TaskSchema = z.object({
   workflowNextDeadline: z.string().nullable().optional(),
 });
 
+export const VideoKindSchema = z.enum(["SHOOT", "EDIT"]);
+export const EditLevelSchema = z.enum(["SIMPLE", "STANDARD", "COMPLEX"]);
+export const TaskVideoBriefSchema = z.object({
+  taskId: z.string().uuid(),
+  kind: VideoKindSchema,
+  scenarioUrl: z.string().nullable(),
+  onCameraPerson: z.string().nullable(),
+  location: z.string().nullable(),
+  scheduledAt: z.string().nullable(),
+  durationMinutes: z.number().int().nullable(),
+  confirmedBy: z.string().uuid().nullable(),
+  confirmedAt: z.string().nullable(),
+  footageUrl: z.string().nullable(),
+  outputSpec: z.string().nullable(),
+  editLevel: EditLevelSchema.nullable(),
+  updatedAt: z.string(),
+});
+
 export const WorkflowTemplateStepSchema = z.object({
   id: z.string().uuid(),
   templateId: z.string().uuid(),
@@ -142,6 +161,7 @@ export const WorkflowTemplateStepSchema = z.object({
   dueAfterHours: z.number().int().positive(),
   estimatedMinutes: z.number().int().positive().nullable().default(null),
   checkpointTitles: z.array(z.string()).default([]),
+  videoKind: VideoKindSchema.nullable().optional(),
 });
 
 export const WorkflowTemplateSchema = z.object({
@@ -213,6 +233,8 @@ export const DeadlineChangeRequestSchema = z.object({
 
 export type User = z.infer<typeof UserSchema>;
 export type Task = z.infer<typeof TaskSchema>;
+export type VideoKind = z.infer<typeof VideoKindSchema>;
+export type TaskVideoBrief = z.infer<typeof TaskVideoBriefSchema>;
 export type TaskEvent = z.infer<typeof TaskEventSchema>;
 export type TaskComment = z.infer<typeof TaskCommentSchema>;
 export type UserTaskPlan = z.infer<typeof UserTaskPlanSchema>;

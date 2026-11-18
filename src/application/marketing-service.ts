@@ -101,8 +101,31 @@ const SaveWorkflowTemplateInputSchema = z.object({
     priority: z.enum(["high", "normal", "low"]),
     estimatedMinutes: z.number().int().min(5).max(10080).nullable(),
     checkpointTitles: z.array(z.string().trim().min(1).max(200)).max(50),
+    videoKind: z.enum(["SHOOT", "EDIT"]).nullable().default(null),
   }).strict()).min(1).max(50),
-}).strict();
+}).strict().superRefine((value, context) => {
+  value.steps.forEach((step, index) => {
+    if (step.videoKind && step.assigneeRole !== "OPERATOR_VIDEO_EDITOR") {
+      context.addIssue({ code: "custom", path: ["steps", index, "assigneeRole"], message: "Video bosqichi operator roliga tegishli." });
+    }
+  });
+});
+
+const WebUrlSchema = z.url().max(2048).refine((url) => /^https?:\/\//.test(url), "http:// yoki https:// havolasini kiriting.");
+const VideoBriefInputSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("SHOOT"), scenarioUrl: WebUrlSchema,
+    onCameraPerson: z.string().trim().min(1).max(200),
+    location: z.string().trim().min(1).max(300),
+    scheduledAt: z.iso.datetime({ offset: true }),
+    durationMinutes: z.number().int().min(5).max(1440),
+  }).strict(),
+  z.object({
+    kind: z.literal("EDIT"), footageUrl: WebUrlSchema,
+    outputSpec: z.string().trim().min(1).max(300),
+    editLevel: z.enum(["SIMPLE", "STANDARD", "COMPLEX"]),
+  }).strict(),
+]);
 
 export type TaskScope = "my" | "created" | "team" | "today" | "overdue" | "review";
 
@@ -113,7 +136,7 @@ const TaskPageInputSchema = z.object({
   assigneeId: z.string().uuid().optional(),
   deadlineRange: z.enum(["today", "next_7_days", "overdue"]).optional(),
   search: z.string().trim().min(1).max(80).optional(),
-  sort: z.enum(["deadline_asc", "deadline_desc", "created_desc"]).default("deadline_asc"),
+  sort: z.enum(["deadline_asc", "deadline_desc", "created_desc"]).default("created_desc"),
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
   cursor: z.string().max(1024).optional(),
 }).strict();
@@ -757,7 +780,7 @@ export class MarketingService {
 
   async getTaskDetails(actor: User, taskId: string) {
     const task = await this.requireVisibleTask(actor, taskId);
-    const [events, comments, requests, postingChecklist, recurringDefinition, personalPlan, checkpoints, workflowPlan] = await Promise.all([
+    const [events, comments, requests, postingChecklist, recurringDefinition, personalPlan, checkpoints, workflowPlan, videoBrief] = await Promise.all([
       this.repository.listTaskEvents(taskId),
       this.repository.listTaskComments(taskId),
       this.repository.listDeadlineChangeRequests({ taskId }),
@@ -766,6 +789,7 @@ export class MarketingService {
       this.repository.getUserTaskPlan(actor.id, taskId),
       this.repository.listTaskCheckpoints(taskId),
       task.workflowRunId ? this.repository.getWorkflowPlan(task.workflowRunId) : Promise.resolve(null),
+      this.repository.getTaskVideoBrief(taskId),
     ]);
     return {
       task,
@@ -777,7 +801,37 @@ export class MarketingService {
       personalPlan,
       checkpoints,
       workflowPlan,
+      videoBrief,
     };
+  }
+
+  async saveVideoBrief(actor: User, taskId: string, input: unknown) {
+    const parsed = VideoBriefInputSchema.parse(input);
+    const task = await this.requireVisibleTask(actor, taskId);
+    if (task.status === "DONE" || task.status === "CANCELLED") {
+      throw new ApplicationError("CONFLICT", "Yopilgan vazifa brifini o‘zgartirib bo‘lmaydi.");
+    }
+    const assignee = await this.repository.getUserById(task.assigneeId);
+    if (assignee?.role !== "OPERATOR_VIDEO_EDITOR") {
+      throw new ApplicationError("INVALID_INPUT", "Video vazifasi video operatorga biriktirilishi kerak.");
+    }
+    if (actor.role !== "HEAD_OF_MARKETING" && actor.id !== task.creatorId &&
+      !(parsed.kind === "EDIT" && actor.id === task.assigneeId)) {
+      throw new ApplicationError("FORBIDDEN", "Bu brifni tahrirlashga ruxsatingiz yo‘q.");
+    }
+    if (parsed.kind === "SHOOT" && Date.parse(parsed.scheduledAt) <= Date.now()) {
+      throw new ApplicationError("INVALID_INPUT", "Syomka vaqti kelajakda bo‘lishi kerak.");
+    }
+    const { kind, ...brief } = parsed;
+    return this.repository.saveTaskVideoBrief({ taskId, actorId: actor.id, kind, brief, confirm: false });
+  }
+
+  async confirmShoot(actor: User, taskId: string) {
+    const task = await this.requireVisibleTask(actor, taskId);
+    if (actor.id !== task.assigneeId || actor.role !== "OPERATOR_VIDEO_EDITOR") {
+      throw new ApplicationError("FORBIDDEN", "Syomkani faqat mas’ul operator tasdiqlaydi.");
+    }
+    return this.repository.saveTaskVideoBrief({ taskId, actorId: actor.id, kind: "SHOOT", brief: {}, confirm: true });
   }
 
   listPersonalPlans(actor: User) {
@@ -920,6 +974,13 @@ export class MarketingService {
     }
 
     if (action.action === "SUBMIT_REVIEW" || action.action === "COMPLETE_SELF") {
+      const videoBrief = await this.repository.getTaskVideoBrief(taskId);
+      if (videoBrief?.kind === "SHOOT" && !videoBrief.confirmedAt) {
+        throw new ApplicationError("INVALID_INPUT", "Syomka vaqtini operator tasdiqlashi kerak.");
+      }
+      if (videoBrief?.kind === "EDIT" && (!videoBrief.footageUrl || !videoBrief.outputSpec || !videoBrief.editLevel)) {
+        throw new ApplicationError("INVALID_INPUT", "Montaj brifidagi zarur ma’lumotlarni to‘ldiring.");
+      }
       const checklist = await this.repository.getPostingChecklist(taskId);
       if (checklist && checklist.items.some((item) => !item.isCompleted)) {
         throw new ApplicationError("INVALID_INPUT", "Tekshiruvga yuborishdan oldin joylash ro‘yxatidagi barcha bandlarni bajaring.");
@@ -1081,6 +1142,11 @@ export class MarketingService {
     const involved = await Promise.all(involvedIds.map((id) => this.repository.getUserById(id)));
     if (involved.some((user) => !user?.isActive)) {
       throw new ApplicationError("INVALID_INPUT", "Bosqich mas’uli va ishtirokchilari faol bo‘lishi kerak.");
+    }
+    const involvedById = new Map(involved.filter((user): user is User => Boolean(user)).map((user) => [user.id, user]));
+    if (template.steps.some((step) => step.videoKind &&
+      involvedById.get(parsed.stepAssignments[step.id].ownerId)?.role !== "OPERATOR_VIDEO_EDITOR")) {
+      throw new ApplicationError("INVALID_INPUT", "Syomka va montaj bosqichi mas’uli video operator bo‘lishi kerak.");
     }
     const task = await this.repository.startWorkflowRun({
       templateId: parsed.templateId,

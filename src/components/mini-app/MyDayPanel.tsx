@@ -55,7 +55,7 @@ export function MyDayPanel({ tasks, userId, refreshKey, view, onOpen, onBack, on
     return <section className="ma-planning-page" aria-label={title}>
       <button className="ma-planning-back" onClick={onBack}>← Mening kunimga qaytish</button>
       <h1>{title}</h1>
-      <p className="ma-muted">{loading ? "Bugungi ishlar yuklanmoqda…" : `${grouped[view].length} ta vazifa · checkpoint yoki deadline bugun`}</p>
+      <p className="ma-muted">{loading ? "Bugungi ishlar yuklanmoqda…" : `${grouped[view].length} ta vazifa · checkpoint, syomka yoki deadline bugun`}</p>
       {error && <p className="ma-error" role="alert">Bugungi ishlar yuklanmadi. <button onClick={() => setRetryKey((value) => value + 1)}>Qayta urinish</button></p>}
       {!loading && !error && <div className="ma-planning-task-list">
         {grouped[view].map((item) => <button key={item.task.id} onClick={() => onSelectTask(item.task.id)}>
@@ -64,6 +64,7 @@ export function MyDayPanel({ tasks, userId, refreshKey, view, onOpen, onBack, on
               {checkpoint.completedAt ? "✓" : "◷"} {checkpoint.title} · {checkpointTime.format(new Date(checkpoint.dueAt!))}
             </small>)}
             {item.deadlineToday && <small>Vazifa muddati bugun</small>}
+            {item.shootToday && item.task.shootAt && <small>Syomka · {checkpointTime.format(new Date(item.task.shootAt))}</small>}
           </span><span className="ma-day-task-open">Ochish →</span>
         </button>)}
         {grouped[view].length === 0 && <p className="ma-muted">Bu bo‘limda vazifa yo‘q.</p>}
@@ -73,13 +74,13 @@ export function MyDayPanel({ tasks, userId, refreshKey, view, onOpen, onBack, on
 
   return <section className="ma-section ma-my-day" aria-labelledby="my-day-title">
     <h3 id="my-day-title">Mening kunim</h3>
-    <p className="ma-muted">Bugungi checkpointlar va muddati bugun tugaydigan vazifalar bir joyda.</p>
+    <p className="ma-muted">Bugungi checkpoint, syomka va muddati bugun tugaydigan vazifalar bir joyda.</p>
     {loading && <p className="ma-muted">Bugungi ishlar yuklanmoqda…</p>}
     {error && <p className="ma-error" role="alert">Bugungi ishlar yuklanmadi. <button onClick={() => setRetryKey((value) => value + 1)}>Qayta urinish</button></p>}
     {!loading && !error && <><button className="ma-day-summary-card" onClick={() => onOpen("today")}>
       <strong>Bugungi ishlar</strong><span>{grouped.today.length} ta vazifa · {checkpointCount} ta checkpoint{completedCount ? ` · ${completedCount} tasi bajarildi` : ""}</span>
       <small>{grouped.today.length ? grouped.today.slice(0, 2).map((item) =>
-        `${item.task.title}: ${item.checkpoints[0] ? `${item.checkpoints[0].title} · ${checkpointTime.format(new Date(item.checkpoints[0].dueAt!))}` : "deadline bugun"}`,
+        `${item.task.title}: ${item.checkpoints[0] ? `${item.checkpoints[0].title} · ${checkpointTime.format(new Date(item.checkpoints[0].dueAt!))}` : item.shootToday && item.task.shootAt ? `syomka · ${checkpointTime.format(new Date(item.task.shootAt))}` : "deadline bugun"}`,
       ).join(" · ") : "Vazifada bugungi checkpoint belgilashingiz mumkin"}</small>
     </button>
     <p className="ma-muted ma-matrix-caption">Quyidagi kartalar bugungi ishlarni muhimlik va shoshilinchlik bo‘yicha ajratadi.</p>

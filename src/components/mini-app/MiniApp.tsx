@@ -29,6 +29,7 @@ type TaskStatus =
   | "CANCELLED";
 
 type Priority = "low" | "normal" | "high";
+type VideoKind = "SHOOT" | "EDIT";
 type ThemePreference = "light" | "dark" | "system";
 
 interface User {
@@ -50,6 +51,7 @@ interface Task {
   assigneeId: string;
   creatorId: string;
   deadline: string;
+  shootAt?: string | null;
   publicationAt?: string | null;
   blockedReason?: string | null;
   createdAt: string;
@@ -105,6 +107,23 @@ interface TaskDetail {
   personalPlan?: PersonalPlan | null;
   checkpoints?: Checkpoint[];
   workflowPlan?: WorkflowPlan | null;
+  videoBrief?: VideoBrief | null;
+}
+
+interface VideoBrief {
+  taskId: string;
+  kind: VideoKind;
+  scenarioUrl: string | null;
+  onCameraPerson: string | null;
+  location: string | null;
+  scheduledAt: string | null;
+  durationMinutes: number | null;
+  confirmedBy: string | null;
+  confirmedAt: string | null;
+  footageUrl: string | null;
+  outputSpec: string | null;
+  editLevel: "SIMPLE" | "STANDARD" | "COMPLEX" | null;
+  updatedAt: string;
 }
 
 interface PostingChecklistItem {
@@ -190,6 +209,7 @@ interface WorkflowTemplateStep {
   dueAfterHours: number;
   estimatedMinutes: number | null;
   checkpointTitles: string[];
+  videoKind: VideoKind | null;
 }
 
 interface WorkflowPlan {
@@ -282,6 +302,8 @@ const EVENT_LABELS: Record<string, string> = {
   WORKFLOW_STARTED: "Ish jarayoni boshlandi",
   WORKFLOW_STEP_ACTIVATED: "Keyingi bosqich faollashdi",
   WORKFLOW_COMPLETED: "Ish jarayoni yakunlandi",
+  VIDEO_BRIEF_SAVED: "Video brifi saqlandi",
+  SHOOT_CONFIRMED: "Syomka vaqti tasdiqlandi",
 };
 
 const ACTIVATION_ROLES: Role[] = [
@@ -498,7 +520,7 @@ export default function MiniApp() {
     priority: "",
     assigneeId: "",
     deadlineRange: "",
-    sort: "deadline_asc",
+    sort: "created_desc",
   });
   const [homeTasks, setHomeTasks] = useState<Task[]>([]);
   const [homeLoading, setHomeLoading] = useState(false);
@@ -809,7 +831,7 @@ export default function MiniApp() {
   const openReportTasks = useCallback((reportView: NonNullable<TaskQueryOptions["reportView"]>) => {
     setMemberFilter(null);
     setFilter(isHead ? "team" : "my");
-    setTaskQuery({ search: "", status: "", priority: "", assigneeId: "", deadlineRange: "", sort: "deadline_asc", reportView });
+    setTaskQuery({ search: "", status: "", priority: "", assigneeId: "", deadlineRange: "", sort: "created_desc", reportView });
     setNav("tasks");
   }, [isHead]);
 
@@ -1518,17 +1540,24 @@ function TasksView({
         className="ma-task-search"
         onSubmit={(event) => {
           event.preventDefault();
-          onQueryChange({ ...query, search: searchDraft.trim() });
+          if (searchDraft.trim()) onFilterChange(isHead ? "team" : "my");
+          onQueryChange({ ...query, search: searchDraft.trim(), status: "", priority: "",
+            assigneeId: "", deadlineRange: "", reportView: undefined });
         }}
       >
+        <label htmlFor="task-title-search">Vazifa nomi bo‘yicha qidirish</label>
         <input
+          id="task-title-search"
           type="search"
           value={searchDraft}
           onChange={(event) => setSearchDraft(event.target.value)}
-          placeholder="Vazifa qidirish"
-          aria-label="Vazifa qidirish"
+          placeholder="Masalan: Reels ssenariysi"
+          aria-label="Vazifa nomi bo‘yicha qidirish"
         />
         <button className="ma-btn secondary" type="submit">Qidirish</button>
+        {query.search && <button className="ma-btn secondary ma-task-search-clear" type="button" onClick={() => {
+          setSearchDraft(""); onQueryChange({ ...query, search: "" });
+        }}>Tozalash</button>}
       </form>
 
       <div className="ma-task-query-controls">
@@ -1604,7 +1633,7 @@ function TasksView({
         </div>
       )}
       {!loading && !error && tasks.length === 0 && (
-        <div className="ma-empty">{EMPTY_COPY[filter]}</div>
+        <div className="ma-empty">{query.search ? `“${query.search}” nomli vazifa topilmadi.` : EMPTY_COPY[filter]}</div>
       )}
       {!loading && !error && tasks.length > 0 && (
         <>
@@ -1855,6 +1884,116 @@ function ReportsView({ isHead, onOpenTasks }: {
       )}
     </div>
   );
+}
+
+// ─── Video brief ──────────────────────────────────────────────────────────────
+
+function VideoBriefPanel({ task, brief, canCreate, canEditShoot, canEditEdit, canConfirm, onChange }: {
+  task: Task;
+  brief: VideoBrief | null;
+  canCreate: boolean;
+  canEditShoot: boolean;
+  canEditEdit: boolean;
+  canConfirm: boolean;
+  onChange: (brief: VideoBrief) => void;
+}) {
+  const [kind, setKind] = useState<VideoKind | null>(brief?.kind ?? null);
+  const [editing, setEditing] = useState(!brief?.scenarioUrl && !brief?.footageUrl);
+  const [scenarioUrl, setScenarioUrl] = useState(brief?.scenarioUrl ?? "");
+  const [onCameraPerson, setOnCameraPerson] = useState(brief?.onCameraPerson ?? "");
+  const [location, setLocation] = useState(brief?.location ?? "");
+  const [scheduledAt, setScheduledAt] = useState(isoToTashkentLocalInput(brief?.scheduledAt));
+  const [durationMinutes, setDurationMinutes] = useState(brief?.durationMinutes?.toString() ?? "");
+  const [footageUrl, setFootageUrl] = useState(brief?.footageUrl ?? "");
+  const [outputSpec, setOutputSpec] = useState(brief?.outputSpec ?? "");
+  const [editLevel, setEditLevel] = useState<VideoBrief["editLevel"]>(brief?.editLevel ?? null);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const terminal = isTerminal(task.status);
+  if (!kind && !canCreate) return null;
+
+  const save = async () => {
+    if (!kind || pending) return;
+    setPending(true); setError(null);
+    const body = kind === "SHOOT"
+      ? { kind, scenarioUrl: scenarioUrl.trim(), onCameraPerson: onCameraPerson.trim(),
+          location: location.trim(), scheduledAt: localDatetimeToISO(scheduledAt),
+          durationMinutes: Number(durationMinutes) }
+      : { kind, footageUrl: footageUrl.trim(), outputSpec: outputSpec.trim(), editLevel };
+    const { data, error: saveError } = await apiFetch<VideoBrief>(`/api/tasks/${task.id}/video-brief`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    setPending(false);
+    if (!data) { setError(friendlyError(saveError) ?? "Video brif saqlanmadi."); return; }
+    haptic("success"); setEditing(false); onChange(data);
+  };
+  const confirm = async () => {
+    setPending(true); setError(null);
+    const { data, error: confirmError } = await apiFetch<VideoBrief>(`/api/tasks/${task.id}/video-brief`, { method: "PATCH" });
+    setPending(false);
+    if (!data) { setError(friendlyError(confirmError) ?? "Syomka tasdiqlanmadi."); return; }
+    haptic("success"); onChange(data);
+  };
+
+  return <section className="ma-section ma-video-brief" aria-label="Video ishlab chiqarish brifi">
+    <div className="ma-section-head"><h3>{kind === "SHOOT" ? "Syomka" : kind === "EDIT" ? "Montaj" : "Video vazifasi"}</h3>
+      {kind && !terminal && (kind === "SHOOT" ? canEditShoot : canEditEdit) && !editing &&
+        <button className="ma-btn secondary compact" onClick={() => setEditing(true)}>Brifni tahrirlash</button>}
+    </div>
+    {!kind && <div className="ma-video-kind-actions">
+      {canEditShoot && <button className="ma-btn secondary" onClick={() => setKind("SHOOT")}>Syomka belgilash</button>}
+      {canEditEdit && <button className="ma-btn secondary" onClick={() => setKind("EDIT")}>Montaj brifi</button>}
+    </div>}
+    {kind && !brief && <button className="ma-link-btn" type="button" onClick={() => setKind(null)}>← Boshqa tur tanlash</button>}
+    {kind === "SHOOT" && <>
+      <p className="ma-muted">Mavzu: <strong>{task.title}</strong>. Syomka vaqti vazifa muddatidan alohida.</p>
+      {brief?.scenarioUrl && !editing && <div className="ma-video-summary">
+        <a href={brief.scenarioUrl} target="_blank" rel="noopener noreferrer">Ssenariyni ochish ↗</a>
+        <span>Kadrda: {brief.onCameraPerson}</span><span>Manzil: {brief.location}</span>
+        <span>Vaqt: {fmtDateTime(brief.scheduledAt)} · {brief.durationMinutes} daqiqa</span>
+        <strong>{brief.confirmedAt ? "Operator tasdiqladi" : "Operator tasdig‘i kutilmoqda"}</strong>
+      </div>}
+      {editing && !terminal && canEditShoot && <div className="ma-block-form">
+        <label htmlFor="video-scenario">Tasdiqlangan ssenariy havolasi *</label>
+        <input id="video-scenario" type="url" value={scenarioUrl} onChange={(e) => setScenarioUrl(e.target.value)} placeholder="https://…" />
+        <label htmlFor="video-person">Kadrga kim chiqadi? *</label>
+        <input id="video-person" value={onCameraPerson} maxLength={200} onChange={(e) => setOnCameraPerson(e.target.value)} />
+        <label htmlFor="video-location">Syomka manzili *</label>
+        <input id="video-location" value={location} maxLength={300} onChange={(e) => setLocation(e.target.value)} />
+        <div className="ma-video-fields"><div><label htmlFor="video-time">Taklif etilgan vaqt *</label>
+          <input id="video-time" type="datetime-local" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} /></div>
+          <div><label htmlFor="video-duration">Davomiylik, daqiqa *</label>
+          <input id="video-duration" type="number" min={5} max={1440} value={durationMinutes} onChange={(e) => setDurationMinutes(e.target.value)} /></div></div>
+        <button className="ma-btn primary" disabled={pending || !scenarioUrl.trim() || !onCameraPerson.trim() || !location.trim() || !scheduledAt || !durationMinutes}
+          onClick={save}>{pending ? "Saqlanmoqda…" : "Syomka taklifini saqlash"}</button>
+      </div>}
+      {!brief?.scenarioUrl && !canEditShoot && <p className="ma-muted">Syomka ma’lumotlarini vazifa yaratuvchisi kiritadi.</p>}
+      {brief?.scenarioUrl && !brief.confirmedAt && canConfirm && !terminal && !editing &&
+        <button className="ma-btn primary" disabled={pending} onClick={confirm}>{pending ? "Tasdiqlanmoqda…" : "Vaqt va bandlikni tasdiqlash"}</button>}
+    </>}
+    {kind === "EDIT" && <>
+      {brief?.footageUrl && !editing && <div className="ma-video-summary">
+        <a href={brief.footageUrl} target="_blank" rel="noopener noreferrer">Xom materialni ochish ↗</a>
+        <span>Natija: {brief.outputSpec}</span>
+        <strong>Montaj darajasi: {brief.editLevel === "SIMPLE" ? "Oddiy" : brief.editLevel === "STANDARD" ? "Standart" : "Murakkab"}</strong>
+      </div>}
+      {editing && !terminal && canEditEdit && <div className="ma-block-form">
+        <label htmlFor="video-footage">Xom material havolasi *</label>
+        <input id="video-footage" type="url" value={footageUrl} onChange={(e) => setFootageUrl(e.target.value)} placeholder="https://…" />
+        <label htmlFor="video-output">Tayyor video formati va soni *</label>
+        <input id="video-output" value={outputSpec} maxLength={300} onChange={(e) => setOutputSpec(e.target.value)} placeholder="Masalan: Reels 9:16 · 1 ta" />
+        <label htmlFor="video-level">Montaj darajasi *</label>
+        <select id="video-level" value={editLevel ?? ""} onChange={(e) => setEditLevel(e.target.value as VideoBrief["editLevel"])}>
+          <option value="">Tanlang</option><option value="SIMPLE">Oddiy — kesish va asosiy tuzatish</option>
+          <option value="STANDARD">Standart — titr, B-roll, oddiy grafika</option>
+          <option value="COMPLEX">Murakkab — motion va chuqur ishlov</option>
+        </select>
+        <button className="ma-btn primary" disabled={pending || !footageUrl.trim() || !outputSpec.trim() || !editLevel}
+          onClick={save}>{pending ? "Saqlanmoqda…" : "Montaj brifini saqlash"}</button>
+      </div>}
+    </>}
+    {error && <div className="ma-error-inline" role="alert">{error}</div>}
+  </section>;
 }
 
 // ─── Task Detail Panel ────────────────────────────────────────────────────────
@@ -2228,6 +2367,18 @@ function TaskDetailPanel({
               <dt>Publikatsiya</dt><dd>{fmtDateTime(task.publicationAt)}</dd>
               {task.blockedReason && <><dt>Blok sababi</dt><dd className="ma-overdue-text">{task.blockedReason}</dd></>}
             </dl>
+
+            {(detail?.videoBrief || (!isTerminal(task.status) && assignee?.role === "OPERATOR_VIDEO_EDITOR" && (isCreator || isHead || isAssignee))) &&
+              <VideoBriefPanel key={`${task.id}:${detail?.videoBrief?.updatedAt ?? "new"}`}
+                task={task} brief={detail?.videoBrief ?? null}
+                canCreate={!isTerminal(task.status) && (isCreator || isHead || isAssignee)}
+                canEditShoot={Boolean(isCreator || isHead)}
+                canEditEdit={Boolean(isCreator || isHead || isAssignee)}
+                canConfirm={Boolean(isAssignee)}
+                onChange={(videoBrief) => {
+                  setDetail((previous) => previous ? { ...previous, videoBrief } : previous);
+                  void load(true);
+                }} />}
 
             {workflowPlan && <section className="ma-section">
               <div className="ma-section-head"><h3>Ish jarayoni rejasi</h3><small>{workflowPlan.templateName}</small></div>
@@ -2745,6 +2896,7 @@ interface WorkflowStepDraft {
   priority: Priority;
   estimatedMinutes: string;
   checkpointTitles: string;
+  videoKind: VideoKind | null;
 }
 
 function workflowStepDraft(step?: WorkflowTemplateStep): WorkflowStepDraft {
@@ -2753,6 +2905,7 @@ function workflowStepDraft(step?: WorkflowTemplateStep): WorkflowStepDraft {
     assigneeRole: step?.assigneeRole ?? "CONTENT_MARKETER", priority: step?.priority ?? "normal",
     estimatedMinutes: step?.estimatedMinutes ? String(step.estimatedMinutes) : "",
     checkpointTitles: step?.checkpointTitles.join("\n") ?? "",
+    videoKind: step?.videoKind ?? null,
   };
 }
 
@@ -2790,7 +2943,8 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
   };
   const canSave = name.trim() && steps.length > 0 && steps.every((step) =>
     step.title.trim() && (!step.estimatedMinutes || (Number.isInteger(Number(step.estimatedMinutes)) && Number(step.estimatedMinutes) >= 5 && Number(step.estimatedMinutes) <= 10080))
-      && step.checkpointTitles.split("\n").filter((title) => title.trim()).length <= 50);
+      && step.checkpointTitles.split("\n").filter((title) => title.trim()).length <= 50
+      && (!step.videoKind || step.assigneeRole === "OPERATOR_VIDEO_EDITOR"));
   const save = async () => {
     if (!canSave) return;
     setPending(true); setError(null);
@@ -2798,10 +2952,11 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sourceTemplateId: sourceId, name: name.trim(), description: description.trim() || null,
-        steps: steps.map(({ title, description: stepDescription, assigneeRole, priority, estimatedMinutes, checkpointTitles }) => ({
+        steps: steps.map(({ title, description: stepDescription, assigneeRole, priority, estimatedMinutes, checkpointTitles, videoKind }) => ({
           title: title.trim(), description: stepDescription.trim() || null, assigneeRole, priority,
           estimatedMinutes: estimatedMinutes ? Number(estimatedMinutes) : null,
           checkpointTitles: checkpointTitles.split("\n").map((item) => item.trim()).filter(Boolean),
+          videoKind,
         })),
       }),
     });
@@ -2864,7 +3019,7 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
       <label htmlFor={`step-description-${step.key}`}>Izoh (ixtiyoriy)</label>
       <textarea id={`step-description-${step.key}`} maxLength={5000} rows={2} value={step.description} onChange={(event) => updateStep(step.key, { description: event.target.value })} />
       <div className="ma-workflow-step-fields">
-        <div><label htmlFor={`step-role-${step.key}`}>Mas’ul roli</label><select id={`step-role-${step.key}`} value={step.assigneeRole} onChange={(event) => updateStep(step.key, { assigneeRole: event.target.value as Role })}>
+        <div><label htmlFor={`step-role-${step.key}`}>Mas’ul roli</label><select id={`step-role-${step.key}`} value={step.assigneeRole} onChange={(event) => updateStep(step.key, { assigneeRole: event.target.value as Role, videoKind: event.target.value === "OPERATOR_VIDEO_EDITOR" ? step.videoKind : null })}>
           {(Object.keys(ROLE_LABELS) as Role[]).map((role) => <option key={role} value={role}>{ROLE_LABELS[role]}</option>)}
         </select></div>
         <div><label htmlFor={`step-priority-${step.key}`}>Ustuvorlik</label><select id={`step-priority-${step.key}`} value={step.priority} onChange={(event) => updateStep(step.key, { priority: event.target.value as Priority })}>
@@ -2872,6 +3027,12 @@ function WorkflowTemplateEditor({ templates, initialTemplateId, onCancel, onSave
         </select></div>
         <div><label htmlFor={`step-hours-${step.key}`}>Taxminiy vaqt (daqiqa, ixtiyoriy)</label><input id={`step-hours-${step.key}`} type="number" min={5} max={10080} value={step.estimatedMinutes} onChange={(event) => updateStep(step.key, { estimatedMinutes: event.target.value })} /></div>
       </div>
+      {step.assigneeRole === "OPERATOR_VIDEO_EDITOR" && <div className="ma-form-group">
+        <label htmlFor={`step-video-kind-${step.key}`}>Video bosqichi</label>
+        <select id={`step-video-kind-${step.key}`} value={step.videoKind ?? ""} onChange={(event) => updateStep(step.key, { videoKind: (event.target.value || null) as VideoKind | null })}>
+          <option value="">Oddiy vazifa</option><option value="SHOOT">Syomka</option><option value="EDIT">Montaj</option>
+        </select>
+      </div>}
       <label htmlFor={`step-checkpoints-${step.key}`}>Checkpoint namunalari (har satrda bittadan, ixtiyoriy)</label>
       <textarea id={`step-checkpoints-${step.key}`} rows={3} value={step.checkpointTitles} onChange={(event) => updateStep(step.key, { checkpointTitles: event.target.value })} />
     </div>)}

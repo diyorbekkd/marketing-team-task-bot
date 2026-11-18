@@ -9,6 +9,8 @@ import type {
   RecurrenceStatus,
   RecurringDefinition,
   Task,
+  TaskVideoBrief,
+  VideoKind,
   TaskComment,
   TaskCheckpoint,
   TaskEvent,
@@ -120,6 +122,9 @@ export interface MarketingRepository {
   reactivateUser(input: { userId: string; actorId: string }): Promise<User>;
 
   createTask(input: CreateTaskRecord): Promise<Task>;
+  getTaskVideoBrief(taskId: string): Promise<TaskVideoBrief | null>;
+  saveTaskVideoBrief(input: { taskId: string; actorId: string; kind: VideoKind;
+    brief: Record<string, string | number | null>; confirm: boolean }): Promise<TaskVideoBrief>;
   updateTask(input: UpdateTaskRecord): Promise<Task>;
   getTask(taskId: string): Promise<Task | null>;
   listTaskPage(input: TaskPageQuery): Promise<TaskPage>;
@@ -219,6 +224,7 @@ export interface MarketingRepository {
     steps: Array<{
       title: string; description: string | null; assigneeRole: TeamRole;
       priority: TaskPriority; estimatedMinutes: number | null; checkpointTitles: string[];
+      videoKind: VideoKind | null;
     }>;
   }): Promise<string>;
   startWorkflowRun(input: {

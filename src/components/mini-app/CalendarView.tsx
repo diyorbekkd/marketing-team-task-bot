@@ -12,6 +12,7 @@ interface CalendarTask {
   status: CalendarTaskStatus;
   assigneeId: string;
   deadline: string;
+  shootAt?: string | null;
   publicationAt?: string | null;
 }
 
@@ -104,6 +105,7 @@ export function CalendarView({ tasks, users, loading, error, onRetry, onSelect }
   const entries = tasks.flatMap((task) => [
     { task, date: task.deadline, kind: "deadline" as const },
     ...(task.publicationAt ? [{ task, date: task.publicationAt, kind: "publication" as const }] : []),
+    ...(task.shootAt ? [{ task, date: task.shootAt, kind: "shoot" as const }] : []),
   ]);
 
   return (
@@ -126,6 +128,7 @@ export function CalendarView({ tasks, users, loading, error, onRetry, onSelect }
       <div className="ma-calendar-legend">
         <span><i className="deadline" /> Muddat</span>
         <span><i className="publication" /> Publikatsiya</span>
+        <span><i className="shoot" /> Syomka</span>
       </div>
       {loading && <div className="ma-center-inline"><div className="ma-spinner" aria-label="Taqvim yuklanmoqda" /></div>}
       {!loading && error && <div className="ma-error" role="alert">{error}<button onClick={onRetry}>Qayta urinish</button></div>}
@@ -142,7 +145,7 @@ export function CalendarView({ tasks, users, loading, error, onRetry, onSelect }
                   const assignee = users.find((user) => user.id === entry.task.assigneeId);
                   return (
                     <button className={`ma-calendar-entry ${entry.kind}`} key={`${entry.kind}-${entry.task.id}`} onClick={() => onSelect(entry.task.id)}>
-                      <span>{entry.kind === "deadline" ? "Muddat" : "Publikatsiya"} · {formatTime(entry.date)}</span>
+                      <span>{entry.kind === "deadline" ? "Muddat" : entry.kind === "shoot" ? "Syomka" : "Publikatsiya"} · {formatTime(entry.date)}</span>
                       <strong>{entry.task.title}</strong>
                       <small>{assignee?.displayName ?? "—"} · {t.taskStatus[entry.task.status]}</small>
                     </button>
