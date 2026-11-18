@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
-type Turn = { id: string; userText: string; answerText: string | null; status: string };
+type Turn = { id: string; userText: string; answerText: string | null; status: string;
+  proposal?: { summary: string } | null; proposalStatus?: string | null;
+  proposalExpiresAt?: string | null; actionResult?: string | null };
 const suggestions = ["Bugun nimadan boshlay?", "Kechikayotgan ishlarimni tartibla", "Vazifamni kichik qadamlarga bo‘l"];
 
 export function AssistantPanel({ onClose }: { onClose: () => void }) {
@@ -19,7 +21,9 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
       .then(async (res) => {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Suhbatni yuklab bo‘lmadi.");
-        if (mounted) { setTurns(data.turns); setAvailable(data.available); }
+        if (mounted) { setTurns((data.turns as Turn[]).map((turn) => ({ ...turn,
+          proposalStatus: turn.proposalExpiresAt && Date.parse(turn.proposalExpiresAt) <= Date.now()
+            ? "EXPIRED" : turn.proposalStatus }))); setAvailable(data.available); }
       })
       .catch((e) => { if (mounted) setError(e instanceof Error ? e.message : "Suhbatni yuklab bo‘lmadi."); });
     return () => { mounted = false; };
@@ -42,7 +46,8 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Javob olinmadi.");
       setTurns((current) => current.map((turn) => turn.id === requestKey
-        ? { ...turn, id: data.turnId, answerText: data.answer, status: data.status } : turn));
+        ? { ...turn, id: data.turnId, answerText: data.answer, status: data.status,
+          proposal: data.proposal, proposalStatus: data.proposal ? "PENDING" : null } : turn));
     } catch (e) {
       setTurns((current) => current.filter((turn) => turn.id !== requestKey));
       setInput(question);
@@ -50,15 +55,39 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
     } finally { setBusy(false); }
   }
 
+  async function confirm(turnId: string) {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await fetch("/api/assistant/confirm", {
+        method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ turnId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Amal bajarilmadi.");
+      setTurns((current) => current.map((turn) => turn.id === turnId
+        ? { ...turn, actionResult: data.answer, proposalStatus: "DONE" } : turn));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Amal bajarilmadi.");
+      setTurns((current) => current.map((turn) => turn.id === turnId ? { ...turn, proposalStatus: "FAILED" } : turn));
+    } finally { setBusy(false); }
+  }
+
   return <div className="ma-overlay" role="dialog" aria-modal="true" aria-label="AI yordamchi" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="ma-panel ma-assistant-panel">
       <div className="ma-panel-header"><button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button><span className="ma-panel-title">✦ Ish yordamchisi</span></div>
       <div className="ma-assistant-messages">
-        <div className="ma-assistant-intro">Salom! Vazifalarni birga tartiblaymiz. Reja tuzish, ishni qismlarga bo‘lish yoki SOP haqida savol bering.</div>
+        <div className="ma-assistant-intro">Salom! Reja va SOP haqida so‘rang. Vazifa yaratish, holatini o‘zgartirish yoki muddat so‘rovi uchun aniq vazifa, mas’ul va vaqtni yozing — amalni tasdiqlashingizni kutaman.</div>
         {!available && <div className="ma-notice warning">AI yordamchi hali serverda ulanmagan. Rahbar OpenAI API kalitini qo‘shishi kerak.</div>}
         {turns.map((turn) => <div key={turn.id} className="ma-assistant-turn">
           <div className="ma-assistant-user">{turn.userText}</div>
           <div className="ma-assistant-reply">{turn.answerText ?? "O‘ylayapman…"}</div>
+          {turn.actionResult && <div className="ma-assistant-reply">{turn.actionResult}</div>}
+          {turn.proposal && turn.proposalStatus === "PENDING" &&
+            <div className="ma-assistant-proposal">
+              <strong>Taklif</strong><p>{turn.proposal.summary}</p>
+              <button type="button" disabled={busy} onClick={() => void confirm(turn.id)}>Tasdiqlash va bajarish</button>
+            </div>}
         </div>)}
         <div ref={endRef} />
       </div>

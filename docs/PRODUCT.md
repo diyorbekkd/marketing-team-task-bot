@@ -10,13 +10,13 @@ Marketing Team Task Bot is a deterministic task-management system for one five-p
 4. Who has too much workload and who has capacity?
 5. Which marketing workflow stage repeatedly becomes a bottleneck?
 
-Metrics and reports are calculated from current records and immutable history. The Head later authorized an optional AI work assistant for planning and SOP questions; its suggestions never change factual reports or task state.
+Metrics and reports are calculated from current records and immutable history. The Head later authorized an optional AI work assistant for planning, SOP questions, and confirmed task actions; its suggestions never change factual reports.
 
 ## AI work assistant (authorized 2026-11-17)
 
-Active team members can ask the assistant in the bot's private chat or the Mini App. It can summarize the open tasks already visible to that member, suggest a daily order, break work into steps, and answer questions from the Head-approved SOP file. Head may ask about team-wide work; employees see only their own task scope. The assistant cannot create, edit, approve, or complete tasks. It must say when an SOP rule is not yet written. Telegram group messages remain outside AI chat. A per-user allowance of 30 prompts per Tashkent day and a short answer cap limit cost; model access is server-side only. Conversation history is private to its user.
+Active team members can ask the assistant in the bot's private chat or the Mini App. It can summarize the open tasks already visible to that member, suggest a daily order, break work into steps, and answer questions from the Head-approved SOP file. Head may ask about team-wide work; employees see only their own task scope. It must say when an SOP rule is not yet written. Telegram group messages remain outside AI chat. A per-user allowance of 30 prompts per Tashkent day and a short answer cap limit cost; model access is server-side only. Conversation history is private to its user.
 
-Task changes through AI chat are a future proposal. Any such action must identify the exact task, show the proposed change for confirmation, and use the existing task permission or deadline-request service. The current assistant remains read-only.
+The Head authorized three AI chat actions on 2026-11-18: create an ordinary task, take an allowed task status action, and submit a deadline-change request. The model prepares a typed proposal only when the assignee, task, deadline, and required reason are unambiguous. The app shows a deterministic summary and waits for explicit confirmation in the Web assistant or private bot. The proposal expires after ten minutes; the claim is one-time and actor-bound. Execution calls the same permission-checking services and audit transactions as ordinary UI and bot actions. The model never writes directly to the database. A deadline request never changes the task deadline until its normal approver approves it. This first increment uses the current open-task context (up to 20 assigned and 20 created tasks); for tasks outside it the assistant asks for more detail rather than guessing.
 
 ## Video production briefs (staging increment, 2026-11-18)
 

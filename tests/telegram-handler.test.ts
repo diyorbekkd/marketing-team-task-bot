@@ -96,6 +96,29 @@ describe("Telegram MVP handler", () => {
     expect(assistant.respond).toHaveBeenCalledTimes(1);
   });
 
+  it("shows a private AI action proposal and confirms its exact turn through the assistant service", async () => {
+    const service = serviceMock();
+    const turnId = "20000000-0000-4000-8000-000000000099";
+    const assistant = { respond: vi.fn(async () => ({ status: "COMPLETE", answer: "Taklif tayyor.",
+      proposal: { summary: "Vazifa yaratish: Reels" }, turnId })),
+      confirm: vi.fn(async () => ({ answer: "✅ Vazifa yaratildi.", reused: false })) } as unknown as AssistantService;
+    const handler = createTelegramUpdateHandler(service, handlerConfig, assistant);
+    const message = await handler(TelegramUpdateSchema.parse({ update_id: 901,
+      message: { message_id: 1, chat: { id: 42, type: "private" },
+        from: { id: 42, is_bot: false, first_name: "Team" }, text: "Reels vazifasini och" } }));
+    expect(message.messages[0]?.replyMarkup?.inline_keyboard[0][0].callback_data).toBe(`ai:${turnId}`);
+    const callback = await handler(TelegramUpdateSchema.parse({ update_id: 902,
+      callback_query: { id: "ai-callback", from: { id: 42, is_bot: false, first_name: "Team" },
+        data: `ai:${turnId}`, message: { message_id: 2, chat: { id: 42, type: "private" } } } }));
+    expect(assistant.confirm).toHaveBeenCalledWith(actor, turnId);
+    expect(callback.messages[0]?.text).toContain("Vazifa yaratildi");
+
+    await handler(TelegramUpdateSchema.parse({ update_id: 903,
+      callback_query: { id: "ai-group", from: { id: 42, is_bot: false, first_name: "Team" },
+        data: `ai:${turnId}`, message: { message_id: 3, chat: { id: -100123, type: "supergroup" } } } }));
+    expect(assistant.confirm).toHaveBeenCalledTimes(1);
+  });
+
   it("onboards a private-chat user from Telegram identity", async () => {
     const service = serviceMock();
     const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({

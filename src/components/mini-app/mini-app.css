@@ -1173,6 +1173,10 @@
 .ma-assistant-form button { border: 0; border-radius: 12px; padding: 0 16px; background: var(--primary); color: #fff; font-weight: 700; }
 .ma-assistant-form button:disabled, .ma-assistant-suggestions button:disabled { opacity: .5; }
 .ma-assistant-error { width: 100%; margin: 0; color: var(--danger, #b91c1c); }
+.ma-assistant-proposal { align-self: flex-start; max-width: 95%; padding: 12px; border: 1px solid var(--primary); border-radius: 14px; background: var(--card); color: var(--ink); }
+.ma-assistant-proposal p { white-space: pre-wrap; line-height: 1.5; margin: 6px 0 12px; }
+.ma-assistant-proposal button { border: 0; border-radius: 10px; background: var(--primary); color: #fff; padding: 10px 14px; font: inherit; font-weight: 700; }
+.ma-assistant-proposal button:disabled { opacity: .5; }
 .ma-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
 
 @media (max-width: 639px) {

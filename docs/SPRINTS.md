@@ -8,6 +8,13 @@ Each sprint is intentionally bounded. Later-sprint work should not leak into an 
 - Provide daily planning, task decomposition, and approved SOP answers without task mutation.
 - Bound spending with a daily allowance and output-token cap; keep credentials server-side and verify on staging before production.
 
+## AI task actions — authorized 2026-11-18
+
+- Extend the existing assistant to propose ordinary task creation, valid task status actions, and deadline-change requests from Web and private bot chat.
+- Require an exact, actor-bound, ten-minute proposal with explicit one-time confirmation before executing through the existing shared permission service. Keep task history and notification behavior intact.
+- Do not add video handoff between shooting and editing: one operator performs both. Keep group material management separate from the task action flow.
+- Verify staging database idempotency and permissions, local quality gate, and Preview before production release.
+
 ## Sprint 0 — Foundation
 
 - Establish repository standards, documentation, and quality commands.

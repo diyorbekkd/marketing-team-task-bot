@@ -117,6 +117,10 @@ type AssistantTurnRow = {
   output_tokens: number | null;
   created_at: string;
   completed_at: string | null;
+  action_proposal: Json | null;
+  action_status: "PENDING" | "CLAIMED" | "DONE" | "FAILED" | null;
+  action_expires_at: string | null;
+  action_result: string | null;
 }
 
 type TaskCommentRow = {
@@ -338,6 +342,14 @@ export interface Database {
     };
     Views: Record<never, never>;
     Functions: {
+      claim_assistant_action: {
+        Args: { p_turn_id: string; p_user_id: string };
+        Returns: Json;
+      };
+      finish_assistant_action: {
+        Args: { p_turn_id: string; p_user_id: string; p_result: string; p_success: boolean };
+        Returns: boolean;
+      };
       enqueue_shoot_scenario_notification: {
         Args: { p_dedupe_key: string; p_task_id: string; p_payload: Json };
         Returns: NotificationOutboxRow;

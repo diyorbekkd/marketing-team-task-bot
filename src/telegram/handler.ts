@@ -214,6 +214,7 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
   return async function handle(update: TelegramUpdate): Promise<TelegramHandlerResult> {
     try {
       if (update.callback_query?.data) {
+        const assistantMatch = update.callback_query.data.match(/^ai:([0-9a-f-]{36})$/i);
         const checklistMatch = update.callback_query.data.match(/^check:([0-9a-f-]{36})$/i);
         const taskMatch = update.callback_query.data.match(
           /^task:([0-9a-f-]{36}):(ACCEPT|SUBMIT_REVIEW|APPROVE|REQUEST_REVISION|RESUME)$/i,
@@ -221,11 +222,19 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
         const deadlineMatch = update.callback_query.data.match(
           /^deadline:([0-9a-f-]{36}):(APPROVE|REJECT)$/i,
         );
-        if (!taskMatch && !deadlineMatch && !checklistMatch) {
+        if (!taskMatch && !deadlineMatch && !checklistMatch && !assistantMatch) {
           return { messages: [], callbackQueryId: update.callback_query.id };
         }
 
         const actor = await service.requireActorByTelegramId(String(update.callback_query.from.id));
+        if (assistantMatch) {
+          if (update.callback_query.message?.chat.type !== "private" || !assistant) {
+            throw new ApplicationError("FORBIDDEN", "AI amalini faqat botning shaxsiy chatida tasdiqlang.");
+          }
+          const result = await assistant.confirm(actor, assistantMatch[1]);
+          return { callbackQueryId: update.callback_query.id,
+            messages: [{ chatId: update.callback_query.message.chat.id, text: result.answer }] };
+        }
         if (checklistMatch) {
           const checklist = await service.togglePostingChecklistItem(actor, checklistMatch[1]);
           return {
@@ -388,7 +397,13 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
         const response = await assistant.respond(actor, {
           source: "TELEGRAM", requestKey: `tg_${update.update_id}`, text: question,
         });
-        return { messages: [{ chatId: message.chat.id, text: response.answer?.slice(0, 3500) ?? "Javob tayyorlanmoqda. Birozdan keyin qayta urinib ko‘ring." }] };
+        return { messages: [{ chatId: message.chat.id,
+          text: [response.answer?.slice(0, 2500) ?? "Javob tayyorlanmoqda. Birozdan keyin qayta urinib ko‘ring.",
+            response.proposal ? `\n\n📌 Taklif:\n${response.proposal.summary}` : ""].join(""),
+          ...(response.proposal ? { replyMarkup: { inline_keyboard: [[{
+            text: "✅ Tasdiqlash va bajarish", callback_data: `ai:${response.turnId}`,
+          }]] } } : {}),
+        }] };
       }
       return { messages: [] };
     } catch (error) {

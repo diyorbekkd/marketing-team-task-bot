@@ -1,5 +1,6 @@
 import { ConfigurationError, getTeamBootstrapConfig, getTelegramConfig } from "@/server/config";
-import { getAssistantService, getMarketingService } from "@/server/application";
+import { getAssistantService, getMarketingService, getNotificationRetryService } from "@/server/application";
+import { after } from "next/server";
 import { answerTelegramCallback, sendTelegramMessage } from "@/telegram/client";
 import { createTelegramUpdateHandler } from "@/telegram/handler";
 import { TelegramUpdateSchema } from "@/telegram/update";
@@ -71,6 +72,11 @@ export async function POST(request: Request) {
       return Response.json({ error: "Telegram reply delivery failed." }, { status: 502 });
     }
   }
+
+  if (parsed.data.callback_query?.data?.startsWith("ai:")) after(async () => {
+    try { await getNotificationRetryService().deliver(25); }
+    catch { console.error(JSON.stringify({ event: "post_response_assistant_telegram_delivery_failed" })); }
+  });
 
   return Response.json({ ok: true });
 }
