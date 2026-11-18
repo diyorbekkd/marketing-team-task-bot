@@ -121,8 +121,7 @@ const VideoBriefInputSchema = z.discriminatedUnion("kind", [
     durationMinutes: z.number().int().min(5).max(1440),
   }).strict(),
   z.object({
-    kind: z.literal("EDIT"), footageUrl: WebUrlSchema,
-    outputSpec: z.string().trim().min(1).max(300),
+    kind: z.literal("EDIT"),
     editLevel: z.enum(["SIMPLE", "STANDARD", "COMPLEX"]),
   }).strict(),
 ]);
@@ -997,8 +996,8 @@ export class MarketingService {
       if (videoBrief?.kind === "SHOOT" && !videoBrief.confirmedAt) {
         throw new ApplicationError("INVALID_INPUT", "Syomka vaqtini operator tasdiqlashi kerak.");
       }
-      if (videoBrief?.kind === "EDIT" && (!videoBrief.footageUrl || !videoBrief.outputSpec || !videoBrief.editLevel)) {
-        throw new ApplicationError("INVALID_INPUT", "Montaj brifidagi zarur ma’lumotlarni to‘ldiring.");
+      if (videoBrief?.kind === "EDIT" && !videoBrief.editLevel) {
+        throw new ApplicationError("INVALID_INPUT", "Montaj darajasini tanlang.");
       }
       const checklist = await this.repository.getPostingChecklist(taskId);
       if (checklist && checklist.items.some((item) => !item.isCompleted)) {

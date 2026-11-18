@@ -1483,6 +1483,20 @@ describe("MarketingService MVP permissions", () => {
       expect(queue.queueAssignment).toHaveBeenCalledOnce();
     });
 
+    it("creates an edit task with only the montage level", async () => {
+      const created = task();
+      const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
+        createTaskWithVideoBrief: vi.fn(async () => created) });
+      const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+      await new MarketingService(repo, notifier(), queue).createTaskQueued(creator, {
+        title: "Reels montaji", assigneeId: operator.id, deadline: "2099-11-21T10:00:00+05:00",
+        videoBrief: { kind: "EDIT", editLevel: "STANDARD" },
+      });
+      expect(repo.createTaskWithVideoBrief).toHaveBeenCalledWith(expect.objectContaining({
+        videoBrief: { kind: "EDIT", brief: { kind: "EDIT", editLevel: "STANDARD" } },
+      }));
+    });
+
     it("rejects a video brief for a non-operator before creating a task", async () => {
       const repo = repository();
       const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
@@ -1545,15 +1559,24 @@ describe("MarketingService MVP permissions", () => {
       expect(repo.transitionTask).toHaveBeenCalled();
     });
 
-    it("holds edit completion until footage and effort level are set", async () => {
+    it("requires only montage level before edit completion", async () => {
       const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })),
         getTaskVideoBrief: vi.fn(async () => ({ taskId: ids.task, kind: "EDIT" as const, scenarioUrl: null,
           onCameraPerson: null, location: null, scheduledAt: null, durationMinutes: null,
           confirmedBy: null, confirmedAt: null, footageUrl: null, outputSpec: null,
           editLevel: null, updatedAt: "2099-11-01T00:00:00Z" })) });
-      await expect(new MarketingService(repo, notifier()).performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }))
+      const service = new MarketingService(repo, notifier());
+      await expect(service.performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }))
         .rejects.toMatchObject({ code: "INVALID_INPUT" });
       expect(repo.transitionTask).not.toHaveBeenCalled();
+      vi.mocked(repo.getTaskVideoBrief).mockResolvedValueOnce({
+        taskId: ids.task, kind: "EDIT", scenarioUrl: null, onCameraPerson: null,
+        location: null, scheduledAt: null, durationMinutes: null, confirmedBy: null,
+        confirmedAt: null, footageUrl: null, outputSpec: null, editLevel: "SIMPLE",
+        updatedAt: "2099-11-01T00:00:00Z",
+      });
+      await service.performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" });
+      expect(repo.transitionTask).toHaveBeenCalled();
     });
 
     it("rejects a video workflow assigned to a non-operator", async () => {

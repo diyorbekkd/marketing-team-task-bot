@@ -1897,14 +1897,12 @@ function VideoBriefPanel({ task, brief, canEditShoot, canEditEdit, canConfirm, o
   onChange: (brief: VideoBrief) => void;
 }) {
   const kind = brief.kind;
-  const [editing, setEditing] = useState(!brief?.scenarioUrl && !brief?.footageUrl);
+  const [editing, setEditing] = useState(brief.kind === "SHOOT" ? !brief.scenarioUrl : !brief.editLevel);
   const [scenarioUrl, setScenarioUrl] = useState(brief?.scenarioUrl ?? "");
   const [onCameraPerson, setOnCameraPerson] = useState(brief?.onCameraPerson ?? "");
   const [location, setLocation] = useState(brief?.location ?? "");
   const [scheduledAt, setScheduledAt] = useState(isoToTashkentLocalInput(brief?.scheduledAt));
   const [durationMinutes, setDurationMinutes] = useState(brief?.durationMinutes?.toString() ?? "");
-  const [footageUrl, setFootageUrl] = useState(brief?.footageUrl ?? "");
-  const [outputSpec, setOutputSpec] = useState(brief?.outputSpec ?? "");
   const [editLevel, setEditLevel] = useState<VideoBrief["editLevel"]>(brief?.editLevel ?? null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1916,7 +1914,7 @@ function VideoBriefPanel({ task, brief, canEditShoot, canEditEdit, canConfirm, o
       ? { kind, scenarioUrl: scenarioUrl.trim(), onCameraPerson: onCameraPerson.trim(),
           location: location.trim(), scheduledAt: localDatetimeToISO(scheduledAt),
           durationMinutes: Number(durationMinutes) }
-      : { kind, footageUrl: footageUrl.trim(), outputSpec: outputSpec.trim(), editLevel };
+      : { kind, editLevel };
     const { data, error: saveError } = await apiFetch<VideoBrief>(`/api/tasks/${task.id}/video-brief`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
@@ -1964,23 +1962,17 @@ function VideoBriefPanel({ task, brief, canEditShoot, canEditEdit, canConfirm, o
         <button className="ma-btn primary" disabled={pending} onClick={confirm}>{pending ? "Tasdiqlanmoqda…" : "Vaqt va bandlikni tasdiqlash"}</button>}
     </>}
     {kind === "EDIT" && <>
-      {brief?.footageUrl && !editing && <div className="ma-video-summary">
-        <a href={brief.footageUrl} target="_blank" rel="noopener noreferrer">Xom materialni ochish ↗</a>
-        <span>Natija: {brief.outputSpec}</span>
+      {brief.editLevel && !editing && <div className="ma-video-summary">
         <strong>Montaj darajasi: {brief.editLevel === "SIMPLE" ? "Oddiy" : brief.editLevel === "STANDARD" ? "Standart" : "Murakkab"}</strong>
       </div>}
       {editing && !terminal && canEditEdit && <div className="ma-block-form">
-        <label htmlFor="video-footage">Xom material havolasi *</label>
-        <input id="video-footage" type="url" value={footageUrl} onChange={(e) => setFootageUrl(e.target.value)} placeholder="https://…" />
-        <label htmlFor="video-output">Tayyor video formati va soni *</label>
-        <input id="video-output" value={outputSpec} maxLength={300} onChange={(e) => setOutputSpec(e.target.value)} placeholder="Masalan: Reels 9:16 · 1 ta" />
         <label htmlFor="video-level">Montaj darajasi *</label>
         <select id="video-level" value={editLevel ?? ""} onChange={(e) => setEditLevel(e.target.value as VideoBrief["editLevel"])}>
           <option value="">Tanlang</option><option value="SIMPLE">Oddiy — kesish va asosiy tuzatish</option>
           <option value="STANDARD">Standart — titr, B-roll, oddiy grafika</option>
           <option value="COMPLEX">Murakkab — motion va chuqur ishlov</option>
         </select>
-        <button className="ma-btn primary" disabled={pending || !footageUrl.trim() || !outputSpec.trim() || !editLevel}
+        <button className="ma-btn primary" disabled={pending || !editLevel}
           onClick={save}>{pending ? "Saqlanmoqda…" : "Montaj brifini saqlash"}</button>
       </div>}
     </>}
@@ -3214,8 +3206,6 @@ function QuickAddPanel({
   const [location, setLocation] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
   const [durationMinutes, setDurationMinutes] = useState("");
-  const [footageUrl, setFootageUrl] = useState("");
-  const [outputSpec, setOutputSpec] = useState("");
   const [editLevel, setEditLevel] = useState<"SIMPLE" | "STANDARD" | "COMPLEX" | "">("");
   const [openedAt] = useState(() => Date.now());
   const [pending, setPending] = useState(false);
@@ -3235,7 +3225,7 @@ function QuickAddPanel({
     ? validUrl(scenarioUrl) && !!onCameraPerson.trim() && !!location.trim() &&
       !!scheduledAt && Date.parse(localDatetimeToISO(scheduledAt)) > openedAt &&
       Number.isInteger(Number(durationMinutes)) && Number(durationMinutes) >= 5 && Number(durationMinutes) <= 1440
-    : videoKind === "EDIT" && validUrl(footageUrl) && !!outputSpec.trim() && !!editLevel);
+    : videoKind === "EDIT" && !!editLevel);
 
   const submit = async () => {
     if (pending || !teamReady || !title.trim() || !assigneeId || !deadline || !videoReady) return;
@@ -3254,7 +3244,7 @@ function QuickAddPanel({
       durationMinutes: Number(durationMinutes),
     };
     if (operatorSelected && videoKind === "EDIT") body.videoBrief = {
-      kind: "EDIT", footageUrl: footageUrl.trim(), outputSpec: outputSpec.trim(), editLevel,
+      kind: "EDIT", editLevel,
     };
 
     const { data, error: e } = await apiFetch<{ task: Task; notification: AssignmentNotificationResult }>("/api/tasks", {
@@ -3348,10 +3338,6 @@ function QuickAddPanel({
               </div></div>
             </div>}
             {videoKind === "EDIT" && <div className="ma-video-create-fields">
-              <label htmlFor="qa-footage">Xom material havolasi *</label>
-              <input id="qa-footage" type="url" value={footageUrl} onChange={(event) => setFootageUrl(event.target.value)} placeholder="https://…" />
-              <label htmlFor="qa-output">Tayyor video formati va soni *</label>
-              <input id="qa-output" value={outputSpec} maxLength={300} onChange={(event) => setOutputSpec(event.target.value)} placeholder="Masalan: Reels 9:16 · 1 ta" />
               <label htmlFor="qa-level">Montaj darajasi *</label>
               <select id="qa-level" value={editLevel} onChange={(event) => setEditLevel(event.target.value as typeof editLevel)}>
                 <option value="">Tanlang</option><option value="SIMPLE">Oddiy</option>
