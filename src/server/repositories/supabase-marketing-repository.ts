@@ -112,8 +112,8 @@ const TaskVideoBriefRowSchema = z.object({
 const NotificationOutboxRowSchema = z.object({
   id: z.string().uuid(),
   dedupe_key: z.string(),
-  notification_type: z.enum(["ASSIGNMENT", "BULK_ASSIGNMENT", "WORKFLOW", "REPORT"]),
-  recipient_user_id: z.string().uuid(),
+  notification_type: z.enum(["ASSIGNMENT", "BULK_ASSIGNMENT", "WORKFLOW", "REPORT", "SHOOT_SCENARIO"]),
+  recipient_user_id: z.string().uuid().nullable(),
   task_id: z.string().uuid().nullable(),
   payload: z.unknown(),
   status: z.enum(["PENDING", "CLAIMED", "SENT", "FAILED"]),
@@ -1169,6 +1169,15 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       p_payload: input.payload as Record<string, string>,
     });
     if (error || !data) throwDataError(error, "Bildirishnomani navbatga qo‘shib bo‘lmadi.");
+    return mapNotificationOutbox(rpcRecord(data));
+  }
+
+  async enqueueShootScenarioNotification(input: Parameters<MarketingRepository["enqueueShootScenarioNotification"]>[0]): Promise<NotificationOutboxRecord> {
+    const { data, error } = await this.client.rpc("enqueue_shoot_scenario_notification", {
+      p_dedupe_key: input.dedupeKey, p_task_id: input.taskId,
+      p_payload: input.payload as Record<string, string>,
+    });
+    if (error || !data) throwDataError(error, "Syomka havolasini yuborish navbatga qo‘shilmadi.");
     return mapNotificationOutbox(rpcRecord(data));
   }
 

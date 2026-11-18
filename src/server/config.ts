@@ -56,6 +56,13 @@ const TeamBootstrapConfigSchema = z.object({
   TELEGRAM_GROUP_ID: negativeTelegramInteger,
   HEAD_TELEGRAM_USER_ID: positiveTelegramInteger,
 });
+const VideoMediaTopicConfigSchema = z.object({
+  VIDEO_MEDIA_CHAT_ID: negativeTelegramInteger,
+  VIDEO_MEDIA_TOPIC_ID: positiveTelegramInteger.refine(
+    (value) => Number.isSafeInteger(Number(value)) && Number(value) > 0,
+    "Must be a safe positive topic ID",
+  ),
+});
 const CronConfigSchema = z.object({ CRON_SECRET: z.string().min(16).max(512) });
 
 export class ConfigurationError extends Error {
@@ -116,6 +123,13 @@ export function getTeamBootstrapConfig(env: Environment = process.env) {
     groupId: parsed.TELEGRAM_GROUP_ID,
     headTelegramUserId: parsed.HEAD_TELEGRAM_USER_ID,
   } as const;
+}
+
+/** Optional per-environment forum topic for outbound shoot scenario links. */
+export function getVideoMediaTopicConfig(env: Environment = process.env) {
+  if (!env.VIDEO_MEDIA_CHAT_ID && !env.VIDEO_MEDIA_TOPIC_ID) return null;
+  const parsed = parseConfig("video media topic", VideoMediaTopicConfigSchema, env);
+  return { chatId: parsed.VIDEO_MEDIA_CHAT_ID, topicId: Number(parsed.VIDEO_MEDIA_TOPIC_ID) } as const;
 }
 
 export function getCronConfig(env: Environment = process.env) {

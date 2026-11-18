@@ -80,10 +80,12 @@ export interface NotificationDispatcher {
   notifyBulkAssignment(input: BulkAssignmentNotificationInput): Promise<AssignmentNotificationResult>;
   notifyWorkflow(input: WorkflowNotificationInput): Promise<WorkflowNotificationResult>;
   notifyReminder(input: ReminderNotificationInput): Promise<ReminderNotificationResult>;
+  sendTopicMessage(input: { chatId: string; topicId: number; text: string }): Promise<void>;
 }
 
 /** Browser writes can acknowledge the durable outbox entry before Telegram delivery. */
 export interface NotificationQueue {
   queueAssignment(input: AssignmentNotificationInput): Promise<"QUEUED" | "SKIPPED">;
   queueWorkflow(input: WorkflowNotificationInput): Promise<void>;
+  queueShootScenario?(input: { task: Task; scenarioUrl: string; changeToken: string }): Promise<"QUEUED" | "SKIPPED">;
 }

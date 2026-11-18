@@ -285,6 +285,12 @@ export class TelegramNotificationDispatcher implements NotificationDispatcher, R
     private readonly appUrl: string,
   ) {}
 
+  async sendTopicMessage(input: { chatId: string; topicId: number; text: string }): Promise<void> {
+    await sendTelegramMessage(this.botToken, {
+      chatId: input.chatId, messageThreadId: input.topicId, text: input.text,
+    });
+  }
+
   async notifyAssignment(
     { task, creator, assignee }: AssignmentNotificationInput,
   ): Promise<AssignmentNotificationResult> {

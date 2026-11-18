@@ -80,8 +80,8 @@ export interface TaskPage {
 export interface NotificationOutboxRecord {
   readonly id: string;
   readonly dedupeKey: string;
-  readonly notificationType: "ASSIGNMENT" | "BULK_ASSIGNMENT" | "WORKFLOW" | "REPORT";
-  readonly recipientUserId: string;
+  readonly notificationType: "ASSIGNMENT" | "BULK_ASSIGNMENT" | "WORKFLOW" | "REPORT" | "SHOOT_SCENARIO";
+  readonly recipientUserId: string | null;
   readonly taskId: string | null;
   readonly payload: unknown;
   readonly status: "PENDING" | "CLAIMED" | "SENT" | "FAILED";
@@ -250,6 +250,9 @@ export interface MarketingRepository {
     recipientUserId: string;
     taskId?: string;
     payload: unknown;
+  }): Promise<NotificationOutboxRecord>;
+  enqueueShootScenarioNotification(input: {
+    dedupeKey: string; taskId: string; payload: unknown;
   }): Promise<NotificationOutboxRecord>;
   claimNotification(id: string): Promise<boolean>;
   claimDueNotifications(limit: number): Promise<NotificationOutboxRecord[]>;

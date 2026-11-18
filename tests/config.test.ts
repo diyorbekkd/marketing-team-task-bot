@@ -6,6 +6,7 @@ import {
   getSupabaseConfig,
   getTeamBootstrapConfig,
   getTelegramConfig,
+  getVideoMediaTopicConfig,
 } from "../src/server/config";
 
 describe("configuration validation", () => {
@@ -67,5 +68,13 @@ describe("configuration validation", () => {
       TELEGRAM_GROUP_ID: "123456789",
       HEAD_TELEGRAM_USER_ID: "123456789",
     })).toThrow(ConfigurationError);
+  });
+
+  it("requires both video group and topic IDs or leaves the feature disabled", () => {
+    expect(getVideoMediaTopicConfig({})).toBeNull();
+    expect(getVideoMediaTopicConfig({ VIDEO_MEDIA_CHAT_ID: "-1001234567890", VIDEO_MEDIA_TOPIC_ID: "42" }))
+      .toEqual({ chatId: "-1001234567890", topicId: 42 });
+    expect(() => getVideoMediaTopicConfig({ VIDEO_MEDIA_CHAT_ID: "-1001234567890" }))
+      .toThrow(ConfigurationError);
   });
 });

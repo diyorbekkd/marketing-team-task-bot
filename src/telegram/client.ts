@@ -35,12 +35,13 @@ export async function getTelegramWebhookUrl(botToken: string): Promise<string> {
 
 export async function sendTelegramMessage(
   botToken: string,
-  input: Readonly<{ chatId: number | string; text: string; replyMarkup?: unknown }>,
+  input: Readonly<{ chatId: number | string; text: string; replyMarkup?: unknown; messageThreadId?: number }>,
 ): Promise<void> {
   const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: input.chatId, text: input.text, reply_markup: input.replyMarkup }),
+    body: JSON.stringify({ chat_id: input.chatId, text: input.text,
+      reply_markup: input.replyMarkup, message_thread_id: input.messageThreadId }),
     signal: AbortSignal.timeout(8_000),
   });
 

@@ -101,3 +101,10 @@ Second same-day increment on `fast-track/mvp`, again without touching the Telegr
 - Make reusable workflow templates discoverable from Home, with Head-only archive in addition to existing create, copy, and versioned edit.
 - Verify existing "Mening kunim" checkpoint/deadline groups and report-card task filters; preserve their server-side permissions and count semantics.
 - Verify the full quality gate and Vercel Preview with isolated staging data before any production release.
+
+## Video materials topic relay — authorized 2026-11-18
+
+- The team continues to work with scenarios and raw media in its separate Telegram forum group. Post only a shoot task's title and scenario link to a configured Syomka topic when the link is first saved or changed; do not ingest group messages or files.
+- Keep the destination optional per environment. Leave it disabled until the bot has posting access and the group/topic IDs are supplied during release setup.
+- Use the existing durable retry queue, retain a task reference, prevent duplicate delivery for repeated saves, and never fail a committed task or brief because Telegram is unavailable.
+- Verify locally and against staging database before a production rollout; production migration/configuration and a real topic message remain pending.

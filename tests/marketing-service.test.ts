@@ -181,6 +181,7 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     claimReportDelivery: vi.fn(async () => true),
     completeReportDelivery: vi.fn(async () => undefined),
     enqueueNotification: vi.fn(),
+    enqueueShootScenarioNotification: vi.fn(),
     claimNotification: vi.fn(async () => true),
     claimDueNotifications: vi.fn(async () => []),
     completeNotification: vi.fn(async () => undefined),
@@ -208,6 +209,7 @@ function notifier(overrides: Partial<NotificationDispatcher> = {}): Notification
         status: "SENT" as const,
       })),
     })),
+    sendTopicMessage: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -1470,7 +1472,8 @@ describe("MarketingService MVP permissions", () => {
       const created = task();
       const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
         createTaskWithVideoBrief: vi.fn(async () => created) });
-      const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+      const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined),
+        queueShootScenario: vi.fn(async () => "QUEUED" as const) };
       const result = await new MarketingService(repo, notifier(), queue).createTaskQueued(creator, {
         title: "Mijoz syomkasi", assigneeId: operator.id, deadline: "2099-11-21T10:00:00+05:00",
         videoBrief: proposedShoot,
@@ -1481,6 +1484,8 @@ describe("MarketingService MVP permissions", () => {
         assigneeId: operator.id, videoBrief: { kind: "SHOOT", brief: proposedShoot },
       }));
       expect(queue.queueAssignment).toHaveBeenCalledOnce();
+      expect(queue.queueShootScenario).toHaveBeenCalledWith({ task: created, scenarioUrl: proposedShoot.scenarioUrl,
+        changeToken: created.createdAt });
     });
 
     it("creates an edit task with only the montage level", async () => {
@@ -1539,6 +1544,33 @@ describe("MarketingService MVP permissions", () => {
       await expect(service.confirmShoot(creator, ids.task)).rejects.toMatchObject({ code: "FORBIDDEN" });
       await service.confirmShoot(operator, ids.task);
       expect(repo.saveTaskVideoBrief).toHaveBeenCalledWith(expect.objectContaining({ actorId: operator.id, confirm: true }));
+    });
+
+    it("queues a new scenario link after a shoot brief edit but not an unchanged link", async () => {
+      const previous = { taskId: ids.task, kind: "SHOOT" as const,
+        scenarioUrl: proposedShoot.scenarioUrl, onCameraPerson: proposedShoot.onCameraPerson,
+        location: proposedShoot.location, scheduledAt: proposedShoot.scheduledAt,
+        durationMinutes: 90, confirmedBy: null, confirmedAt: null,
+        footageUrl: null, outputSpec: null, editLevel: null,
+        updatedAt: "2099-11-01T00:00:00Z" };
+      const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const),
+        queueWorkflow: vi.fn(async () => undefined),
+        queueShootScenario: vi.fn(async () => "QUEUED" as const) };
+      const repo = repository({
+        getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
+        getTaskVideoBrief: vi.fn(async () => previous),
+        saveTaskVideoBrief: vi.fn(async () => ({ ...previous, scenarioUrl: "https://example.com/revised" })),
+      });
+      const service = new MarketingService(repo, notifier(), queue);
+      await service.saveVideoBrief(creator, ids.task, { ...proposedShoot, scenarioUrl: "https://example.com/revised" });
+      expect(queue.queueShootScenario).toHaveBeenCalledWith({
+        task: expect.objectContaining({ id: ids.task }), scenarioUrl: "https://example.com/revised",
+        changeToken: previous.updatedAt,
+      });
+
+      vi.mocked(repo.getTaskVideoBrief).mockResolvedValueOnce({ ...previous, scenarioUrl: "https://example.com/revised" });
+      await service.saveVideoBrief(creator, ids.task, { ...proposedShoot, scenarioUrl: "https://example.com/revised" });
+      expect(queue.queueShootScenario).toHaveBeenCalledTimes(1);
     });
 
     it("holds shoot completion until the operator has confirmed the booking", async () => {

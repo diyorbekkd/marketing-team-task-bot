@@ -475,14 +475,21 @@ export class MarketingService {
         videoBrief: { kind: parsed.videoBrief.kind, brief: parsed.videoBrief },
       })
       : await this.persistTaskWithAssignee(actor, assignee, parsed);
-    const [assignment, confirmation] = await Promise.allSettled([
+    const [assignment, confirmation, shootScenario] = await Promise.allSettled([
       this.notificationQueue.queueAssignment({ task, creator: actor, assignee }),
       actor.id !== assignee.id
         ? this.notificationQueue.queueWorkflow({ event: "TASK_CREATED", task, actor, recipients: [actor] })
         : Promise.resolve(),
+      parsed.videoBrief?.kind === "SHOOT"
+        ? this.notificationQueue.queueShootScenario?.({ task, scenarioUrl: parsed.videoBrief.scenarioUrl,
+          changeToken: task.createdAt })
+        : Promise.resolve(),
     ]);
     if (confirmation.status === "rejected") {
       console.error(JSON.stringify({ event: "task_creator_confirmation_enqueue_failed", taskId: task.id }));
+    }
+    if (shootScenario.status === "rejected") {
+      console.error(JSON.stringify({ event: "shoot_scenario_enqueue_failed", taskId: task.id }));
     }
     if (assignment.status === "rejected") {
       // The task has committed. Never make the client retry the creation and duplicate it.
@@ -841,7 +848,16 @@ export class MarketingService {
       throw new ApplicationError("INVALID_INPUT", "Syomka vaqti kelajakda bo‘lishi kerak.");
     }
     const { kind, ...brief } = parsed;
-    return this.repository.saveTaskVideoBrief({ taskId, actorId: actor.id, kind, brief, confirm: false });
+    const saved = await this.repository.saveTaskVideoBrief({ taskId, actorId: actor.id, kind, brief, confirm: false });
+    if (parsed.kind === "SHOOT" && existingBrief.scenarioUrl !== saved.scenarioUrl && saved.scenarioUrl) {
+      try {
+        await this.notificationQueue?.queueShootScenario?.({ task, scenarioUrl: saved.scenarioUrl,
+          changeToken: saved.updatedAt });
+      } catch {
+        console.error(JSON.stringify({ event: "shoot_scenario_enqueue_failed", taskId }));
+      }
+    }
+    return saved;
   }
 
   async confirmShoot(actor: User, taskId: string) {

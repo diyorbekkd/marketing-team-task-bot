@@ -64,6 +64,15 @@ const deadlineRequest: DeadlineChangeRequest = {
 describe("Telegram notification dispatcher", () => {
   beforeEach(() => sendTelegramMessage.mockReset());
 
+  it("addresses a shoot scenario to the configured forum topic", async () => {
+    sendTelegramMessage.mockResolvedValueOnce(undefined);
+    const notifier = new TelegramNotificationDispatcher("test-token", "https://tasks.example.com");
+    await notifier.sendTopicMessage({ chatId: "-1001234567890", topicId: 42, text: "Ssenariy: https://example.com" });
+    expect(sendTelegramMessage).toHaveBeenCalledWith("test-token", {
+      chatId: "-1001234567890", messageThreadId: 42, text: "Ssenariy: https://example.com",
+    });
+  });
+
   it("sends assignment context with no Accept action, since new tasks start already in progress", async () => {
     sendTelegramMessage.mockResolvedValueOnce(undefined);
     const notifier = new TelegramNotificationDispatcher("test-token", "https://tasks.example.com");

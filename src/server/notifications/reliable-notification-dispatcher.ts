@@ -17,6 +17,7 @@ import type {
 } from "@/application/ports/notification-dispatcher";
 import type { ReportDispatcher } from "@/application/ports/report-dispatcher";
 import { DeadlineChangeRequestSchema, TaskSchema, UserSchema } from "@/domain/models";
+import { getVideoMediaTopicConfig } from "@/server/config";
 
 const AssignmentPayloadSchema = z.object({
   kind: z.literal("ASSIGNMENT"),
@@ -46,11 +47,19 @@ const ReportPayloadSchema = z.object({
   kind: z.literal("REPORT"),
   input: z.object({ recipient: UserSchema, text: z.string().min(1) }),
 });
+const ShootScenarioPayloadSchema = z.object({
+  kind: z.literal("SHOOT_SCENARIO"),
+  input: z.object({
+    chatId: z.string().regex(/^-\d+$/), topicId: z.number().int().positive(),
+    text: z.string().min(1).max(4096),
+  }),
+});
 const OutboxPayloadSchema = z.discriminatedUnion("kind", [
   AssignmentPayloadSchema,
   BulkAssignmentPayloadSchema,
   WorkflowPayloadSchema,
   ReportPayloadSchema,
+  ShootScenarioPayloadSchema,
 ]);
 type OutboxPayload = z.infer<typeof OutboxPayloadSchema>;
 
@@ -79,6 +88,14 @@ async function sendPayload(inner: NotificationDispatcher & ReportDispatcher, pay
       ? { sent: true as const }
       : { sent: false as const, error: delivery?.reason ?? "DELIVERY_FAILED" };
   }
+  if (payload.kind === "SHOOT_SCENARIO") {
+    try {
+      await inner.sendTopicMessage(payload.input);
+      return { sent: true as const };
+    } catch {
+      return { sent: false as const, error: "DELIVERY_FAILED" };
+    }
+  }
   try {
     await inner.sendReport(payload.input.recipient, payload.input.text);
     return { sent: true as const };
@@ -92,6 +109,27 @@ export class ReliableNotificationDispatcher implements NotificationDispatcher, R
     private readonly repository: MarketingRepository,
     private readonly inner: NotificationDispatcher & ReportDispatcher,
   ) {}
+
+  sendTopicMessage(input: { chatId: string; topicId: number; text: string }): Promise<void> {
+    return this.inner.sendTopicMessage(input);
+  }
+
+  async queueShootScenario(input: { task: z.infer<typeof TaskSchema>; scenarioUrl: string; changeToken: string }): Promise<"QUEUED" | "SKIPPED"> {
+    const topic = getVideoMediaTopicConfig();
+    if (!topic) return "SKIPPED";
+    const text = ["🎬 Syomka ssenariysi", input.task.title, "", input.scenarioUrl].join("\n");
+    const payload = ShootScenarioPayloadSchema.parse({
+      kind: "SHOOT_SCENARIO", input: { chatId: topic.chatId, topicId: topic.topicId, text },
+    });
+    await this.repository.enqueueShootScenarioNotification({
+      dedupeKey: dedupeKey("shoot-scenario", {
+        taskId: input.task.id, scenarioUrl: input.scenarioUrl, changeToken: input.changeToken,
+        chatId: topic.chatId, topicId: topic.topicId,
+      }),
+      taskId: input.task.id, payload,
+    });
+    return "QUEUED";
+  }
 
   private async preferences(userId: string): Promise<NotificationPreferences> {
     try {

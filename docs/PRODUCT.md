@@ -24,6 +24,8 @@ When an operator is selected in Quick Add, the creator chooses **Oddiy**, **Syom
 
 The task title supplies the shooting topic. Before proposing a shoot, the creator or Head must provide an approved scenario URL, the on-camera person, location, proposed start time, and estimated duration. Only the assigned operator can confirm that proposal. A changed proposal or assignee clears confirmation. A confirmed operator cannot accept an overlapping shoot. Only confirmed shoots appear in Calendar and My Day. The shoot time is distinct from the task deadline.
 
+The team keeps raw video materials and discussion in its existing Telegram forum group. When its group ID and Syomka topic ID are configured for an environment, the bot posts the task title and approved scenario URL to that topic when a shoot brief first receives the URL or the URL changes. The app does not copy or manage the media. Without both IDs the feature stays off. Duplicate saves of the same URL do not post again; failed Telegram sends use the bounded notification retry queue and never undo the task or brief.
+
 For an edit task, the creator selects one of three edit levels: Simple, Standard, or Complex. The raw material is already with the operator, so the form does not request a material URL or output format. The level describes scope and never calculates a deadline. The task's owner and deadline remain ordinary task fields. Existing saved material/output values are retained in the database when a brief is edited. Video brief changes are audited in task event history.
 
 Tasks default to newest-created-first ordering. The title search is labeled and searches all tasks visible to the actor, regardless of the previously selected filter.

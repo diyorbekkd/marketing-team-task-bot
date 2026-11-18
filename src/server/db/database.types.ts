@@ -277,8 +277,8 @@ type ReminderDeliveryRow = {
 type NotificationOutboxRow = {
   id: string;
   dedupe_key: string;
-  notification_type: "ASSIGNMENT" | "BULK_ASSIGNMENT" | "WORKFLOW" | "REPORT";
-  recipient_user_id: string;
+  notification_type: "ASSIGNMENT" | "BULK_ASSIGNMENT" | "WORKFLOW" | "REPORT" | "SHOOT_SCENARIO";
+  recipient_user_id: string | null;
   task_id: string | null;
   payload: Json;
   status: "PENDING" | "CLAIMED" | "SENT" | "FAILED";
@@ -338,6 +338,10 @@ export interface Database {
     };
     Views: Record<never, never>;
     Functions: {
+      enqueue_shoot_scenario_notification: {
+        Args: { p_dedupe_key: string; p_task_id: string; p_payload: Json };
+        Returns: NotificationOutboxRow;
+      };
       create_task_with_video_brief: {
         Args: { p_creator_id: string; p_assignee_id: string; p_title: string;
           p_description: string; p_priority: "high" | "normal" | "low";
