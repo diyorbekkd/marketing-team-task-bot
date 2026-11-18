@@ -122,6 +122,9 @@ export interface MarketingRepository {
   reactivateUser(input: { userId: string; actorId: string }): Promise<User>;
 
   createTask(input: CreateTaskRecord): Promise<Task>;
+  createTaskWithVideoBrief(input: CreateTaskRecord & { videoBrief: {
+    kind: VideoKind; brief: Record<string, string | number | null>;
+  } }): Promise<Task>;
   getTaskVideoBrief(taskId: string): Promise<TaskVideoBrief | null>;
   saveTaskVideoBrief(input: { taskId: string; actorId: string; kind: VideoKind;
     brief: Record<string, string | number | null>; confirm: boolean }): Promise<TaskVideoBrief>;

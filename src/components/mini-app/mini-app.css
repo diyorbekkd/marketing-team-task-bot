@@ -61,6 +61,13 @@
 .ma-video-summary { display: grid; gap: 7px; padding: 11px 12px; border-radius: var(--radius-sm); background: var(--paper); font-size: .84rem; overflow-wrap: anywhere; }
 .ma-video-summary strong { color: var(--primary-dark); }
 .ma-video-summary a { color: var(--primary-dark); font-weight: 650; }
+.ma-video-create { padding: 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); }
+.ma-field-label { font-weight: 700; color: var(--ink); }
+.ma-video-type-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.ma-video-type-picker button { min-height: 44px; padding: 8px 6px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; }
+.ma-video-type-picker button.selected { border-color: var(--primary); background: var(--primary-soft); color: var(--primary-dark); }
+.ma-video-create-fields { display: grid; gap: 8px; }
+.ma-video-create-fields p { margin: 0; }
 @media (max-width: 380px) { .ma-video-kind-actions, .ma-video-fields { grid-template-columns: 1fr; } }
 .ma-recurrence-status { width: fit-content; }
 .ma-recurrence-status.paused { background: var(--warning-soft); color: var(--warning-text); }
@@ -982,7 +989,7 @@
   color: var(--muted);
   line-height: 1.4;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 1;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1214,6 +1221,13 @@
   margin: 0;
   color: var(--ink);
 }
+.ma-primary-action { padding: 14px; border: 1px solid var(--primary); border-radius: var(--radius-md); background: var(--primary-soft); }
+.ma-primary-action h3 { margin: 0 0 10px; color: var(--primary-dark); }
+.ma-primary-action .ma-action-row .ma-btn { flex: 1; }
+.ma-detail-disclosure { padding: 10px 0; border-top: 1px solid var(--line); color: var(--muted); }
+.ma-detail-disclosure summary { cursor: pointer; font-weight: 650; color: var(--ink); }
+.ma-detail-disclosure[open] { display: grid; gap: 12px; }
+.ma-detail-disclosure[open] summary { margin-bottom: 4px; }
 
 /* ── Action buttons ────────────────────────────────────────────────────────── */
 

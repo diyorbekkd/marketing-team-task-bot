@@ -20,13 +20,15 @@ Task changes through AI chat are a future proposal. Any such action must identif
 
 ## Video production briefs (staging increment, 2026-11-18)
 
-Video operator tasks may be marked as **Syomka** or **Montaj**. The existing Reels and customer-case workflow templates mark their video stages explicitly; custom template editors can choose the stage type when the assignee role is Video Operator / Editor. A future workflow stage stays a plan until the preceding task is approved.
+When an operator is selected in Quick Add, the creator chooses **Oddiy**, **Syomka**, or **Montaj**. Shooting/editing fields appear in the creation form and are required before the task is saved; the task and brief commit together. Existing tasks show their selected brief and permit edits but do not offer a video-type picker. The existing Reels and customer-case workflow templates mark their video stages explicitly; custom template editors can choose the stage type when the assignee role is Video Operator / Editor. A future workflow stage stays a plan until the preceding task is approved. The brief for an activated template step is filled in after activation.
 
 The task title supplies the shooting topic. Before proposing a shoot, the creator or Head must provide an approved scenario URL, the on-camera person, location, proposed start time, and estimated duration. Only the assigned operator can confirm that proposal. A changed proposal or assignee clears confirmation. A confirmed operator cannot accept an overlapping shoot. Only confirmed shoots appear in Calendar and My Day. The shoot time is distinct from the task deadline.
 
 Before handing off an edit task, the team must provide the footage URL, desired output format/count, and one of three edit levels: Simple, Standard, or Complex. The level describes scope and never calculates a deadline. The task's owner and deadline remain ordinary task fields. No optional video-specific fields are added. Video brief changes are audited in task event history.
 
 Tasks default to newest-created-first ordering. The title search is labeled and searches all tasks visible to the actor, regardless of the previously selected filter.
+
+Task cards lead with the title and show status, high priority when relevant, owner, and deadline next. Task details keep the owner, deadline, video brief, and next action near the top; workflow plan, creator/publication metadata, and secondary actions are disclosed lower in the panel.
 
 ## Team and identities
 

@@ -573,6 +573,17 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return mapTask(rpcRecord(data));
   }
 
+  async createTaskWithVideoBrief(input: Parameters<MarketingRepository["createTaskWithVideoBrief"]>[0]): Promise<Task> {
+    const { data, error } = await this.client.rpc("create_task_with_video_brief", {
+      p_creator_id: input.creatorId, p_assignee_id: input.assigneeId,
+      p_title: input.title, p_description: input.description ?? "",
+      p_priority: input.priority, p_deadline: input.deadline,
+      p_video_kind: input.videoBrief.kind, p_video_brief: input.videoBrief.brief,
+    });
+    if (error || !data) throwDataError(error, "Video vazifasini yaratib bo‘lmadi.");
+    return mapTask(rpcRecord(data));
+  }
+
   async getTaskVideoBrief(taskId: string): Promise<TaskVideoBrief | null> {
     const { data, error } = await this.client.from("task_video_briefs").select("*").eq("task_id", taskId).maybeSingle();
     if (error) throwDataError(error, "Video brifni yuklab bo‘lmadi.");

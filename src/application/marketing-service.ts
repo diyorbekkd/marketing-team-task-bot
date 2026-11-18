@@ -126,6 +126,9 @@ const VideoBriefInputSchema = z.discriminatedUnion("kind", [
     editLevel: z.enum(["SIMPLE", "STANDARD", "COMPLEX"]),
   }).strict(),
 ]);
+const BrowserCreateTaskInputSchema = CreateTaskInputSchema.extend({
+  videoBrief: VideoBriefInputSchema.optional(),
+});
 
 export type TaskScope = "my" | "created" | "team" | "today" | "overdue" | "review";
 
@@ -455,12 +458,24 @@ export class MarketingService {
 
   async createTaskQueued(actor: User, input: unknown): Promise<BrowserTaskCreationResult> {
     if (!this.notificationQueue) throw new Error("Notification queue is not configured.");
-    const parsed = CreateTaskInputSchema.parse(input);
+    const parsed = BrowserCreateTaskInputSchema.parse(input);
     const assignee = await this.repository.getUserById(parsed.assigneeId);
     if (!assignee?.isActive) {
       throw new ApplicationError("INVALID_INPUT", "Mas’ul faol jamoa a’zosi bo‘lishi kerak.");
     }
-    const task = await this.persistTaskWithAssignee(actor, assignee, parsed);
+    if (parsed.videoBrief && assignee.role !== "OPERATOR_VIDEO_EDITOR") {
+      throw new ApplicationError("INVALID_INPUT", "Video vazifasi video operatorga biriktirilishi kerak.");
+    }
+    if (parsed.videoBrief?.kind === "SHOOT" && Date.parse(parsed.videoBrief.scheduledAt) <= Date.now()) {
+      throw new ApplicationError("INVALID_INPUT", "Syomka vaqti kelajakda bo‘lishi kerak.");
+    }
+    const task = parsed.videoBrief
+      ? await this.repository.createTaskWithVideoBrief({
+        creatorId: actor.id, assigneeId: assignee.id, title: parsed.title,
+        description: parsed.description, priority: parsed.priority, deadline: parsed.deadline,
+        videoBrief: { kind: parsed.videoBrief.kind, brief: parsed.videoBrief },
+      })
+      : await this.persistTaskWithAssignee(actor, assignee, parsed);
     const [assignment, confirmation] = await Promise.allSettled([
       this.notificationQueue.queueAssignment({ task, creator: actor, assignee }),
       actor.id !== assignee.id
@@ -814,6 +829,10 @@ export class MarketingService {
     const assignee = await this.repository.getUserById(task.assigneeId);
     if (assignee?.role !== "OPERATOR_VIDEO_EDITOR") {
       throw new ApplicationError("INVALID_INPUT", "Video vazifasi video operatorga biriktirilishi kerak.");
+    }
+    const existingBrief = await this.repository.getTaskVideoBrief(taskId);
+    if (!existingBrief || existingBrief.kind !== parsed.kind) {
+      throw new ApplicationError("CONFLICT", "Video turi vazifa yaratilayotganda tanlanadi.");
     }
     if (actor.role !== "HEAD_OF_MARKETING" && actor.id !== task.creatorId &&
       !(parsed.kind === "EDIT" && actor.id === task.assigneeId)) {

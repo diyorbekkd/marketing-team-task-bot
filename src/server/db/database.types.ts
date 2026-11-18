@@ -338,6 +338,12 @@ export interface Database {
     };
     Views: Record<never, never>;
     Functions: {
+      create_task_with_video_brief: {
+        Args: { p_creator_id: string; p_assignee_id: string; p_title: string;
+          p_description: string; p_priority: "high" | "normal" | "low";
+          p_deadline: string; p_video_kind: "SHOOT" | "EDIT"; p_video_brief: Json };
+        Returns: TaskRow;
+      };
       save_task_video_brief: {
         Args: { p_task_id: string; p_actor_id: string; p_kind: "SHOOT" | "EDIT";
           p_brief: Json; p_confirm: boolean };

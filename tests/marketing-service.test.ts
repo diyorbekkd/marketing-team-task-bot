@@ -127,6 +127,7 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     }),
     reassignTask: vi.fn(async ({ taskId, newAssigneeId }) => task({ id: taskId, assigneeId: newAssigneeId })),
     createTask: vi.fn(),
+    createTaskWithVideoBrief: vi.fn(),
     getTaskVideoBrief: vi.fn(async () => null),
     saveTaskVideoBrief: vi.fn(),
     updateTask: vi.fn(async ({ patch }) => task(patch)),
@@ -1465,9 +1466,51 @@ describe("MarketingService MVP permissions", () => {
       durationMinutes: 90,
     };
 
+    it("creates an operator shoot with its brief in one repository transaction", async () => {
+      const created = task();
+      const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
+        createTaskWithVideoBrief: vi.fn(async () => created) });
+      const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+      const result = await new MarketingService(repo, notifier(), queue).createTaskQueued(creator, {
+        title: "Mijoz syomkasi", assigneeId: operator.id, deadline: "2099-11-21T10:00:00+05:00",
+        videoBrief: proposedShoot,
+      });
+      expect(result.task).toEqual(created);
+      expect(repo.createTask).not.toHaveBeenCalled();
+      expect(repo.createTaskWithVideoBrief).toHaveBeenCalledWith(expect.objectContaining({
+        assigneeId: operator.id, videoBrief: { kind: "SHOOT", brief: proposedShoot },
+      }));
+      expect(queue.queueAssignment).toHaveBeenCalledOnce();
+    });
+
+    it("rejects a video brief for a non-operator before creating a task", async () => {
+      const repo = repository();
+      const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+      await expect(new MarketingService(repo, notifier(), queue).createTaskQueued(creator, {
+        title: "Syomka", assigneeId: assignee.id, deadline: "2099-11-21T10:00:00+05:00",
+        videoBrief: proposedShoot,
+      })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.createTaskWithVideoBrief).not.toHaveBeenCalled();
+    });
+
+    it("does not add a video type to an existing ordinary task", async () => {
+      const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
+        getTaskVideoBrief: vi.fn(async () => null) });
+      await expect(new MarketingService(repo, notifier()).saveVideoBrief(creator, ids.task, proposedShoot))
+        .rejects.toMatchObject({ code: "CONFLICT" });
+      expect(repo.saveTaskVideoBrief).not.toHaveBeenCalled();
+    });
+
     it("lets the creator propose a shoot and only its assignee confirm it", async () => {
       const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator :
         [head, creator, unrelated].find((candidate) => candidate.id === id) ?? null),
+        getTaskVideoBrief: vi.fn(async () => ({
+          taskId: ids.task, kind: "SHOOT" as const, scenarioUrl: proposedShoot.scenarioUrl,
+          onCameraPerson: proposedShoot.onCameraPerson, location: proposedShoot.location,
+          scheduledAt: proposedShoot.scheduledAt, durationMinutes: 90,
+          confirmedBy: null, confirmedAt: null, footageUrl: null, outputSpec: null,
+          editLevel: null, updatedAt: "2099-11-01T00:00:00Z",
+        })),
         saveTaskVideoBrief: vi.fn(async () => ({
         taskId: ids.task, kind: "SHOOT" as const, scenarioUrl: proposedShoot.scenarioUrl,
         onCameraPerson: proposedShoot.onCameraPerson, location: proposedShoot.location,

@@ -1736,15 +1736,15 @@ function TaskCard({
       onClick={() => onSelect(task.id)}
       aria-label={`Vazifa: ${task.title}`}
     >
+      <div className="ma-task-title">{task.title}</div>
       <div className="ma-task-card-top">
-        <span className={`ma-priority p-${task.priority}`}>
-          {PRIORITY_LABELS[task.priority]}
-        </span>
         <span className={`ma-status-pill s-${task.status.toLowerCase()}`}>
           {STATUS_LABELS[task.status]}
         </span>
+        {task.priority === "high" && <span className={`ma-priority p-${task.priority}`}>
+          {PRIORITY_LABELS[task.priority]}
+        </span>}
       </div>
-      <div className="ma-task-title">{task.title}</div>
       {!compact && task.description && (
         <div className="ma-task-desc">{task.description}</div>
       )}
@@ -1888,16 +1888,15 @@ function ReportsView({ isHead, onOpenTasks }: {
 
 // ─── Video brief ──────────────────────────────────────────────────────────────
 
-function VideoBriefPanel({ task, brief, canCreate, canEditShoot, canEditEdit, canConfirm, onChange }: {
+function VideoBriefPanel({ task, brief, canEditShoot, canEditEdit, canConfirm, onChange }: {
   task: Task;
-  brief: VideoBrief | null;
-  canCreate: boolean;
+  brief: VideoBrief;
   canEditShoot: boolean;
   canEditEdit: boolean;
   canConfirm: boolean;
   onChange: (brief: VideoBrief) => void;
 }) {
-  const [kind, setKind] = useState<VideoKind | null>(brief?.kind ?? null);
+  const kind = brief.kind;
   const [editing, setEditing] = useState(!brief?.scenarioUrl && !brief?.footageUrl);
   const [scenarioUrl, setScenarioUrl] = useState(brief?.scenarioUrl ?? "");
   const [onCameraPerson, setOnCameraPerson] = useState(brief?.onCameraPerson ?? "");
@@ -1910,10 +1909,8 @@ function VideoBriefPanel({ task, brief, canCreate, canEditShoot, canEditEdit, ca
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const terminal = isTerminal(task.status);
-  if (!kind && !canCreate) return null;
-
   const save = async () => {
-    if (!kind || pending) return;
+    if (pending) return;
     setPending(true); setError(null);
     const body = kind === "SHOOT"
       ? { kind, scenarioUrl: scenarioUrl.trim(), onCameraPerson: onCameraPerson.trim(),
@@ -1936,15 +1933,10 @@ function VideoBriefPanel({ task, brief, canCreate, canEditShoot, canEditEdit, ca
   };
 
   return <section className="ma-section ma-video-brief" aria-label="Video ishlab chiqarish brifi">
-    <div className="ma-section-head"><h3>{kind === "SHOOT" ? "Syomka" : kind === "EDIT" ? "Montaj" : "Video vazifasi"}</h3>
-      {kind && !terminal && (kind === "SHOOT" ? canEditShoot : canEditEdit) && !editing &&
+    <div className="ma-section-head"><h3>{kind === "SHOOT" ? "Syomka" : "Montaj"}</h3>
+      {!terminal && (kind === "SHOOT" ? canEditShoot : canEditEdit) && !editing &&
         <button className="ma-btn secondary compact" onClick={() => setEditing(true)}>Brifni tahrirlash</button>}
     </div>
-    {!kind && <div className="ma-video-kind-actions">
-      {canEditShoot && <button className="ma-btn secondary" onClick={() => setKind("SHOOT")}>Syomka belgilash</button>}
-      {canEditEdit && <button className="ma-btn secondary" onClick={() => setKind("EDIT")}>Montaj brifi</button>}
-    </div>}
-    {kind && !brief && <button className="ma-link-btn" type="button" onClick={() => setKind(null)}>← Boshqa tur tanlash</button>}
     {kind === "SHOOT" && <>
       <p className="ma-muted">Mavzu: <strong>{task.title}</strong>. Syomka vaqti vazifa muddatidan alohida.</p>
       {brief?.scenarioUrl && !editing && <div className="ma-video-summary">
@@ -2048,6 +2040,7 @@ function TaskDetailPanel({
   const [commentUrl, setCommentUrl] = useState("");
   const [commentPending, setCommentPending] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const primaryActionRef = useRef<HTMLElement>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -2065,6 +2058,12 @@ function TaskDetailPanel({
     const el = panelRef.current;
     if (el) el.focus();
   }, []);
+
+  useEffect(() => {
+    if (showBlockInput || showRevisionInput) {
+      primaryActionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [showBlockInput, showRevisionInput]);
 
   const postAction = async (action: string, extra?: Record<string, unknown>): Promise<boolean> => {
     setActionPending(true);
@@ -2329,6 +2328,8 @@ function TaskDetailPanel({
     if (!isTerminal(task.status) && (isCreator || isHead)) actions.push({ label: "Bekor qilish", action: "CANCEL", variant: "danger" });
     if (isTerminal(task.status) && isHead) actions.push({ label: "Qayta ochish", action: "REOPEN" });
   }
+  const secondaryActions = actions.filter((item) => ["_block", "_revision", "CANCEL", "REOPEN"].includes(item.action));
+  const mainActions = actions.filter((item) => !secondaryActions.includes(item));
 
   return (
     <div
@@ -2362,16 +2363,13 @@ function TaskDetailPanel({
 
             <dl className="ma-detail-meta">
               <dt>Mas’ul</dt><dd>{assignee?.displayName ?? "—"}</dd>
-              <dt>Yaratuvchi</dt><dd>{creator?.displayName ?? "—"}</dd>
               <dt>Muddat</dt><dd>{fmtDateTime(task.deadline)}</dd>
-              <dt>Publikatsiya</dt><dd>{fmtDateTime(task.publicationAt)}</dd>
               {task.blockedReason && <><dt>Blok sababi</dt><dd className="ma-overdue-text">{task.blockedReason}</dd></>}
             </dl>
 
-            {(detail?.videoBrief || (!isTerminal(task.status) && assignee?.role === "OPERATOR_VIDEO_EDITOR" && (isCreator || isHead || isAssignee))) &&
-              <VideoBriefPanel key={`${task.id}:${detail?.videoBrief?.updatedAt ?? "new"}`}
-                task={task} brief={detail?.videoBrief ?? null}
-                canCreate={!isTerminal(task.status) && (isCreator || isHead || isAssignee)}
+            {detail?.videoBrief &&
+              <VideoBriefPanel key={`${task.id}:${detail.videoBrief.updatedAt}`}
+                task={task} brief={detail.videoBrief}
                 canEditShoot={Boolean(isCreator || isHead)}
                 canEditEdit={Boolean(isCreator || isHead || isAssignee)}
                 canConfirm={Boolean(isAssignee)}
@@ -2380,116 +2378,10 @@ function TaskDetailPanel({
                   void load(true);
                 }} />}
 
-            {workflowPlan && <section className="ma-section">
-              <div className="ma-section-head"><h3>Ish jarayoni rejasi</h3><small>{workflowPlan.templateName}</small></div>
-              {task.workflowNextDeadline && task.status === "REVIEW" && <p className="ma-muted">
-                Keyingi bosqich uchun belgilangan muddat: <strong>{fmtDateTime(task.workflowNextDeadline)}</strong>
-              </p>}
-              <ol className="ma-workflow-steps">{workflowPlan.steps.map((step) => <li key={step.id}>
-                <span>{step.position}</span><div><strong>{step.title}</strong>
-                  <small>{users.find((user) => user.id === step.ownerId)?.displayName ?? "—"} · {step.taskId ? (step.taskStatus === "DONE" ? "Bajarildi" : "Ochiq") : "Rejada"}</small>
-                  {step.deadline && <small>Muddat: {fmtDateTime(step.deadline)}</small>}
-                  {step.participantIds.length > 0 && <small>Ishtirokchilar: {step.participantIds.map((id) => users.find((user) => user.id === id)?.displayName ?? "—").join(", ")}</small>}
-                </div></li>)}</ol>
-            </section>}
-
-            {showEdit && (
-              <section className="ma-section ma-edit-card" aria-labelledby="edit-task-title">
-                <div className="ma-section-head"><h3 id="edit-task-title">Vazifani tahrirlash</h3><button className="ma-back-btn" onClick={() => setShowEdit(false)} aria-label="Tahrirlashni yopish">×</button></div>
-                <div className="ma-block-form">
-                  <label htmlFor="edit-title">Vazifa nomi</label>
-                  <input id="edit-title" value={editTitle} maxLength={200} onChange={(event) => setEditTitle(event.target.value)} />
-                  <label htmlFor="edit-description">Tavsif</label>
-                  <textarea id="edit-description" value={editDescription} maxLength={5000} rows={4} onChange={(event) => setEditDescription(event.target.value)} />
-                  <label htmlFor="edit-priority">Ustuvorlik</label>
-                  <select id="edit-priority" value={editPriority} onChange={(event) => setEditPriority(event.target.value as Priority)}>
-                    <option value="high">Yuqori</option><option value="normal">Oddiy</option><option value="low">Past</option>
-                  </select>
-                  {canManageTask && <>
-                    <label htmlFor="edit-assignee">Mas’ul</label>
-                    <PersonPickerField id="edit-assignee" users={users.filter((user) => user.isActive)} selectedId={editAssigneeId} onSelect={setEditAssigneeId} pickerTitle="Mas’ulni tanlang" placeholder="Mas’ulni tanlang" />
-                    <label htmlFor="edit-deadline">Muddat</label>
-                    <input id="edit-deadline" type="datetime-local" value={editDeadline} onChange={(event) => setEditDeadline(event.target.value)} />
-                    <label htmlFor="edit-publication">Publikatsiya sanasi (ixtiyoriy)</label>
-                    <input id="edit-publication" type="datetime-local" value={editPublication} onChange={(event) => setEditPublication(event.target.value)} />
-                    <span className="ma-muted">Publikatsiya sanasi ishni tugatish muddatidan alohida saqlanadi.</span>
-                  </>}
-                  {!canManageTask && <span className="ma-muted">Mas’ul muddat, mas’ul shaxs va publikatsiya sanasini o‘zgartira olmaydi.</span>}
-                  <div className="ma-form-row">
-                    <button className="ma-btn primary" disabled={actionPending || !editTitle.trim() || (canManageTask && (!editAssigneeId || !editDeadline))} onClick={saveTaskEdit}>{actionPending ? "Saqlanmoqda…" : "Saqlash"}</button>
-                    <button className="ma-btn secondary" disabled={actionPending} onClick={() => setShowEdit(false)}>Bekor qilish</button>
-                  </div>
-                  {actionError && <div className="ma-error-inline" role="alert">{actionError}</div>}
-                </div>
-              </section>
-            )}
-
-            {postingChecklist && (
-              <section className="ma-checklist-card" aria-labelledby="posting-checklist-title">
-                <div className="ma-section-head">
-                  <div>
-                    <h3 id="posting-checklist-title">Joylash ro‘yxati</h3>
-                    <span className="ma-muted">{postingChecklist.items.filter((item) => item.isCompleted).length} / {postingChecklist.items.length} bajarilgan</span>
-                  </div>
-                  {postingComplete && <span className="ma-complete-chip">Tayyor</span>}
-                </div>
-                <div className="ma-checklist-items">
-                  {postingChecklist.items.map((item) => (
-                    <button
-                      key={item.id}
-                      className={item.isCompleted ? "complete" : ""}
-                      disabled={!isAssignee || !["IN_PROGRESS", "REVISION"].includes(task.status) || checklistPendingIds.has(item.id)}
-                      onClick={() => toggleChecklist(item.id)}
-                    >
-                      <span aria-hidden="true">{item.isCompleted ? "✓" : "○"}</span>{item.label}
-                    </button>
-                  ))}
-                </div>
-                {!postingComplete && isAssignee && (
-                  <p className="ma-muted">Tekshiruvga yuborish uchun barcha platformalarni belgilang.</p>
-                )}
-              </section>
-            )}
-
-            <TaskPlanningPanel
-              key={`${taskId}:${detail?.personalPlan?.updatedAt ?? "new"}`}
-              taskId={taskId}
-              terminal={isTerminal(task.status)}
-              canEditCheckpoints={isHead || isCreator || isAssignee}
-              plan={detail?.personalPlan ?? null}
-              checkpoints={detail?.checkpoints ?? []}
-              onPlan={(plan) => setDetail((previous) => previous ? { ...previous, personalPlan: plan } : previous)}
-              onCheckpoints={(checkpoints) => setDetail((previous) => previous ? { ...previous, checkpoints } : previous)}
-              onRefreshPlan={onPlanSaved}
-              onRefreshDetail={() => { void load(true); }}
-            />
-
-            {/* Deadline requests */}
-            {pendingDL.length > 0 && (
-              <section className="ma-section" aria-labelledby="dl-req-title">
-                <h3 id="dl-req-title">Kutilayotgan muddat so‘rovlari</h3>
-                {pendingDL.map((req) => {
-                  const requester = users.find((u) => u.id === req.requestedBy);
-                  return (
-                    <div key={req.id} className="ma-dl-req">
-                      <span><strong>{requester?.displayName ?? "Foydalanuvchi"}</strong> → {fmtDateTime(req.requestedDeadline)}</span>
-                      <span className="ma-muted">{req.reason}</span>
-                      {(isCreator || isHead) && (
-                        <div className="ma-dl-actions">
-                          <button className="ma-btn primary" disabled={actionPending} onClick={() => resolveDeadline(req.id, true)}>Tasdiqlash</button>
-                          <button className="ma-btn warn" disabled={actionPending} onClick={() => resolveDeadline(req.id, false)}>Rad etish</button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </section>
-            )}
-
             {/* Workflow actions */}
-            {actions.length > 0 && (
-              <section className="ma-section">
-                <h3>Amallar</h3>
+            {(mainActions.length > 0 || showBlockInput || showRevisionInput || confirmReview) && (
+              <section className="ma-section ma-primary-action" ref={primaryActionRef}>
+                <h3>Keyingi qadam</h3>
                 {showBlockInput ? (
                   <div className="ma-block-form">
                     <label htmlFor="block-reason">Bloklash sababi</label>
@@ -2563,7 +2455,7 @@ function TaskDetailPanel({
                   </div>
                 ) : (
                   <div className="ma-action-row">
-                    {actions.map((a) => (
+                    {mainActions.map((a) => (
                       <button
                         key={a.action}
                         className={`ma-btn ${a.variant ?? "primary"}`}
@@ -2581,6 +2473,131 @@ function TaskDetailPanel({
                   </div>
                 )}
                 {actionError && <div className="ma-error-inline" role="alert">{actionError}</div>}
+              </section>
+            )}
+
+
+            {workflowPlan && <details className="ma-section ma-detail-disclosure">
+              <summary>Ish jarayoni rejasi · {workflowPlan.templateName}</summary>
+              {task.workflowNextDeadline && task.status === "REVIEW" && <p className="ma-muted">
+                Keyingi bosqich uchun belgilangan muddat: <strong>{fmtDateTime(task.workflowNextDeadline)}</strong>
+              </p>}
+              <ol className="ma-workflow-steps">{workflowPlan.steps.map((step) => <li key={step.id}>
+                <span>{step.position}</span><div><strong>{step.title}</strong>
+                  <small>{users.find((user) => user.id === step.ownerId)?.displayName ?? "—"} · {step.taskId ? (step.taskStatus === "DONE" ? "Bajarildi" : "Ochiq") : "Rejada"}</small>
+                  {step.deadline && <small>Muddat: {fmtDateTime(step.deadline)}</small>}
+                  {step.participantIds.length > 0 && <small>Ishtirokchilar: {step.participantIds.map((id) => users.find((user) => user.id === id)?.displayName ?? "—").join(", ")}</small>}
+                </div></li>)}</ol>
+            </details>}
+
+            {showEdit && (
+              <section className="ma-section ma-edit-card" aria-labelledby="edit-task-title">
+                <div className="ma-section-head"><h3 id="edit-task-title">Vazifani tahrirlash</h3><button className="ma-back-btn" onClick={() => setShowEdit(false)} aria-label="Tahrirlashni yopish">×</button></div>
+                <div className="ma-block-form">
+                  <label htmlFor="edit-title">Vazifa nomi</label>
+                  <input id="edit-title" value={editTitle} maxLength={200} onChange={(event) => setEditTitle(event.target.value)} />
+                  <label htmlFor="edit-description">Tavsif</label>
+                  <textarea id="edit-description" value={editDescription} maxLength={5000} rows={4} onChange={(event) => setEditDescription(event.target.value)} />
+                  <label htmlFor="edit-priority">Ustuvorlik</label>
+                  <select id="edit-priority" value={editPriority} onChange={(event) => setEditPriority(event.target.value as Priority)}>
+                    <option value="high">Yuqori</option><option value="normal">Oddiy</option><option value="low">Past</option>
+                  </select>
+                  {canManageTask && <>
+                    <label htmlFor="edit-assignee">Mas’ul</label>
+                    <PersonPickerField id="edit-assignee" users={users.filter((user) => user.isActive)} selectedId={editAssigneeId} onSelect={setEditAssigneeId} pickerTitle="Mas’ulni tanlang" placeholder="Mas’ulni tanlang" />
+                    <label htmlFor="edit-deadline">Muddat</label>
+                    <input id="edit-deadline" type="datetime-local" value={editDeadline} onChange={(event) => setEditDeadline(event.target.value)} />
+                    <label htmlFor="edit-publication">Publikatsiya sanasi (ixtiyoriy)</label>
+                    <input id="edit-publication" type="datetime-local" value={editPublication} onChange={(event) => setEditPublication(event.target.value)} />
+                    <span className="ma-muted">Publikatsiya sanasi ishni tugatish muddatidan alohida saqlanadi.</span>
+                  </>}
+                  {!canManageTask && <span className="ma-muted">Mas’ul muddat, mas’ul shaxs va publikatsiya sanasini o‘zgartira olmaydi.</span>}
+                  <div className="ma-form-row">
+                    <button className="ma-btn primary" disabled={actionPending || !editTitle.trim() || (canManageTask && (!editAssigneeId || !editDeadline))} onClick={saveTaskEdit}>{actionPending ? "Saqlanmoqda…" : "Saqlash"}</button>
+                    <button className="ma-btn secondary" disabled={actionPending} onClick={() => setShowEdit(false)}>Bekor qilish</button>
+                  </div>
+                  {actionError && <div className="ma-error-inline" role="alert">{actionError}</div>}
+                </div>
+              </section>
+            )}
+
+            {postingChecklist && (
+              <section className="ma-checklist-card" aria-labelledby="posting-checklist-title">
+                <div className="ma-section-head">
+                  <div>
+                    <h3 id="posting-checklist-title">Joylash ro‘yxati</h3>
+                    <span className="ma-muted">{postingChecklist.items.filter((item) => item.isCompleted).length} / {postingChecklist.items.length} bajarilgan</span>
+                  </div>
+                  {postingComplete && <span className="ma-complete-chip">Tayyor</span>}
+                </div>
+                <div className="ma-checklist-items">
+                  {postingChecklist.items.map((item) => (
+                    <button
+                      key={item.id}
+                      className={item.isCompleted ? "complete" : ""}
+                      disabled={!isAssignee || !["IN_PROGRESS", "REVISION"].includes(task.status) || checklistPendingIds.has(item.id)}
+                      onClick={() => toggleChecklist(item.id)}
+                    >
+                      <span aria-hidden="true">{item.isCompleted ? "✓" : "○"}</span>{item.label}
+                    </button>
+                  ))}
+                </div>
+                {!postingComplete && isAssignee && (
+                  <p className="ma-muted">Tekshiruvga yuborish uchun barcha platformalarni belgilang.</p>
+                )}
+              </section>
+            )}
+
+            <TaskPlanningPanel
+              key={`${taskId}:${detail?.personalPlan?.updatedAt ?? "new"}`}
+              taskId={taskId}
+              terminal={isTerminal(task.status)}
+              canEditCheckpoints={isHead || isCreator || isAssignee}
+              plan={detail?.personalPlan ?? null}
+              checkpoints={detail?.checkpoints ?? []}
+              onPlan={(plan) => setDetail((previous) => previous ? { ...previous, personalPlan: plan } : previous)}
+              onCheckpoints={(checkpoints) => setDetail((previous) => previous ? { ...previous, checkpoints } : previous)}
+              onRefreshPlan={onPlanSaved}
+              onRefreshDetail={() => { void load(true); }}
+            />
+
+            <details className="ma-section ma-detail-disclosure">
+              <summary>Qo‘shimcha ma’lumot va amallar</summary>
+              <dl className="ma-detail-meta">
+                <dt>Yaratuvchi</dt><dd>{creator?.displayName ?? "—"}</dd>
+                {task.publicationAt && <><dt>Publikatsiya</dt><dd>{fmtDateTime(task.publicationAt)}</dd></>}
+              </dl>
+              {secondaryActions.length > 0 && <div className="ma-action-row">
+                {secondaryActions.map((item) => <button key={item.action}
+                  className={`ma-btn ${item.variant ?? "secondary"}`} disabled={actionPending}
+                  onClick={() => {
+                    if (item.action === "_block") setShowBlockInput(true);
+                    else if (item.action === "_revision") setShowRevisionInput(true);
+                    else void postAction(item.action);
+                  }}>{item.label}</button>)}
+              </div>}
+              {actionError && mainActions.length === 0 && <div className="ma-error-inline" role="alert">{actionError}</div>}
+            </details>
+
+            {/* Deadline requests */}
+            {pendingDL.length > 0 && (
+              <section className="ma-section" aria-labelledby="dl-req-title">
+                <h3 id="dl-req-title">Kutilayotgan muddat so‘rovlari</h3>
+                {pendingDL.map((req) => {
+                  const requester = users.find((u) => u.id === req.requestedBy);
+                  return (
+                    <div key={req.id} className="ma-dl-req">
+                      <span><strong>{requester?.displayName ?? "Foydalanuvchi"}</strong> → {fmtDateTime(req.requestedDeadline)}</span>
+                      <span className="ma-muted">{req.reason}</span>
+                      {(isCreator || isHead) && (
+                        <div className="ma-dl-actions">
+                          <button className="ma-btn primary" disabled={actionPending} onClick={() => resolveDeadline(req.id, true)}>Tasdiqlash</button>
+                          <button className="ma-btn warn" disabled={actionPending} onClick={() => resolveDeadline(req.id, false)}>Rad etish</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </section>
             )}
 
@@ -3191,6 +3208,16 @@ function QuickAddPanel({
   const [assigneeId, setAssigneeId] = useState(currentUser.id);
   const [deadline, setDeadline] = useState("");
   const [priority, setPriority] = useState<Priority>("normal");
+  const [videoKind, setVideoKind] = useState<VideoKind | "GENERAL" | null>(null);
+  const [scenarioUrl, setScenarioUrl] = useState("");
+  const [onCameraPerson, setOnCameraPerson] = useState("");
+  const [location, setLocation] = useState("");
+  const [scheduledAt, setScheduledAt] = useState("");
+  const [durationMinutes, setDurationMinutes] = useState("");
+  const [footageUrl, setFootageUrl] = useState("");
+  const [outputSpec, setOutputSpec] = useState("");
+  const [editLevel, setEditLevel] = useState<"SIMPLE" | "STANDARD" | "COMPLEX" | "">("");
+  const [openedAt] = useState(() => Date.now());
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -3200,9 +3227,18 @@ function QuickAddPanel({
   // dropdown or silently fall back to self-assignment. This is a loading
   // state, not a "not found" error.
   const teamReady = usersLoaded && activeUsers.length > 0;
+  const operatorSelected = activeUsers.find((user) => user.id === assigneeId)?.role === "OPERATOR_VIDEO_EDITOR";
+  const validUrl = (value: string) => {
+    try { return ["http:", "https:"].includes(new URL(value).protocol); } catch { return false; }
+  };
+  const videoReady = !operatorSelected || videoKind === "GENERAL" || (videoKind === "SHOOT"
+    ? validUrl(scenarioUrl) && !!onCameraPerson.trim() && !!location.trim() &&
+      !!scheduledAt && Date.parse(localDatetimeToISO(scheduledAt)) > openedAt &&
+      Number.isInteger(Number(durationMinutes)) && Number(durationMinutes) >= 5 && Number(durationMinutes) <= 1440
+    : videoKind === "EDIT" && validUrl(footageUrl) && !!outputSpec.trim() && !!editLevel);
 
   const submit = async () => {
-    if (pending || !teamReady || !title.trim() || !assigneeId || !deadline) return;
+    if (pending || !teamReady || !title.trim() || !assigneeId || !deadline || !videoReady) return;
     setPending(true);
     setError(null);
     const body: Record<string, unknown> = {
@@ -3212,6 +3248,14 @@ function QuickAddPanel({
       deadline: localDatetimeToISO(deadline),
     };
     if (description.trim()) body.description = description.trim();
+    if (operatorSelected && videoKind === "SHOOT") body.videoBrief = {
+      kind: "SHOOT", scenarioUrl: scenarioUrl.trim(), onCameraPerson: onCameraPerson.trim(),
+      location: location.trim(), scheduledAt: localDatetimeToISO(scheduledAt),
+      durationMinutes: Number(durationMinutes),
+    };
+    if (operatorSelected && videoKind === "EDIT") body.videoBrief = {
+      kind: "EDIT", footageUrl: footageUrl.trim(), outputSpec: outputSpec.trim(), editLevel,
+    };
 
     const { data, error: e } = await apiFetch<{ task: Task; notification: AssignmentNotificationResult }>("/api/tasks", {
       method: "POST",
@@ -3267,7 +3311,7 @@ function QuickAddPanel({
                 id="qa-assignee"
                 users={activeUsers}
                 selectedId={assigneeId}
-                onSelect={setAssigneeId}
+                onSelect={(id) => { if (id !== assigneeId) setVideoKind(null); setAssigneeId(id); }}
                 pickerTitle="Mas’ulni tanlang"
                 placeholder="Mas’ulni tanlang"
               />
@@ -3280,6 +3324,41 @@ function QuickAddPanel({
               <span className="ma-deadline-summary">{relativeDeadlineSummary(deadline)}</span>
             )}
           </div>
+          {operatorSelected && <div className="ma-form-group ma-video-create">
+            <span className="ma-field-label">Bu qanday vazifa? *</span>
+            <div className="ma-video-type-picker" role="group" aria-label="Operator vazifasi turi">
+              {(["GENERAL", "SHOOT", "EDIT"] as const).map((kind) => <button key={kind}
+                type="button" className={videoKind === kind ? "selected" : ""}
+                aria-pressed={videoKind === kind} onClick={() => setVideoKind(kind)}>
+                {kind === "SHOOT" ? "Syomka" : kind === "EDIT" ? "Montaj" : "Oddiy"}
+              </button>)}
+            </div>
+            {videoKind === "SHOOT" && <div className="ma-video-create-fields">
+              <p className="ma-muted">Syomka mavzusi vazifa nomi bo‘ladi. Vaqtni operator tasdiqlaydi.</p>
+              <label htmlFor="qa-scenario">Ssenariy havolasi *</label>
+              <input id="qa-scenario" type="url" value={scenarioUrl} onChange={(event) => setScenarioUrl(event.target.value)} placeholder="https://…" />
+              <label htmlFor="qa-person">Kadrga kim chiqadi? *</label>
+              <input id="qa-person" value={onCameraPerson} maxLength={200} onChange={(event) => setOnCameraPerson(event.target.value)} />
+              <label htmlFor="qa-location">Syomka manzili *</label>
+              <input id="qa-location" value={location} maxLength={300} onChange={(event) => setLocation(event.target.value)} />
+              <div className="ma-video-fields"><div><label htmlFor="qa-shoot-time">Taklif etilgan vaqt *</label>
+                <input id="qa-shoot-time" type="datetime-local" value={scheduledAt} onChange={(event) => setScheduledAt(event.target.value)} />
+              </div><div><label htmlFor="qa-shoot-duration">Davomiylik, daqiqa *</label>
+                <input id="qa-shoot-duration" type="number" min={5} max={1440} value={durationMinutes} onChange={(event) => setDurationMinutes(event.target.value)} />
+              </div></div>
+            </div>}
+            {videoKind === "EDIT" && <div className="ma-video-create-fields">
+              <label htmlFor="qa-footage">Xom material havolasi *</label>
+              <input id="qa-footage" type="url" value={footageUrl} onChange={(event) => setFootageUrl(event.target.value)} placeholder="https://…" />
+              <label htmlFor="qa-output">Tayyor video formati va soni *</label>
+              <input id="qa-output" value={outputSpec} maxLength={300} onChange={(event) => setOutputSpec(event.target.value)} placeholder="Masalan: Reels 9:16 · 1 ta" />
+              <label htmlFor="qa-level">Montaj darajasi *</label>
+              <select id="qa-level" value={editLevel} onChange={(event) => setEditLevel(event.target.value as typeof editLevel)}>
+                <option value="">Tanlang</option><option value="SIMPLE">Oddiy</option>
+                <option value="STANDARD">Standart</option><option value="COMPLEX">Murakkab</option>
+              </select>
+            </div>}
+          </div>}
           <details className="ma-more-details">
             <summary>Ustuvorlik va tavsif</summary>
             <div className="ma-form-group">
@@ -3302,7 +3381,7 @@ function QuickAddPanel({
             </div>
           </details>
           {error && <div className="ma-error-inline" role="alert">{error}</div>}
-          <button className="ma-btn primary full" disabled={pending || !teamReady || !title.trim() || !deadline || !assigneeId} onClick={submit}>
+          <button className="ma-btn primary full" disabled={pending || !teamReady || !title.trim() || !deadline || !assigneeId || !videoReady} onClick={submit}>
             {pending ? "Yaratilmoqda…" : !teamReady ? "Jamoa yuklanmoqda…" : "Vazifa yaratish"}
           </button>
         </div>
