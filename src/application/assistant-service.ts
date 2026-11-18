@@ -58,16 +58,16 @@ export class AssistantService {
       };
     }
     try {
-      const [history, page, createdPage, users] = await Promise.all([
+      const [history, page, recentPage, users] = await Promise.all([
         this.repository.listRecent(actor.id, 8),
         this.marketing.listTaskPage(actor, actor.role === "HEAD_OF_MARKETING" ? "team" : "my", {
           pageSize: 20, sort: "deadline_asc", reportView: "open",
         }),
-        actor.role === "HEAD_OF_MARKETING" ? Promise.resolve(null) :
-          this.marketing.listTaskPage(actor, "created", { pageSize: 20, sort: "deadline_asc", reportView: "open" }),
+        this.marketing.listTaskPage(actor, actor.role === "HEAD_OF_MARKETING" ? "team" : "created",
+          { pageSize: 20, sort: "created_desc", reportView: "open" }),
         this.marketing.listUsers(actor),
       ]);
-      const tasks = [...new Map([...page.tasks, ...(createdPage?.tasks ?? [])]
+      const tasks = [...new Map([...page.tasks, ...recentPage.tasks]
         .map((task) => [task.id, task])).values()];
       const response = await this.model.generate({ actor, question: parsed.text,
         history: history.filter((item) => item.id !== claimed.turn.id), tasks, users });
