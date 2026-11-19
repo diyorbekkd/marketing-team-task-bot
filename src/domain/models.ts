@@ -58,6 +58,29 @@ export const PostingChecklistSchema = z.object({
   items: z.array(PostingChecklistItemSchema),
 });
 
+export const UserTaskPlanSchema = z.object({
+  userId: z.string().uuid(),
+  taskId: z.string().uuid(),
+  isImportant: z.boolean().nullable(),
+  urgentOverride: z.boolean().nullable(),
+  plannedOn: z.string().nullable(),
+  estimatedMinutes: z.number().int().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const TaskCheckpointSchema = z.object({
+  id: z.string().uuid(),
+  taskId: z.string().uuid(),
+  title: z.string(),
+  dueAt: z.string().nullable(),
+  position: z.number().int().positive(),
+  createdBy: z.string().uuid(),
+  completedBy: z.string().uuid().nullable(),
+  completedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
 export const RecurrenceFrequencySchema = z.enum(["WEEKDAYS", "WEEKLY", "MONTHLY"]);
 export const RecurrenceStatusSchema = z.enum(["ACTIVE", "PAUSED", "STOPPED"]);
 
@@ -94,6 +117,8 @@ export const TaskSchema = z.object({
   creatorId: z.string().uuid(),
   assigneeId: z.string().uuid(),
   deadline: z.string(),
+  shootAt: z.string().nullable().optional(),
+  publicationAt: z.string().nullable(),
   blockedReason: z.string().nullable(),
   completedAt: z.string().nullable(),
   cancelledAt: z.string().nullable(),
@@ -101,6 +126,82 @@ export const TaskSchema = z.object({
   updatedAt: z.string(),
   recurringDefinitionId: z.string().uuid().nullable().optional(),
   scheduledOccurrenceAt: z.string().nullable().optional(),
+  workflowRunId: z.string().uuid().nullable().optional(),
+  workflowStepId: z.string().uuid().nullable().optional(),
+  participantIds: z.array(z.string().uuid()).optional(),
+  workflowNextDeadline: z.string().nullable().optional(),
+});
+
+export const VideoKindSchema = z.enum(["SHOOT", "EDIT"]);
+export const EditLevelSchema = z.enum(["SIMPLE", "STANDARD", "COMPLEX"]);
+export const TaskVideoBriefSchema = z.object({
+  taskId: z.string().uuid(),
+  kind: VideoKindSchema,
+  scenarioUrl: z.string().nullable(),
+  onCameraPerson: z.string().nullable(),
+  location: z.string().nullable(),
+  scheduledAt: z.string().nullable(),
+  durationMinutes: z.number().int().nullable(),
+  confirmedBy: z.string().uuid().nullable(),
+  confirmedAt: z.string().nullable(),
+  footageUrl: z.string().nullable(),
+  outputSpec: z.string().nullable(),
+  editLevel: EditLevelSchema.nullable(),
+  updatedAt: z.string(),
+});
+
+export const WorkflowTemplateStepSchema = z.object({
+  id: z.string().uuid(),
+  templateId: z.string().uuid(),
+  position: z.number().int().positive(),
+  title: z.string(),
+  description: z.string().nullable(),
+  assigneeRole: TeamRoleSchema,
+  priority: TaskPrioritySchema,
+  dueAfterHours: z.number().int().positive(),
+  estimatedMinutes: z.number().int().positive().nullable().default(null),
+  checkpointTitles: z.array(z.string()).default([]),
+  videoKind: VideoKindSchema.nullable().optional(),
+});
+
+export const WorkflowTemplateSchema = z.object({
+  id: z.string().uuid(),
+  slug: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  isActive: z.boolean(),
+  isSystem: z.boolean(),
+  steps: z.array(WorkflowTemplateStepSchema),
+});
+
+export interface WorkflowPlan {
+  id: string;
+  subject: string;
+  templateName: string;
+  status: "ACTIVE" | "COMPLETED" | "CANCELLED";
+  currentPosition: number;
+  steps: Array<{
+    id: string;
+    position: number;
+    title: string;
+    ownerId: string;
+    participantIds: string[];
+    estimatedMinutes: number | null;
+    checkpointTitles: string[];
+    taskId: string | null;
+    taskStatus: string | null;
+    deadline: string | null;
+  }>;
+}
+
+export const TaskCommentSchema = z.object({
+  id: z.string().uuid(),
+  taskId: z.string().uuid(),
+  authorId: z.string().uuid(),
+  kind: z.enum(["COMMENT", "RESULT"]),
+  body: z.string().nullable(),
+  attachmentUrl: z.string().url().nullable(),
+  createdAt: z.string(),
 });
 
 export const TaskEventSchema = z.object({
@@ -132,7 +233,12 @@ export const DeadlineChangeRequestSchema = z.object({
 
 export type User = z.infer<typeof UserSchema>;
 export type Task = z.infer<typeof TaskSchema>;
+export type VideoKind = z.infer<typeof VideoKindSchema>;
+export type TaskVideoBrief = z.infer<typeof TaskVideoBriefSchema>;
 export type TaskEvent = z.infer<typeof TaskEventSchema>;
+export type TaskComment = z.infer<typeof TaskCommentSchema>;
+export type UserTaskPlan = z.infer<typeof UserTaskPlanSchema>;
+export type TaskCheckpoint = z.infer<typeof TaskCheckpointSchema>;
 export type DeadlineChangeRequest = z.infer<typeof DeadlineChangeRequestSchema>;
 export type PostingChecklist = z.infer<typeof PostingChecklistSchema>;
 export type PostingChecklistItem = z.infer<typeof PostingChecklistItemSchema>;
@@ -141,3 +247,5 @@ export type RecurrenceFrequency = z.infer<typeof RecurrenceFrequencySchema>;
 export type RecurrenceStatus = z.infer<typeof RecurrenceStatusSchema>;
 export type UserEvent = z.infer<typeof UserEventSchema>;
 export type UserEventType = z.infer<typeof UserEventTypeSchema>;
+export type WorkflowTemplate = z.infer<typeof WorkflowTemplateSchema>;
+export type WorkflowTemplateStep = z.infer<typeof WorkflowTemplateStepSchema>;

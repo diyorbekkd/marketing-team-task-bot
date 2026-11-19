@@ -69,35 +69,60 @@ function recipientKey(user: User): string {
 }
 
 function openTaskButton(appUrl: string) {
-  return [{ text: "📋 Open Task", web_app: { url: appUrl } }];
+  return [{ text: "📋 Vazifani ochish", web_app: { url: appUrl } }];
 }
 
 function workflowMessage(input: WorkflowNotificationInput, appUrl: string): TelegramNotificationMessage {
   const { actor, deadlineRequest, event, task } = input;
 
   switch (event) {
+    case "WORKFLOW_PLAN_SHARED":
+      return {
+        text: ["🧭 Ish jarayoni rejasi", "", `Loyiha: ${task.title.split(" — ")[0]}`, "", input.comment ?? "", "", "Bosqich navbati kelganda vazifa va uning aniq muddati yuboriladi."].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "WORKFLOW_STEP_ACTIVATED":
+      return {
+        text: ["▶️ Siz ishtirok etadigan bosqich boshlandi", "", `Vazifa: ${task.title}`, `Muddat: ${formatDeadline(task.deadline)}`].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "TASK_CREATED":
+      return {
+        text: ["📋 Vazifa yaratildi", "", `Vazifa: ${task.title}`, `Muddat: ${formatDeadline(task.deadline)}`].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "REVIEW_SUBMITTED":
+      return {
+        text: ["📝 Vazifa tekshiruvga yuborildi", "", `Vazifa: ${task.title}`, "Tasdiqlovchiga xabar yuborilmoqda."].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
+    case "TASK_STATUS_UPDATED":
+      return {
+        text: ["🔄 Vazifa holati o‘zgardi", "", `Vazifa: ${task.title}`, `Yangi holat: ${({ ASSIGNED: "Biriktirilgan", IN_PROGRESS: "Jarayonda", BLOCKED: "Bloklangan", REVIEW: "Tekshiruvda", REVISION: "Tuzatishda", DONE: "Bajarilgan", CANCELLED: "Bekor qilingan" } as Record<string, string>)[task.status] ?? task.status}`].join("\n"),
+        replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
+      };
     case "DEADLINE_CHANGE_REQUESTED": {
       if (!deadlineRequest) throw new Error("Deadline request context is required.");
       return {
         text: [
-          "📅 Deadline o‘zgartirish so‘rovi",
+          "📅 Muddatni o‘zgartirish so‘rovi",
           "",
-          `Task: ${task.title}`,
-          `Assignee: ${userLabel(actor)}`,
+          `Vazifa: ${task.title}`,
+          `Mas’ul: ${userLabel(actor)}`,
           "",
-          "Current deadline:",
+          "Joriy muddat:",
           formatDeadline(deadlineRequest.currentDeadline),
           "",
-          "Requested deadline:",
+          "So‘ralgan muddat:",
           formatDeadline(deadlineRequest.requestedDeadline),
           "",
-          "Reason:",
+          "Sabab:",
           deadlineRequest.reason,
         ].join("\n"),
         replyMarkup: {
           inline_keyboard: [
-            [{ text: "✅ Approve", callback_data: `deadline:${deadlineRequest.id}:APPROVE` }],
-            [{ text: "❌ Reject", callback_data: `deadline:${deadlineRequest.id}:REJECT` }],
+            [{ text: "✅ Tasdiqlash", callback_data: `deadline:${deadlineRequest.id}:APPROVE` }],
+            [{ text: "❌ Rad etish", callback_data: `deadline:${deadlineRequest.id}:REJECT` }],
             openTaskButton(appUrl),
           ],
         },
@@ -107,32 +132,33 @@ function workflowMessage(input: WorkflowNotificationInput, appUrl: string): Tele
       if (!deadlineRequest) throw new Error("Deadline request context is required.");
       return {
         text: [
-          "✅ Deadline o‘zgartirildi",
+          "✅ Muddat o‘zgartirildi",
           "",
-          `Task: ${task.title}`,
-          `New deadline: ${formatDeadline(deadlineRequest.requestedDeadline)}`,
+          `Vazifa: ${task.title}`,
+          `Yangi muddat: ${formatDeadline(deadlineRequest.requestedDeadline)}`,
         ].join("\n"),
         replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
       };
     }
     case "DEADLINE_CHANGE_REJECTED":
       return {
-        text: ["❌ Deadline so‘rovi rad etildi", "", `Task: ${task.title}`].join("\n"),
+        text: ["❌ Muddat so‘rovi rad etildi", "", `Vazifa: ${task.title}`].join("\n"),
         replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
       };
     case "REVIEW_REQUESTED":
       return {
         text: [
-          "📝 Task reviewga yuborildi",
+          "📝 Vazifa tekshiruvga yuborildi",
           "",
-          `Task: ${task.title}`,
-          `Assignee: ${userLabel(actor)}`,
-          `Deadline: ${formatDeadline(task.deadline)}`,
+          `Vazifa: ${task.title}`,
+          `Mas’ul: ${userLabel(actor)}`,
+          `Muddat: ${formatDeadline(task.deadline)}`,
+          ...(task.workflowNextDeadline ? [`Keyingi bosqich muddati: ${formatDeadline(task.workflowNextDeadline)}`] : []),
         ].join("\n"),
         replyMarkup: {
           inline_keyboard: [
-            [{ text: "✅ Approve", callback_data: `task:${task.id}:APPROVE` }],
-            [{ text: "🔄 Revision", callback_data: `task:${task.id}:REQUEST_REVISION` }],
+            [{ text: "✅ Tasdiqlash", callback_data: `task:${task.id}:APPROVE` }],
+            [{ text: "🔄 Tuzatishga qaytarish", callback_data: `task:${task.id}:REQUEST_REVISION` }],
             openTaskButton(appUrl),
           ],
         },
@@ -140,38 +166,38 @@ function workflowMessage(input: WorkflowNotificationInput, appUrl: string): Tele
     case "TASK_ACCEPTED":
       return {
         text: [
-          "✅ Task qabul qilindi",
+          "✅ Vazifa qabul qilindi",
           "",
-          `Task: ${task.title}`,
-          `Assignee: ${userLabel(actor)}`,
-          `Deadline: ${formatDeadline(task.deadline)}`,
-          "Status: In Progress",
+          `Vazifa: ${task.title}`,
+          `Mas’ul: ${userLabel(actor)}`,
+          `Muddat: ${formatDeadline(task.deadline)}`,
+          "Holat: Jarayonda",
         ].join("\n"),
         replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
       };
     case "TASK_COMPLETED":
       return {
-        text: ["✅ Task qabul qilindi", "", `Task: ${task.title}`].join("\n"),
+        text: ["✅ Vazifa tasdiqlandi", "", `Vazifa: ${task.title}`].join("\n"),
         replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
       };
     case "REVISION_REQUESTED":
       return {
         text: [
-          "🔄 Revision kerak",
+          "🔄 Tuzatish kerak",
           "",
-          `Task: ${task.title}`,
-          ...(input.comment ? ["", "Comment:", input.comment] : []),
+          `Vazifa: ${task.title}`,
+          ...(input.comment ? ["", "Izoh:", input.comment] : []),
         ].join("\n"),
         replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
       };
     case "TASK_BLOCKED":
       return {
         text: [
-          "⛔ Task blocked",
+          "⛔ Vazifa bloklandi",
           "",
-          `Task: ${task.title}`,
-          `Assignee: ${userLabel(actor)}`,
-          ...(input.comment ? ["", "Reason:", input.comment] : []),
+          `Vazifa: ${task.title}`,
+          `Mas’ul: ${userLabel(actor)}`,
+          ...(input.comment ? ["", "Sabab:", input.comment] : []),
         ].join("\n"),
         replyMarkup: { inline_keyboard: [openTaskButton(appUrl)] },
       };
@@ -185,27 +211,27 @@ function reminderMessage(input: ReminderNotificationInput, appUrl: string): Tele
   switch (reminderType) {
     case "H24_BEFORE":
       return {
-        text: ["⏰ Deadline yaqinlashmoqda", "", `Task: ${task.title}`, `Deadline: ${formatDeadline(task.deadline)}`, "Qoldi: 24 soat"].join("\n"),
+        text: ["⏰ Muddat yaqinlashmoqda", "", `Vazifa: ${task.title}`, `Muddat: ${formatDeadline(task.deadline)}`, "Qoldi: 24 soat"].join("\n"),
         replyMarkup,
       };
     case "H3_BEFORE":
       return {
-        text: ["⚠️ Deadline yaqin", "", `Task: ${task.title}`, `Deadline: ${formatDeadlineTime(task.deadline)}`, "Qoldi: 3 soat"].join("\n"),
+        text: ["⚠️ Muddat yaqin", "", `Vazifa: ${task.title}`, `Muddat: ${formatDeadlineTime(task.deadline)}`, "Qoldi: 3 soat"].join("\n"),
         replyMarkup,
       };
     case "AT_DEADLINE":
       return {
-        text: ["🔴 Deadline keldi", "", `Task: ${task.title}`, `Deadline: ${formatDeadlineTime(task.deadline)}`].join("\n"),
+        text: ["🔴 Muddat keldi", "", `Vazifa: ${task.title}`, `Muddat: ${formatDeadlineTime(task.deadline)}`].join("\n"),
         replyMarkup,
       };
     case "H1_OVERDUE":
       return {
-        text: ["🔴 Task kechikdi", "", `Task: ${task.title}`, `Deadline: ${formatDeadlineTime(task.deadline)}`, "Kechikish: 1 soat"].join("\n"),
+        text: ["🔴 Vazifa kechikdi", "", `Vazifa: ${task.title}`, `Muddat: ${formatDeadlineTime(task.deadline)}`, "Kechikish: 1 soat"].join("\n"),
         replyMarkup,
       };
     case "H24_OVERDUE":
       return {
-        text: ["🚨 Task 24 soatdan beri overdue", "", `Task: ${task.title}`].join("\n"),
+        text: ["🚨 Vazifa 24 soatdan beri kechikmoqda", "", `Vazifa: ${task.title}`].join("\n"),
         replyMarkup,
       };
   }
@@ -259,6 +285,12 @@ export class TelegramNotificationDispatcher implements NotificationDispatcher, R
     private readonly appUrl: string,
   ) {}
 
+  async sendTopicMessage(input: { chatId: string; topicId: number; text: string }): Promise<void> {
+    await sendTelegramMessage(this.botToken, {
+      chatId: input.chatId, messageThreadId: input.topicId, text: input.text,
+    });
+  }
+
   async notifyAssignment(
     { task, creator, assignee }: AssignmentNotificationInput,
   ): Promise<AssignmentNotificationResult> {
@@ -273,15 +305,15 @@ export class TelegramNotificationDispatcher implements NotificationDispatcher, R
         // Accept button, since there is nothing left for the assignee to
         // accept.
         text: [
-          "📋 Yangi task",
+          "📋 Yangi vazifa",
           "",
           task.title,
           "",
-          `Creator: ${creator.displayName}`,
-          `Deadline: ${formatDeadline(task.deadline)}`,
-          `Priority: ${task.priority}`,
+          `Yaratuvchi: ${creator.displayName}`,
+          `Muddat: ${formatDeadline(task.deadline)}`,
+          `Ustuvorlik: ${task.priority === "high" ? "Yuqori" : task.priority === "low" ? "Past" : "Oddiy"}`,
           "",
-          "Status: In Progress",
+          "Holat: Jarayonda",
         ].join("\n"),
         replyMarkup: { inline_keyboard: [openTaskButton(this.appUrl)] },
       });
@@ -302,11 +334,11 @@ export class TelegramNotificationDispatcher implements NotificationDispatcher, R
       await sendTelegramMessage(this.botToken, {
         chatId: assignee.telegramUserId,
         text: [
-          `📋 ${tasks.length} ta yangi task`,
+          `📋 ${tasks.length} ta yangi vazifa`,
           "",
           ...tasks.map((task, index) => `${index + 1}. ${task.title} — ${formatDeadlineShort(task.deadline)}`),
           "",
-          "Mini App'da tasklarni ko‘rishingiz mumkin.",
+          "Vazifalarni Mini App’da ko‘rishingiz mumkin.",
         ].join("\n"),
         replyMarkup: { inline_keyboard: [openTaskButton(this.appUrl)] },
       });
@@ -332,6 +364,10 @@ export class TelegramNotificationDispatcher implements NotificationDispatcher, R
     if (!recipient.isActive || !/^\d+$/.test(recipient.telegramUserId)) {
       throw new Error("Recipient is not actively Telegram-onboarded.");
     }
-    await sendTelegramMessage(this.botToken, { chatId: recipient.telegramUserId, text });
+    await sendTelegramMessage(this.botToken, {
+      chatId: recipient.telegramUserId,
+      text,
+      replyMarkup: { inline_keyboard: [[{ text: "📋 Vazifalarni tekshirish", web_app: { url: this.appUrl } }]] },
+    });
   }
 }

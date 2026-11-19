@@ -1,9 +1,12 @@
 import { ConfigurationError, getTeamBootstrapConfig, getTelegramConfig } from "@/server/config";
-import { getMarketingService } from "@/server/application";
+import { getAssistantService, getMarketingService, getNotificationRetryService } from "@/server/application";
+import { after } from "next/server";
 import { answerTelegramCallback, sendTelegramMessage } from "@/telegram/client";
 import { createTelegramUpdateHandler } from "@/telegram/handler";
 import { TelegramUpdateSchema } from "@/telegram/update";
 import { isValidWebhookSecret } from "@/telegram/webhook-security";
+
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
   let config: ReturnType<typeof getTelegramConfig>;
@@ -28,12 +31,12 @@ export async function POST(request: Request) {
   try {
     input = await request.json();
   } catch {
-    return Response.json({ error: "Request body must be valid JSON." }, { status: 400 });
+    return Response.json({ error: "So‘rov tanasi to‘g‘ri JSON bo‘lishi kerak." }, { status: 400 });
   }
 
   const parsed = TelegramUpdateSchema.safeParse(input);
   if (!parsed.success) {
-    return Response.json({ error: "Invalid Telegram update." }, { status: 400 });
+    return Response.json({ error: "Telegram yangilanishi noto‘g‘ri." }, { status: 400 });
   }
 
   const message = parsed.data.message;
@@ -55,7 +58,7 @@ export async function POST(request: Request) {
   const result = await createTelegramUpdateHandler(getMarketingService(), {
     marketingGroupId: teamConfig.groupId,
     headTelegramUserId: teamConfig.headTelegramUserId,
-  })(parsed.data);
+  }, getAssistantService())(parsed.data);
   if (result.callbackQueryId) {
     await answerTelegramCallback(config.botToken, result.callbackQueryId);
   }
@@ -69,6 +72,11 @@ export async function POST(request: Request) {
       return Response.json({ error: "Telegram reply delivery failed." }, { status: 502 });
     }
   }
+
+  if (parsed.data.callback_query?.data?.startsWith("ai:")) after(async () => {
+    try { await getNotificationRetryService().deliver(25); }
+    catch { console.error(JSON.stringify({ event: "post_response_assistant_telegram_delivery_failed" })); }
+  });
 
   return Response.json({ ok: true });
 }

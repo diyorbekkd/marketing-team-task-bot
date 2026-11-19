@@ -2,9 +2,9 @@
   color-scheme: light;
 
   /* Brand */
-  --primary: #2563eb;
-  --primary-dark: #0039b7;
-  --primary-soft: #eaf0fe;
+  --primary: #275bbd;
+  --primary-dark: #174492;
+  --primary-soft: #edf3ff;
 
   /* Neutrals */
   --ink: #0f172a;
@@ -54,52 +54,20 @@
   --space-8: 32px;
 }
 
-/*
- * Dark mode: a Telegram client's own theme (light/dark) is independent of
- * the device OS theme, so it is not reliably covered by prefers-color-scheme
- * alone. MiniApp.tsx reads Telegram.WebApp.colorScheme (and its
- * themeChanged event) and stamps data-theme="dark"/"light" on <html>; the
- * media-query block below is the fallback for a plain browser session
- * (no Telegram host) where only the OS preference is known. Brand blue
- * (--primary/--primary-dark) is intentionally unchanged in dark mode.
- */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --ink: #e7ebf3;
-    --muted: #94a3b8;
-    --paper: #0b1220;
-    --card: #141c2e;
-    --line: rgba(255, 255, 255, 0.1);
-    --primary-soft: rgba(37, 99, 235, 0.22);
-    --success-soft: rgba(22, 163, 74, 0.18);
-    --warning-soft: rgba(217, 119, 6, 0.2);
-    --danger-soft: rgba(220, 38, 38, 0.2);
-    --violet-soft: rgba(124, 58, 237, 0.2);
-    --success-text: #4ade80;
-    --warning-text: #fbbf24;
-    --danger-text: #f87171;
-    --neutral-pill-bg: rgba(255, 255, 255, 0.12);
-    --neutral-pill-text: #cbd5e1;
-    --cancelled-pill-bg: rgba(255, 255, 255, 0.06);
-    --cancelled-pill-text: #94a3b8;
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.35);
-  }
-}
-
+/* Explicit user choice controls dark mode; light is the default. */
 :root[data-theme="dark"] {
   color-scheme: dark;
   --ink: #e7ebf3;
   --muted: #94a3b8;
-  --paper: #0b1220;
-  --card: #141c2e;
-  --line: rgba(255, 255, 255, 0.1);
-  --primary-soft: rgba(37, 99, 235, 0.22);
-  --success-soft: rgba(22, 163, 74, 0.18);
-  --warning-soft: rgba(217, 119, 6, 0.2);
-  --danger-soft: rgba(220, 38, 38, 0.2);
-  --violet-soft: rgba(124, 58, 237, 0.2);
+  --paper: #17202b;
+  --card: #222e3b;
+  --line: rgba(255, 255, 255, 0.12);
+  --primary-soft: rgba(87, 130, 210, 0.18);
+  --primary-dark: #b7cfff;
+  --success-soft: rgba(22, 163, 74, 0.13);
+  --warning-soft: rgba(217, 119, 6, 0.14);
+  --danger-soft: rgba(220, 38, 38, 0.14);
+  --violet-soft: rgba(124, 58, 237, 0.14);
   --success-text: #4ade80;
   --warning-text: #fbbf24;
   --danger-text: #f87171;

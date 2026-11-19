@@ -1,18 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApplicationError } from "../src/application/errors";
 
-const { performTaskAction, getMarketingService, requireRequestActor } = vi.hoisted(() => ({
+const { performTaskAction, getMarketingService, requireRequestActor, after, deliver } = vi.hoisted(() => ({
   performTaskAction: vi.fn(),
   getMarketingService: vi.fn(),
   requireRequestActor: vi.fn(),
+  after: vi.fn(),
+  deliver: vi.fn(),
 }));
 
-vi.mock("../src/server/application", () => ({ getMarketingService }));
+vi.mock("next/server", () => ({ after }));
+vi.mock("../src/server/application", () => ({ getMarketingService, getNotificationRetryService: () => ({ deliver }) }));
 vi.mock("../src/server/auth/request-actor", () => ({ requireRequestActor }));
 
 describe("Mini App task action route", () => {
   beforeEach(() => {
     performTaskAction.mockReset();
+    after.mockReset();
+    deliver.mockReset();
     getMarketingService.mockReset();
     requireRequestActor.mockReset();
     getMarketingService.mockReturnValue({ performTaskAction });
@@ -33,7 +38,8 @@ describe("Mini App task action route", () => {
       { params: Promise.resolve({ id: "task-1" }) },
     );
 
-    expect(performTaskAction).toHaveBeenCalledWith({ id: "assignee-1" }, "task-1", { action: "ACCEPT" });
+    expect(performTaskAction).toHaveBeenCalledWith({ id: "assignee-1" }, "task-1", { action: "ACCEPT" }, { deferNotifications: true });
+    expect(after).toHaveBeenCalledOnce();
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ task });
   });

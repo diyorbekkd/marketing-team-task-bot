@@ -47,6 +47,7 @@ function task(overrides: Partial<Task> = {}): Task {
     creatorId: ids.creator,
     assigneeId: ids.assignee,
     deadline: "2026-09-08T13:00:00.000Z",
+    publicationAt: null,
     blockedReason: null,
     completedAt: null,
     cancelledAt: null,
@@ -100,9 +101,22 @@ function recurringDefinitionFixture(overrides: Partial<RecurringDefinition> = {}
 
 function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepository {
   return {
+    createBrowserTask: vi.fn(),
+    listBrowserTasksAwaitingNotifications: vi.fn(async () => []),
+    markBrowserTaskNotificationsQueued: vi.fn(async () => undefined),
+    createTaskFromTemplate: vi.fn(),
+    listTaskTemplates: vi.fn(async () => []),
+    saveTaskTemplateVersion: vi.fn(),
+    archiveTaskTemplate: vi.fn(),
+    getTaskTemplateInstance: vi.fn(async () => null),
+    rebaseTaskTemplateEvent: vi.fn(),
+    setTaskCheckpointDue: vi.fn(),
     registerTelegramUser: vi.fn(),
     getUserById: vi.fn(async (id) => [head, creator, assignee, unrelated].find((candidate) => candidate.id === id) ?? null),
     getUserByTelegramId: vi.fn(),
+    createWebLoginChallenge: vi.fn(async () => undefined),
+    approveWebLoginChallenge: vi.fn(async () => true),
+    consumeWebLoginChallenge: vi.fn(async () => assignee.id),
     findUserByUsername: vi.fn(),
     listUsers: vi.fn(async () => [head, creator, assignee, unrelated]),
     activateUser: vi.fn(async ({ userId, role }) => {
@@ -123,14 +137,32 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     }),
     reassignTask: vi.fn(async ({ taskId, newAssigneeId }) => task({ id: taskId, assigneeId: newAssigneeId })),
     createTask: vi.fn(),
+    createTaskWithVideoBrief: vi.fn(),
+    getTaskVideoBrief: vi.fn(async () => null),
+    saveTaskVideoBrief: vi.fn(),
+    updateTask: vi.fn(async ({ patch }) => task(patch)),
     getTask: vi.fn(async () => task()),
+    listTaskPage: vi.fn(async () => ({ tasks: [task()], hasMore: false })),
     listTasks: vi.fn(async () => [task()]),
+    listHomeTasks: vi.fn(async () => [task()]),
+    listReminderCandidates: vi.fn(async () => [task()]),
     transitionTask: vi.fn(async (input) => task({ status: input.newStatus })),
     listTaskEvents: vi.fn(async () => []),
     listAllTaskEvents: vi.fn(async () => []),
+    listTaskComments: vi.fn(async () => []),
+    addTaskComment: vi.fn(),
     getPostingChecklist: vi.fn(async () => null),
     getPostingChecklistByItemId: vi.fn(async () => null),
     togglePostingChecklistItem: vi.fn(),
+    getUserTaskPlan: vi.fn(async () => null),
+    listUserTaskPlans: vi.fn(async () => []),
+    saveUserTaskPlan: vi.fn(),
+    listTaskCheckpoints: vi.fn(async () => []),
+    listUserCheckpointsDueBetween: vi.fn(async () => []),
+    getTaskCheckpoint: vi.fn(async () => null),
+    addTaskCheckpoint: vi.fn(),
+    toggleTaskCheckpoint: vi.fn(),
+    removeTaskCheckpoint: vi.fn(),
     createDeadlineChangeRequest: vi.fn(async () => deadlineRequest()),
     getDeadlineChangeRequest: vi.fn(async () => deadlineRequest()),
     listDeadlineChangeRequests: vi.fn(async () => []),
@@ -146,9 +178,26 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     createRecurringDefinition: vi.fn(),
     updateRecurringDefinition: vi.fn(),
     generateRecurringOccurrence: vi.fn(async () => null),
+    listWorkflowTemplates: vi.fn(async () => []),
+    archiveWorkflowTemplate: vi.fn(async () => true),
+    saveWorkflowTemplateVersion: vi.fn(async () => "91000000-0000-4000-8000-000000000009"),
+    startWorkflowRun: vi.fn(async () => task()),
+    getWorkflowPlan: vi.fn(async () => null),
+    listWorkflowPlans: vi.fn(async () => []),
+    submitWorkflowStepForReview: vi.fn(async () => task({ status: "REVIEW" })),
+    completeSelfOwnedTask: vi.fn(async () => task({ status: "DONE" })),
+    advanceWorkflowRun: vi.fn(async () => null),
+    recoverWorkflowRuns: vi.fn(async () => []),
     claimReportDelivery: vi.fn(async () => true),
     completeReportDelivery: vi.fn(async () => undefined),
-    claimReminderDelivery: vi.fn(async () => true),
+    enqueueNotification: vi.fn(),
+    enqueueShootScenarioNotification: vi.fn(),
+    claimNotification: vi.fn(async () => true),
+    claimDueNotifications: vi.fn(async () => []),
+    completeNotification: vi.fn(async () => undefined),
+    getNotificationPreferences: vi.fn(async () => ({ assignments: true, workflow: true, reminders: true, dailyCheck: true, reports: true })),
+    updateNotificationPreferences: vi.fn(async (_userId, preferences) => preferences),
+    claimReminderDelivery: vi.fn(async () => ({ claimed: true, deliveries: [] })),
     completeReminderDelivery: vi.fn(async () => undefined),
     ...overrides,
   };
@@ -170,6 +219,7 @@ function notifier(overrides: Partial<NotificationDispatcher> = {}): Notification
         status: "SENT" as const,
       })),
     })),
+    sendTopicMessage: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -186,6 +236,36 @@ describe("MarketingService MVP permissions", () => {
 
     await expect(service.onboardTelegram(identity, "1001")).resolves.toEqual(head);
     expect(repo.registerTelegramUser).toHaveBeenCalledWith(identity, "1001");
+  });
+
+  it("uses short-lived hashed challenges for bot-confirmed browser login", async () => {
+    const repo = repository({ getUserByTelegramId: vi.fn(async () => assignee) });
+    const service = new MarketingService(repo, notifier());
+    const now = new Date("2026-11-15T10:00:00.000Z");
+    const challenge = await service.createWebBotLogin(now);
+    expect(challenge.code).toMatch(/^wl_[A-Za-z0-9_-]{24}$/);
+    expect(challenge.browserToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(challenge.expiresAt.toISOString()).toBe("2026-11-15T10:10:00.000Z");
+    expect(repo.createWebLoginChallenge).toHaveBeenCalledWith(expect.objectContaining({
+      browserHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+      codeHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+    }));
+    expect(JSON.stringify(vi.mocked(repo.createWebLoginChallenge).mock.calls)).not.toContain(challenge.browserToken);
+    await expect(service.approveWebBotLogin(assignee.telegramUserId, challenge.code, now)).resolves.toBe(true);
+    expect(repo.approveWebLoginChallenge).toHaveBeenCalledWith(expect.objectContaining({ userId: assignee.id }));
+    await expect(service.consumeWebBotLogin(challenge.browserToken, now)).resolves.toEqual(assignee);
+    expect(repo.consumeWebLoginChallenge).toHaveBeenCalledWith(expect.objectContaining({
+      browserHash: expect.stringMatching(/^[0-9a-f]{64}$/),
+    }));
+    await expect(service.approveWebBotLogin(assignee.telegramUserId, "wl_invalid", now)).resolves.toBe(false);
+  });
+
+  it("rejects an inactive Telegram account during web login approval", async () => {
+    const repo = repository({ getUserByTelegramId: vi.fn(async () => ({ ...assignee, isActive: false })) });
+    await expect(new MarketingService(repo, notifier()).approveWebBotLogin(
+      assignee.telegramUserId, `wl_${"a".repeat(24)}`,
+    )).rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+    expect(repo.approveWebLoginChallenge).not.toHaveBeenCalled();
   });
 
   it("allows only the assignee to accept and block a task", async () => {
@@ -210,6 +290,67 @@ describe("MarketingService MVP permissions", () => {
     }
   });
 
+  it("queues browser approval notification without waiting for Telegram", async () => {
+    const reviewed = task({ status: "REVIEW" });
+    const repo = repository({ getTask: vi.fn(async () => reviewed) });
+    const notifications = notifier();
+    const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+
+    const result = await new MarketingService(repo, notifications, queue)
+      .performTaskAction(creator, ids.task, { action: "APPROVE" }, { deferNotifications: true });
+
+    expect(result.status).toBe("DONE");
+    expect(queue.queueWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "TASK_COMPLETED", recipients: [assignee, creator],
+    }));
+    expect(notifications.notifyWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("confirms a browser review submission to the employee's own bot chat", async () => {
+    const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })) });
+    const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+    await new MarketingService(repo, notifier(), queue)
+      .performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }, { deferNotifications: true });
+    expect(queue.queueWorkflow).toHaveBeenCalledWith(expect.objectContaining({
+      event: "REVIEW_SUBMITTED", recipients: [assignee],
+    }));
+  });
+
+  it("keeps personal planning scoped to the signed-in user", async () => {
+    const repo = repository({ saveUserTaskPlan: vi.fn(async (input) => ({
+      ...input, createdAt: "2026-11-15T08:00:00Z", updatedAt: "2026-11-15T08:00:00Z",
+    })) });
+    const service = new MarketingService(repo, notifier());
+    await service.savePersonalPlan(assignee, ids.task, {
+      isImportant: true, urgentOverride: null, plannedOn: "2026-11-15", estimatedMinutes: 90,
+    });
+    expect(repo.saveUserTaskPlan).toHaveBeenCalledWith(expect.objectContaining({ userId: assignee.id, taskId: ids.task }));
+    await expect(service.savePersonalPlan(assignee, ids.task, {
+      userId: creator.id, isImportant: true, urgentOverride: null, plannedOn: null, estimatedMinutes: null,
+    })).rejects.toThrow();
+  });
+
+  it("loads today's checkpoints only for the signed-in assignee in Tashkent time", async () => {
+    const repo = repository();
+    const service = new MarketingService(repo, notifier());
+    await service.listTodaysCheckpoints(assignee, new Date("2026-11-15T20:00:00Z"));
+    expect(repo.listUserCheckpointsDueBetween).toHaveBeenCalledWith(
+      assignee.id, "2026-11-15T19:00:00.000Z", "2026-11-16T19:00:00.000Z",
+    );
+  });
+
+  it("rejects checkpoint changes on tasks outside the actor's visibility", async () => {
+    const repo = repository({ getTaskCheckpoint: vi.fn(async () => ({
+      id: "90000000-0000-4000-8000-000000000001", taskId: ids.task, title: "Draft",
+      dueAt: null, position: 1, createdBy: creator.id, completedBy: null, completedAt: null,
+      createdAt: "2026-11-15T08:00:00Z",
+    })) });
+    const service = new MarketingService(repo, notifier());
+    await expect(service.toggleCheckpoint(unrelated, "90000000-0000-4000-8000-000000000001"))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(repo.toggleTaskCheckpoint).not.toHaveBeenCalled();
+  });
+
   it("preserves cancellation as a terminal state unless Head reopens it", async () => {
     const cancelled = task({ status: "CANCELLED", cancelledAt: "2026-09-06T13:00:00.000Z" });
     const repo = repository({ getTask: vi.fn(async () => cancelled) });
@@ -224,6 +365,78 @@ describe("MarketingService MVP permissions", () => {
     const service = new MarketingService(repository(), notifier());
     await expect(service.listTasks(assignee, "team")).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(service.listTasks(head, "team")).resolves.toHaveLength(1);
+  });
+
+  it("pushes task visibility, filters, and pagination into the repository", async () => {
+    const pageTask = task({ status: "BLOCKED", priority: "high" });
+    const repo = repository({
+      listTaskPage: vi.fn(async () => ({ tasks: [pageTask], hasMore: true })),
+    });
+    const service = new MarketingService(repo, notifier());
+
+    const result = await service.listTaskPage(assignee, "my", {
+      status: "BLOCKED",
+      priority: "high",
+      search: "creative",
+      sort: "created_desc",
+      pageSize: "25",
+    });
+
+    expect(repo.listTaskPage).toHaveBeenCalledWith(expect.objectContaining({
+      visibleToUserId: assignee.id,
+      status: "BLOCKED",
+      priority: "high",
+      search: "creative",
+      sort: "created_desc",
+      limit: 25,
+    }));
+    expect(result.pagination).toMatchObject({ pageSize: 25, hasMore: true });
+    expect(result.pagination.nextCursor).toEqual(expect.any(String));
+  });
+
+  it("builds Today bounds in Asia/Tashkent before querying the database", async () => {
+    const repo = repository({ listTaskPage: vi.fn(async () => ({ tasks: [], hasMore: false })) });
+    const service = new MarketingService(repo, notifier());
+
+    await service.listTaskPage(head, "today", {}, new Date("2026-09-06T20:00:00.000Z"));
+
+    expect(repo.listTaskPage).toHaveBeenCalledWith(expect.objectContaining({
+      visibleToUserId: undefined,
+      deadlineFrom: "2026-09-06T19:00:00.000Z",
+      deadlineBefore: "2026-09-07T19:00:00.000Z",
+    }));
+  });
+
+  it("keeps created-task and deadline-range filtering in the database query", async () => {
+    const repo = repository({ listTaskPage: vi.fn(async () => ({ tasks: [], hasMore: false })) });
+    const service = new MarketingService(repo, notifier());
+
+    await service.listTaskPage(assignee, "created", { deadlineRange: "next_7_days" }, new Date("2026-09-06T10:00:00.000Z"));
+
+    expect(repo.listTaskPage).toHaveBeenCalledWith(expect.objectContaining({
+      visibleToUserId: undefined,
+      creatorId: assignee.id,
+      deadlineFrom: "2026-09-06T10:00:00.000Z",
+      deadlineBefore: "2026-09-13T10:00:00.000Z",
+    }));
+  });
+
+  it("scopes report drill-downs to the employee and matches the report period", async () => {
+    const repo = repository({ listTaskPage: vi.fn(async () => ({ tasks: [], hasMore: false })) });
+    const service = new MarketingService(repo, notifier());
+    const now = new Date("2026-11-15T09:00:00.000Z");
+
+    await service.listTaskPage(assignee, "my", { reportView: "carry_over" }, now);
+    expect(repo.listTaskPage).toHaveBeenLastCalledWith(expect.objectContaining({
+      visibleToUserId: assignee.id, assigneeId: assignee.id,
+      createdBefore: "2026-10-16T09:00:00.000Z", excludeTerminal: true,
+    }));
+
+    await service.listTaskPage(assignee, "my", { reportView: "completed" }, now);
+    expect(repo.listTaskPage).toHaveBeenLastCalledWith(expect.objectContaining({
+      assigneeId: assignee.id, status: "DONE",
+      completedFrom: "2026-10-16T09:00:00.000Z", completedBefore: now.toISOString(),
+    }));
   });
 
   it("keeps Head's My Tasks personal while team filters remain team-wide", async () => {
@@ -409,6 +622,62 @@ describe("MarketingService MVP permissions", () => {
 
     expect(result).toEqual({ task: created, assignee, notification: { status: "SENT" } });
     expect(assignmentNotifier.notifyAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
+  });
+
+  it("returns a browser task without waiting for notification enqueue", async () => {
+    const created = task();
+    const repo = repository({ createBrowserTask: vi.fn(async () => created) });
+    const notifications = notifier();
+    const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+    const service = new MarketingService(repo, notifications, queue);
+
+    const result = await service.createTaskQueued(creator, {
+      title: created.title, assigneeId: assignee.id, deadline: created.deadline,
+      clientRequestId: "90000000-0000-4000-8000-000000000001",
+    });
+
+    expect(result).toEqual({ task: created, assignee, notification: { status: "QUEUED" } });
+    expect(repo.createBrowserTask).toHaveBeenCalledWith(expect.objectContaining({
+      creatorId: creator.id, assigneeId: assignee.id,
+      requestId: "90000000-0000-4000-8000-000000000001", requestHash: expect.any(String),
+    }));
+    expect(queue.queueAssignment).not.toHaveBeenCalled();
+    expect(queue.queueWorkflow).not.toHaveBeenCalled();
+    expect(notifications.notifyAssignment).not.toHaveBeenCalled();
+  });
+
+  it("creates a template task atomically and keeps assignment notification", async () => {
+    const created = task();
+    const repo = repository({ createBrowserTask: vi.fn(async () => created) });
+    const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+    const service = new MarketingService(repo, notifier(), queue);
+    const result = await service.createTaskQueued(creator, {
+      title: "Webinar", assigneeId: assignee.id, deadline: "2099-11-11T18:00:00+05:00",
+      taskTemplate: { templateId: "91000000-0000-4000-8000-000000000001", eventOn: "2099-11-10", deadlineOverride: false },
+    });
+    expect(result.notification.status).toBe("QUEUED");
+    expect(repo.createBrowserTask).toHaveBeenCalledWith(expect.objectContaining({
+      creatorId: creator.id, assigneeId: assignee.id,
+      taskTemplate: expect.objectContaining({ eventOn: "2099-11-10", deadlineOverride: false }),
+    }));
+    expect(repo.createTask).not.toHaveBeenCalled();
+    expect(queue.queueAssignment).not.toHaveBeenCalled();
+  });
+
+  it("limits task template edits and event date changes to their permitted actors", async () => {
+    const repo = repository({ saveTaskTemplateVersion: vi.fn(async () => "91000000-0000-4000-8000-000000000001") });
+    const service = new MarketingService(repo, notifier());
+    const input = { sourceTemplateId: null, name: "Webinar", deadlineOffsetDays: 1,
+      checkpoints: [{ title: "E’lon qilish", offsetDays: -2 }] };
+    await expect(service.saveTaskTemplate(assignee, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await service.saveTaskTemplate(head, input);
+    expect(repo.saveTaskTemplateVersion).toHaveBeenCalledWith(expect.objectContaining({
+      actorId: head.id, deadlineLocalTime: "18:00", checkpoints: [{ title: "E’lon qilish", offsetDays: -2, localTime: "18:00" }],
+    }));
+    await expect(service.rebaseTaskTemplateEvent(assignee, ids.task, { eventOn: "2099-11-12" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await service.rebaseTaskTemplateEvent(creator, ids.task, { eventOn: "2099-11-12" });
+    expect(repo.rebaseTaskTemplateEvent).toHaveBeenCalledWith({ taskId: ids.task, actorId: creator.id, eventOn: "2099-11-12" });
   });
 
   it("resolves positional assignees before persistence and preserves assignment notification delivery", async () => {
@@ -648,7 +917,7 @@ describe("MarketingService MVP permissions", () => {
     });
   });
 
-  describe("role can be corrected later", () => {
+  describe("role can be corrected by Head", () => {
     it("lets Head correct another team member's role", async () => {
       const repo = repository();
       const service = new MarketingService(repo, notifier());
@@ -659,13 +928,14 @@ describe("MarketingService MVP permissions", () => {
       expect(updated.role).toBe("DIGITAL_MARKETER");
     });
 
-    it("lets a team member correct their own mis-set role", async () => {
+    it("does not let a team member change their own organizational role", async () => {
       const repo = repository();
       const service = new MarketingService(repo, notifier());
 
-      await service.updateUserRole(assignee, ids.assignee, "CONTENT_MARKETER");
+      await expect(service.updateUserRole(assignee, ids.assignee, "CONTENT_MARKETER"))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
 
-      expect(repo.updateUserRole).toHaveBeenCalledWith({ userId: ids.assignee, actorId: assignee.id, role: "CONTENT_MARKETER" });
+      expect(repo.updateUserRole).not.toHaveBeenCalled();
     });
 
     it("does not let an ordinary user change someone else's role", async () => {
@@ -742,6 +1012,16 @@ describe("MarketingService MVP permissions", () => {
       await expect(service.togglePostingChecklistItem(creator, checklist.items[0].id)).rejects.toMatchObject({ code: "FORBIDDEN" });
       await service.togglePostingChecklistItem(assignee, checklist.items[0].id);
       expect(repo.togglePostingChecklistItem).toHaveBeenCalledWith({ itemId: checklist.items[0].id, actorId: assignee.id });
+    });
+
+    it("uses the database permission check directly for a fast browser checklist toggle", async () => {
+      const updated = { ...checklist.items[0], isCompleted: true };
+      const repo = repository({ togglePostingChecklistItem: vi.fn(async () => updated) });
+      const result = await new MarketingService(repo, notifier()).togglePostingChecklistItemFast(assignee, updated.id);
+      expect(result).toEqual(updated);
+      expect(repo.togglePostingChecklistItem).toHaveBeenCalledWith({ itemId: updated.id, actorId: assignee.id });
+      expect(repo.getPostingChecklistByItemId).not.toHaveBeenCalled();
+      expect(repo.getPostingChecklist).not.toHaveBeenCalled();
     });
 
     it("allows sending to review once every checklist item is complete", async () => {
@@ -1007,6 +1287,202 @@ describe("MarketingService MVP permissions", () => {
     });
   });
 
+  describe("task editing and collaboration", () => {
+    it("lets an assignee edit content fields but not deadline, assignee, or publication date", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+
+      await service.updateTask(assignee, ids.task, { title: "Updated title", priority: "high" });
+      expect(repo.updateTask).toHaveBeenCalledWith({
+        taskId: ids.task,
+        actorId: assignee.id,
+        patch: { title: "Updated title", priority: "high" },
+      });
+      await expect(service.updateTask(assignee, ids.task, {
+        deadline: "2026-09-12T13:00:00.000Z",
+      })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.updateTask(assignee, ids.task, {
+        publicationAt: "2026-09-13T13:00:00.000Z",
+      })).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.updateTask(assignee, ids.task, {
+        assigneeId: unrelated.id,
+      })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("lets the creator and Head manage restricted fields, but requires an active assignee", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+
+      await service.updateTask(creator, ids.task, {
+        assigneeId: unrelated.id,
+        deadline: "2026-09-12T13:00:00.000Z",
+        publicationAt: "2026-09-13T13:00:00.000Z",
+      });
+      expect(repo.updateTask).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: ids.task,
+        actorId: creator.id,
+        patch: expect.objectContaining({ assigneeId: unrelated.id }),
+      }));
+
+      const inactive = { ...unrelated, isActive: false, deactivatedAt: "2026-09-01T00:00:00.000Z" };
+      const inactiveRepo = repository({ getUserById: vi.fn(async (id) => id === inactive.id ? inactive : task().id === id ? null : task().creatorId === id ? creator : task().assigneeId === id ? assignee : null) });
+      await expect(new MarketingService(inactiveRepo, notifier()).updateTask(head, ids.task, {
+        assigneeId: inactive.id,
+      })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    });
+
+    it("stores comments and result links only for people who can view the task", async () => {
+      const savedComment = {
+        id: "70000000-0000-4000-8000-000000000001",
+        taskId: ids.task,
+        authorId: assignee.id,
+        kind: "RESULT" as const,
+        body: "Montaj tayyor",
+        attachmentUrl: "https://drive.google.com/file/example",
+        createdAt: "2026-09-08T12:00:00.000Z",
+      };
+      const repo = repository({ addTaskComment: vi.fn(async () => savedComment) });
+      const service = new MarketingService(repo, notifier());
+
+      await expect(service.addTaskComment(assignee, ids.task, {
+        kind: "RESULT",
+        body: "Montaj tayyor",
+        attachmentUrl: "https://drive.google.com/file/example",
+      })).resolves.toEqual(savedComment);
+      expect(repo.addTaskComment).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: ids.task,
+        authorId: assignee.id,
+        kind: "RESULT",
+      }));
+      await expect(service.addTaskComment(unrelated, ids.task, { body: "No access" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.addTaskComment(assignee, ids.task, {})).rejects.toThrow();
+    });
+  });
+
+  describe("marketing workflows", () => {
+    const handoffPlan = {
+      id: "90000000-0000-4000-8000-000000000001", subject: "Kampaniya", templateName: "Kontent",
+      status: "ACTIVE" as const, currentPosition: 1,
+      steps: [
+        { id: "90000000-0000-4000-8000-000000000002", position: 1, title: "Ssenariy", ownerId: assignee.id,
+          participantIds: [], estimatedMinutes: 90, checkpointTitles: [], taskId: ids.task, taskStatus: "IN_PROGRESS", deadline: "2099-09-08T14:00:00.000Z" },
+        { id: "90000000-0000-4000-8000-000000000003", position: 2, title: "Syomka", ownerId: creator.id,
+          participantIds: [], estimatedMinutes: 60, checkpointTitles: [], taskId: null, taskStatus: null, deadline: null },
+      ],
+    };
+
+    it("requires the next exact deadline before an owner submits a workflow step", async () => {
+      const current = task({ status: "IN_PROGRESS", workflowRunId: handoffPlan.id });
+      const repo = repository({ getTask: vi.fn(async () => current), getWorkflowPlan: vi.fn(async () => handoffPlan) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.performTaskAction(assignee, current.id, { action: "SUBMIT_REVIEW" }))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.submitWorkflowStepForReview).not.toHaveBeenCalled();
+      await service.performTaskAction(assignee, current.id, { action: "SUBMIT_REVIEW", nextDeadline: "2099-09-09T14:00:00.000Z" });
+      expect(repo.submitWorkflowStepForReview).toHaveBeenCalledWith({ taskId: current.id, actorId: assignee.id,
+        nextDeadline: "2099-09-09T14:00:00.000Z" });
+    });
+
+    it("lets a creator who owns the task finish directly, while another owner cannot", async () => {
+      const current = task({ status: "IN_PROGRESS", creatorId: head.id, assigneeId: head.id, workflowRunId: handoffPlan.id });
+      const repo = repository({ getTask: vi.fn(async () => current), getWorkflowPlan: vi.fn(async () => handoffPlan),
+        completeSelfOwnedTask: vi.fn(async () => ({ ...current, status: "DONE" as const, completedAt: "2099-09-08T14:00:00.000Z" })) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.performTaskAction(assignee, current.id, { action: "COMPLETE_SELF", nextDeadline: "2099-09-09T14:00:00.000Z" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+      await service.performTaskAction(head, current.id, { action: "COMPLETE_SELF", nextDeadline: "2099-09-09T14:00:00.000Z" });
+      expect(repo.completeSelfOwnedTask).toHaveBeenCalledWith({ taskId: current.id, actorId: head.id,
+        nextDeadline: "2099-09-09T14:00:00.000Z" });
+      expect(repo.advanceWorkflowRun).toHaveBeenCalled();
+    });
+
+    it("treats a self-owned review request from the bot as direct completion", async () => {
+      const current = task({ status: "IN_PROGRESS", creatorId: head.id, assigneeId: head.id });
+      const repo = repository({ getTask: vi.fn(async () => current),
+        completeSelfOwnedTask: vi.fn(async () => ({ ...current, status: "DONE" as const })) });
+      await new MarketingService(repo, notifier()).performTaskAction(head, current.id, { action: "SUBMIT_REVIEW" });
+      expect(repo.completeSelfOwnedTask).toHaveBeenCalledWith({ taskId: current.id, actorId: head.id, nextDeadline: null });
+      expect(repo.transitionTask).not.toHaveBeenCalled();
+    });
+
+    it("shows a workflow task to its participant but prevents status changes", async () => {
+      const current = task({ participantIds: [unrelated.id] });
+      const repo = repository({ getTask: vi.fn(async () => current) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.getTaskDetails(unrelated, current.id)).resolves.toMatchObject({ task: current });
+      await expect(service.performTaskAction(unrelated, current.id, { action: "ACCEPT" }))
+        .rejects.toMatchObject({ code: "FORBIDDEN" });
+    });
+
+    it("lets only active Head archive an active template", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+      const id = "91000000-0000-4000-8000-000000000001";
+      await expect(service.archiveWorkflowTemplate(assignee, id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(repo.archiveWorkflowTemplate).not.toHaveBeenCalled();
+      await expect(service.archiveWorkflowTemplate(head, "bad-id")).rejects.toThrow();
+      await expect(service.archiveWorkflowTemplate(head, id)).resolves.toEqual({ ok: true });
+      expect(repo.archiveWorkflowTemplate).toHaveBeenCalledWith(id);
+      vi.mocked(repo.archiveWorkflowTemplate).mockResolvedValueOnce(false);
+      await expect(service.archiveWorkflowTemplate(head, id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    });
+
+    it("lets Head save a new template version but rejects employees and invalid steps", async () => {
+      const repo = repository();
+      const service = new MarketingService(repo, notifier());
+      const input = {
+        sourceTemplateId: "91000000-0000-4000-8000-000000000001",
+        name: "Reels yangilangan", description: null,
+        steps: [{ title: "Ssenariy", description: null, assigneeRole: "CONTENT_MARKETER", priority: "normal", estimatedMinutes: 90, checkpointTitles: ["Matn tayyor"] }],
+      };
+      await expect(service.saveWorkflowTemplate(assignee, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(repo.saveWorkflowTemplateVersion).not.toHaveBeenCalled();
+      await expect(service.saveWorkflowTemplate(head, { ...input, steps: [] })).rejects.toThrow();
+      await expect(service.saveWorkflowTemplate(head, input)).resolves.toMatchObject({ id: expect.any(String) });
+      expect(repo.saveWorkflowTemplateVersion).toHaveBeenCalledWith(expect.objectContaining({
+        actorId: head.id, sourceTemplateId: input.sourceTemplateId,
+        steps: [{ ...input.steps[0], videoKind: null }],
+      }));
+    });
+
+    it("allows only Head to start a reusable workflow and notifies its first assignee", async () => {
+      const firstTask = task({ workflowRunId: "90000000-0000-4000-8000-000000000001", workflowStepId: "90000000-0000-4000-8000-000000000002" });
+      const stepId = "90000000-0000-4000-8000-000000000002";
+      const repo = repository({ startWorkflowRun: vi.fn(async () => firstTask), listWorkflowTemplates: vi.fn(async () => [{
+        id: "91000000-0000-4000-8000-000000000001", slug: "reels", name: "Reels", description: null,
+        isActive: true, isSystem: true, steps: [{ id: stepId, templateId: "91000000-0000-4000-8000-000000000001",
+          position: 1, title: "Ssenariy", description: null, assigneeRole: "CONTENT_MARKETER" as const, priority: "normal" as const,
+          dueAfterHours: 24, estimatedMinutes: 90, checkpointTitles: [] }],
+      }]) });
+      const notifications = notifier();
+      const service = new MarketingService(repo, notifications);
+      const input = { templateId: "91000000-0000-4000-8000-000000000001", subject: "Yangi filial",
+        firstDeadline: "2099-09-08T14:00:00.000Z", stepAssignments: { [stepId]: { ownerId: assignee.id, participantIds: [creator.id] } } };
+
+      await expect(service.startWorkflow(creator, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.startWorkflow(head, input)).resolves.toMatchObject({ task: firstTask });
+      expect(repo.startWorkflowRun).toHaveBeenCalledWith(expect.objectContaining({ actorId: head.id, subject: "Yangi filial" }));
+      expect(notifications.notifyAssignment).toHaveBeenCalledWith(expect.objectContaining({ task: firstTask, assignee }));
+    });
+
+    it("advances a workflow after approval and queues the next assignee notification", async () => {
+      const reviewed = task({ status: "REVIEW", workflowRunId: "90000000-0000-4000-8000-000000000001", workflowStepId: "90000000-0000-4000-8000-000000000002" });
+      const completed = { ...reviewed, status: "DONE" as const, completedAt: "2026-09-08T14:00:00.000Z" };
+      const next = task({ id: "20000000-0000-4000-8000-000000000020", creatorId: head.id, workflowRunId: reviewed.workflowRunId, workflowStepId: "90000000-0000-4000-8000-000000000003" });
+      const repo = repository({
+        getTask: vi.fn(async () => reviewed),
+        transitionTask: vi.fn(async () => completed),
+        advanceWorkflowRun: vi.fn(async () => next),
+      });
+      const notifications = notifier();
+
+      await new MarketingService(repo, notifications).performTaskAction(head, reviewed.id, { action: "APPROVE" });
+      expect(repo.advanceWorkflowRun).toHaveBeenCalledWith({ completedTaskId: reviewed.id, actorId: head.id });
+      expect(notifications.notifyAssignment).toHaveBeenCalledWith(expect.objectContaining({ task: next, assignee }));
+    });
+  });
+
   describe("team member reactivation", () => {
     it("restores active access without creating a duplicate account", async () => {
       const deactivated = { ...unrelated, isActive: false, deactivatedAt: "2026-09-01T00:00:00.000Z" };
@@ -1027,6 +1503,177 @@ describe("MarketingService MVP permissions", () => {
       const repo = repository({ getUserById: vi.fn(async () => neverActivated) });
       await expect(new MarketingService(repo, notifier()).reactivateUser(head, neverActivated.id))
         .rejects.toMatchObject({ code: "INVALID_INPUT" });
+    });
+  });
+
+  describe("video production handoff", () => {
+    const operator = user(ids.assignee, "OPERATOR_VIDEO_EDITOR");
+    const proposedShoot = {
+      kind: "SHOOT" as const,
+      scenarioUrl: "https://example.com/scenario",
+      onCameraPerson: "Mijoz vakili",
+      location: "Toshkent ofisi",
+      scheduledAt: "2099-11-20T10:00:00+05:00",
+      durationMinutes: 90,
+    };
+
+    it("creates an operator shoot with its brief in one repository transaction", async () => {
+      const created = task();
+      const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
+        createBrowserTask: vi.fn(async () => created) });
+      const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined),
+        queueShootScenario: vi.fn(async () => "QUEUED" as const) };
+      const result = await new MarketingService(repo, notifier(), queue).createTaskQueued(creator, {
+        title: "Mijoz syomkasi", assigneeId: operator.id, deadline: "2099-11-21T10:00:00+05:00",
+        videoBrief: proposedShoot,
+      });
+      expect(result.task).toEqual(created);
+      expect(repo.createTask).not.toHaveBeenCalled();
+      expect(repo.createBrowserTask).toHaveBeenCalledWith(expect.objectContaining({
+        assigneeId: operator.id, videoBrief: { kind: "SHOOT", brief: proposedShoot },
+      }));
+      expect(queue.queueAssignment).not.toHaveBeenCalled();
+      expect(queue.queueShootScenario).not.toHaveBeenCalled();
+    });
+
+    it("creates an edit task with only the montage level", async () => {
+      const created = task();
+      const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
+        createBrowserTask: vi.fn(async () => created) });
+      const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+      await new MarketingService(repo, notifier(), queue).createTaskQueued(creator, {
+        title: "Reels montaji", assigneeId: operator.id, deadline: "2099-11-21T10:00:00+05:00",
+        videoBrief: { kind: "EDIT", editLevel: "STANDARD" },
+      });
+      expect(repo.createBrowserTask).toHaveBeenCalledWith(expect.objectContaining({
+        videoBrief: { kind: "EDIT", brief: { kind: "EDIT", editLevel: "STANDARD" } },
+      }));
+    });
+
+    it("rejects a video brief for a non-operator before creating a task", async () => {
+      const repo = repository();
+      const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+      await expect(new MarketingService(repo, notifier(), queue).createTaskQueued(creator, {
+        title: "Syomka", assigneeId: assignee.id, deadline: "2099-11-21T10:00:00+05:00",
+        videoBrief: proposedShoot,
+      })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.createBrowserTask).not.toHaveBeenCalled();
+    });
+
+    it("does not add a video type to an existing ordinary task", async () => {
+      const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
+        getTaskVideoBrief: vi.fn(async () => null) });
+      await expect(new MarketingService(repo, notifier()).saveVideoBrief(creator, ids.task, proposedShoot))
+        .rejects.toMatchObject({ code: "CONFLICT" });
+      expect(repo.saveTaskVideoBrief).not.toHaveBeenCalled();
+    });
+
+    it("lets the creator propose a shoot and only its assignee confirm it", async () => {
+      const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator :
+        [head, creator, unrelated].find((candidate) => candidate.id === id) ?? null),
+        getTaskVideoBrief: vi.fn(async () => ({
+          taskId: ids.task, kind: "SHOOT" as const, scenarioUrl: proposedShoot.scenarioUrl,
+          onCameraPerson: proposedShoot.onCameraPerson, location: proposedShoot.location,
+          scheduledAt: proposedShoot.scheduledAt, durationMinutes: 90,
+          confirmedBy: null, confirmedAt: null, footageUrl: null, outputSpec: null,
+          editLevel: null, updatedAt: "2099-11-01T00:00:00Z",
+        })),
+        saveTaskVideoBrief: vi.fn(async () => ({
+        taskId: ids.task, kind: "SHOOT" as const, scenarioUrl: proposedShoot.scenarioUrl,
+        onCameraPerson: proposedShoot.onCameraPerson, location: proposedShoot.location,
+        scheduledAt: proposedShoot.scheduledAt, durationMinutes: 90,
+        confirmedBy: null, confirmedAt: null, footageUrl: null, outputSpec: null,
+        editLevel: null, updatedAt: "2099-11-01T00:00:00Z",
+      })) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.saveVideoBrief(operator, ids.task, proposedShoot)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await expect(service.saveVideoBrief(creator, ids.task, proposedShoot)).resolves.toMatchObject({ kind: "SHOOT" });
+      expect(repo.saveTaskVideoBrief).toHaveBeenCalledWith(expect.objectContaining({ actorId: creator.id, confirm: false }));
+      await expect(service.confirmShoot(creator, ids.task)).rejects.toMatchObject({ code: "FORBIDDEN" });
+      await service.confirmShoot(operator, ids.task);
+      expect(repo.saveTaskVideoBrief).toHaveBeenCalledWith(expect.objectContaining({ actorId: operator.id, confirm: true }));
+    });
+
+    it("queues a new scenario link after a shoot brief edit but not an unchanged link", async () => {
+      const previous = { taskId: ids.task, kind: "SHOOT" as const,
+        scenarioUrl: proposedShoot.scenarioUrl, onCameraPerson: proposedShoot.onCameraPerson,
+        location: proposedShoot.location, scheduledAt: proposedShoot.scheduledAt,
+        durationMinutes: 90, confirmedBy: null, confirmedAt: null,
+        footageUrl: null, outputSpec: null, editLevel: null,
+        updatedAt: "2099-11-01T00:00:00Z" };
+      const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const),
+        queueWorkflow: vi.fn(async () => undefined),
+        queueShootScenario: vi.fn(async () => "QUEUED" as const) };
+      const repo = repository({
+        getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
+        getTaskVideoBrief: vi.fn(async () => previous),
+        saveTaskVideoBrief: vi.fn(async () => ({ ...previous, scenarioUrl: "https://example.com/revised" })),
+      });
+      const service = new MarketingService(repo, notifier(), queue);
+      await service.saveVideoBrief(creator, ids.task, { ...proposedShoot, scenarioUrl: "https://example.com/revised" });
+      expect(queue.queueShootScenario).toHaveBeenCalledWith({
+        task: expect.objectContaining({ id: ids.task }), scenarioUrl: "https://example.com/revised",
+        changeToken: previous.updatedAt,
+      });
+
+      vi.mocked(repo.getTaskVideoBrief).mockResolvedValueOnce({ ...previous, scenarioUrl: "https://example.com/revised" });
+      await service.saveVideoBrief(creator, ids.task, { ...proposedShoot, scenarioUrl: "https://example.com/revised" });
+      expect(queue.queueShootScenario).toHaveBeenCalledTimes(1);
+    });
+
+    it("holds shoot completion until the operator has confirmed the booking", async () => {
+      const brief = { taskId: ids.task, kind: "SHOOT" as const,
+        scenarioUrl: proposedShoot.scenarioUrl, onCameraPerson: proposedShoot.onCameraPerson,
+        location: proposedShoot.location, scheduledAt: proposedShoot.scheduledAt,
+        durationMinutes: 90, confirmedBy: null, confirmedAt: null,
+        footageUrl: null, outputSpec: null, editLevel: null,
+        updatedAt: "2099-11-01T00:00:00Z" };
+      const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })),
+        getTaskVideoBrief: vi.fn(async () => brief) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.transitionTask).not.toHaveBeenCalled();
+      vi.mocked(repo.getTaskVideoBrief).mockResolvedValueOnce({ ...brief, confirmedBy: operator.id, confirmedAt: "2099-11-19T00:00:00Z" });
+      await service.performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" });
+      expect(repo.transitionTask).toHaveBeenCalled();
+    });
+
+    it("requires only montage level before edit completion", async () => {
+      const repo = repository({ getTask: vi.fn(async () => task({ status: "IN_PROGRESS" })),
+        getTaskVideoBrief: vi.fn(async () => ({ taskId: ids.task, kind: "EDIT" as const, scenarioUrl: null,
+          onCameraPerson: null, location: null, scheduledAt: null, durationMinutes: null,
+          confirmedBy: null, confirmedAt: null, footageUrl: null, outputSpec: null,
+          editLevel: null, updatedAt: "2099-11-01T00:00:00Z" })) });
+      const service = new MarketingService(repo, notifier());
+      await expect(service.performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" }))
+        .rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.transitionTask).not.toHaveBeenCalled();
+      vi.mocked(repo.getTaskVideoBrief).mockResolvedValueOnce({
+        taskId: ids.task, kind: "EDIT", scenarioUrl: null, onCameraPerson: null,
+        location: null, scheduledAt: null, durationMinutes: null, confirmedBy: null,
+        confirmedAt: null, footageUrl: null, outputSpec: null, editLevel: "SIMPLE",
+        updatedAt: "2099-11-01T00:00:00Z",
+      });
+      await service.performTaskAction(assignee, ids.task, { action: "SUBMIT_REVIEW" });
+      expect(repo.transitionTask).toHaveBeenCalled();
+    });
+
+    it("rejects a video workflow assigned to a non-operator", async () => {
+      const stepId = "90000000-0000-4000-8000-000000000044";
+      const templateId = "91000000-0000-4000-8000-000000000044";
+      const repo = repository({ listWorkflowTemplates: vi.fn(async () => [{
+        id: templateId, slug: "video-test", name: "Video", description: null,
+        isActive: true, isSystem: false, steps: [{ id: stepId, templateId, position: 1,
+          title: "Syomka", description: null, assigneeRole: "OPERATOR_VIDEO_EDITOR" as const,
+          priority: "normal" as const, dueAfterHours: 24, estimatedMinutes: 90,
+          checkpointTitles: [], videoKind: "SHOOT" as const }],
+      }]) });
+      await expect(new MarketingService(repo, notifier()).startWorkflow(head, {
+        templateId, subject: "Mijoz videosi", firstDeadline: "2099-11-19T10:00:00Z",
+        stepAssignments: { [stepId]: { ownerId: assignee.id, participantIds: [] } },
+      })).rejects.toMatchObject({ code: "INVALID_INPUT" });
+      expect(repo.startWorkflowRun).not.toHaveBeenCalled();
     });
   });
 });

@@ -6,6 +6,7 @@ const task = (overrides: Partial<Task> = {}): Task => ({
   id: "20000000-0000-4000-8000-000000000001", title: "Campaign", description: null,
   priority: "high", status: "DONE", creatorId: "10000000-0000-4000-8000-000000000001",
   assigneeId: "10000000-0000-4000-8000-000000000002", deadline: "2026-09-08T13:00:00Z",
+  publicationAt: null,
   blockedReason: null, completedAt: "2026-09-08T12:00:00Z", cancelledAt: null,
   createdAt: "2026-09-06T12:00:00Z", updatedAt: "2026-09-08T12:00:00Z", ...overrides,
 });
@@ -61,6 +62,15 @@ describe("report metrics", () => {
     const closedBefore = task({ id: crypto.randomUUID(), status: "DONE", completedAt: "2026-09-08T00:00:00Z", createdAt: "2026-09-05T00:00:00Z" });
     const metric = weeklyMetrics({ tasks: [stillOpen, closedBefore], events: [], requests: [], start: new Date("2026-09-07T00:00:00Z"), end: new Date("2026-09-09T00:00:00Z") });
     expect(metric.carryOver).toBe(1);
+  });
+
+  it("counts only tasks from before the 30-day window in the monthly carry-over card", () => {
+    const now = new Date("2026-11-15T09:00:00Z");
+    const oldOpen = task({ id: crypto.randomUUID(), status: "IN_PROGRESS", completedAt: null, createdAt: "2026-10-01T09:00:00Z" });
+    const newOpen = task({ id: crypto.randomUUID(), status: "IN_PROGRESS", completedAt: null, createdAt: "2026-11-01T09:00:00Z" });
+    const metric = calculateAnalytics({ tasks: [oldOpen, newOpen], events: [], deadlineRequests: [], now, windowDays: 30 });
+    expect(metric.carryOver).toBe(1);
+    expect(metric.workload.open).toBe(2);
   });
 
   it("attributes a new task's pre-first-transition time to IN_PROGRESS, not ASSIGNED, since it never required Accept", () => {

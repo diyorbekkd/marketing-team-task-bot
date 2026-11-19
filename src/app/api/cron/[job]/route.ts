@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { getMarketingService, getReminderService, getReportingService } from "@/server/application";
+import { getMarketingService, getNotificationRetryService, getReminderService, getReportingService } from "@/server/application";
 import { isAuthorizedCronRequest } from "@/server/auth/cron";
 import { ConfigurationError } from "@/server/config";
 import { errorResponse } from "@/server/http/errors";
 
-const JobSchema = z.enum(["daily-morning", "daily-evening", "weekly", "recurring", "reminders"]);
+const JobSchema = z.enum(["daily-morning", "daily-evening", "weekly", "recurring", "reminders", "notification-retries", "workflow-recovery"]);
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,11 @@ export async function GET(request: Request, context: { params: Promise<{ job: st
   try {
     if (!isAuthorizedCronRequest(request)) return Response.json({ error: "Unauthorized." }, { status: 401 });
     const job = JobSchema.parse((await context.params).job);
-    const result = job === "recurring"
+    const result = job === "workflow-recovery"
+      ? await getMarketingService().recoverWorkflowRuns()
+      : job === "notification-retries"
+      ? await getNotificationRetryService().deliver()
+      : job === "recurring"
       ? await getMarketingService().generateDueRecurringTasks()
       : job === "reminders"
         ? await getReminderService().deliver()

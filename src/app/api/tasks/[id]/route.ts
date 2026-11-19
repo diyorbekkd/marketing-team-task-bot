@@ -11,3 +11,13 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     return errorResponse(error);
   }
 }
+
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+  try {
+    const actor = await requireRequestActor();
+    const { id } = await context.params;
+    return Response.json(await getMarketingService().updateTask(actor, id, await request.json()));
+  } catch (error) {
+    return errorResponse(error);
+  }
+}

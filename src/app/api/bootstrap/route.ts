@@ -13,11 +13,9 @@ export async function GET() {
   try {
     const actor = await requireRequestActor();
     const service = getMarketingService();
-    const homeScope = actor.role === "HEAD_OF_MARKETING" ? "team" : "my";
-
     const [users, tasks] = await Promise.all([
       service.listUsers(actor),
-      service.listTasks(actor, homeScope),
+      service.listHomeTasks(actor),
     ]);
 
     return Response.json({

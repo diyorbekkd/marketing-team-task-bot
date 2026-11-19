@@ -21,7 +21,7 @@ describe("Telegram Mini App authentication route", () => {
 
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({
-      error: "Telegram authentication failed.",
+      error: "Telegram autentifikatsiyasi bajarilmadi.",
       code: "UNAUTHENTICATED",
     });
   });

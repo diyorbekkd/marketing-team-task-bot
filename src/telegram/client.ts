@@ -7,14 +7,41 @@ const TelegramApiResponseSchema = z.object({
   description: z.string().optional(),
 });
 
+const TelegramBotInfoSchema = z.object({
+  ok: z.literal(true),
+  result: z.object({ username: z.string().regex(/^[A-Za-z0-9_]{5,32}$/) }),
+});
+const TelegramWebhookInfoSchema = z.object({
+  ok: z.literal(true), result: z.object({ url: z.string() }),
+});
+
+export async function getTelegramBotUsername(botToken: string): Promise<string> {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/getMe`, {
+    signal: AbortSignal.timeout(8_000), cache: "no-store",
+  });
+  const parsed = TelegramBotInfoSchema.safeParse(await response.json());
+  if (!response.ok || !parsed.success) throw new Error("Telegram bot nomini aniqlab bo‘lmadi.");
+  return parsed.data.result.username;
+}
+
+export async function getTelegramWebhookUrl(botToken: string): Promise<string> {
+  const response = await fetch(`https://api.telegram.org/bot${botToken}/getWebhookInfo`, {
+    signal: AbortSignal.timeout(8_000), cache: "no-store",
+  });
+  const parsed = TelegramWebhookInfoSchema.safeParse(await response.json());
+  if (!response.ok || !parsed.success) throw new Error("Telegram webhook holatini aniqlab bo‘lmadi.");
+  return parsed.data.result.url;
+}
+
 export async function sendTelegramMessage(
   botToken: string,
-  input: Readonly<{ chatId: number | string; text: string; replyMarkup?: unknown }>,
+  input: Readonly<{ chatId: number | string; text: string; replyMarkup?: unknown; messageThreadId?: number }>,
 ): Promise<void> {
   const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chat_id: input.chatId, text: input.text, reply_markup: input.replyMarkup }),
+    body: JSON.stringify({ chat_id: input.chatId, text: input.text,
+      reply_markup: input.replyMarkup, message_thread_id: input.messageThreadId }),
     signal: AbortSignal.timeout(8_000),
   });
 

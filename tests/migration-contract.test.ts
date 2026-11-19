@@ -25,6 +25,34 @@ const autostartMigration = readFileSync(
   new URL("../supabase/migrations/20260914090000_autostart_tasks.sql", import.meta.url),
   "utf8",
 );
+const productionIndexesMigration = readFileSync(
+  new URL("../supabase/migrations/20261114160026_production_readiness_query_indexes.sql", import.meta.url),
+  "utf8",
+);
+const collaborationMigration = readFileSync(
+  new URL("../supabase/migrations/20261114160319_task_editing_collaboration.sql", import.meta.url),
+  "utf8",
+);
+const notificationOutboxMigration = readFileSync(
+  new URL("../supabase/migrations/20261114162328_reliable_notification_outbox.sql", import.meta.url),
+  "utf8",
+);
+const workflowTemplatesMigration = readFileSync(
+  new URL("../supabase/migrations/20261114163442_workflow_templates.sql", import.meta.url),
+  "utf8",
+);
+const roleHardeningMigration = readFileSync(
+  new URL("../supabase/migrations/20261114164700_role_authorization_hardening.sql", import.meta.url),
+  "utf8",
+);
+const workflowEditorMigration = readFileSync(
+  new URL("../supabase/migrations/20261115094125_versioned_workflow_template_editor.sql", import.meta.url),
+  "utf8",
+);
+const botLinkLoginMigration = readFileSync(
+  new URL("../supabase/migrations/20261115100316_bot_deeplink_web_login.sql", import.meta.url),
+  "utf8",
+);
 
 describe("fast-track database workflow contract", () => {
   it("locks workflow rows and revalidates lifecycle transitions in the transaction", () => {
@@ -145,5 +173,66 @@ describe("auto-start task creation database contract", () => {
   it("still attaches a posting checklist for a tagged task created through the auto-start path", () => {
     expect(autostartMigration).toContain("#posting");
     expect(autostartMigration).toContain("private.attach_posting_checklist(v_task.id)");
+  });
+});
+
+describe("production-readiness database contracts", () => {
+  it("adds the indexes used by task pagination, visibility, deadlines, and request history", () => {
+    for (const index of [
+      "tasks_deadline_id_idx", "tasks_created_at_id_idx", "tasks_assignee_deadline_id_idx",
+      "tasks_creator_deadline_id_idx", "tasks_priority_deadline_id_idx", "deadline_change_requests_task_created_at_idx",
+    ]) expect(productionIndexesMigration).toContain(index);
+  });
+
+  it("keeps task editing, comments, and their audit events transactional and service-role-only", () => {
+    expect(collaborationMigration).toContain("create function public.update_task_with_events");
+    expect(collaborationMigration).toContain("create function public.add_task_comment_with_event");
+    expect(collaborationMigration).toContain("alter table public.task_comments enable row level security");
+    expect(collaborationMigration).toContain("revoke all on table public.task_comments from public, anon, authenticated");
+    expect(collaborationMigration).toContain("grant execute on function public.update_task_with_events");
+  });
+
+  it("bounds retries, uses skip-locked claims, and reconciles successful report retries", () => {
+    expect(notificationOutboxMigration).toContain("attempt_count between 0 and 5");
+    expect(notificationOutboxMigration).toContain("for update skip locked");
+    expect(notificationOutboxMigration).toContain("report.report_type = split_part(delivery.dedupe_key, ':', 2)");
+    expect(notificationOutboxMigration).toContain("alter table public.notification_outbox enable row level security");
+    expect(notificationOutboxMigration).toContain("revoke all on table public.notification_outbox from public, anon, authenticated");
+  });
+
+  it("creates sequential reusable workflows with atomic task/event creation and recovery", () => {
+    expect(workflowTemplatesMigration).toContain("create function public.start_workflow_run");
+    expect(workflowTemplatesMigration).toContain("create function public.advance_workflow_run");
+    expect(workflowTemplatesMigration).toContain("create function public.recover_workflow_runs");
+    expect(workflowTemplatesMigration).toContain("on conflict (workflow_run_id, workflow_step_id)");
+    expect(workflowTemplatesMigration).toContain("POSTING_CHECKLIST_CREATED");
+    for (const table of ["workflow_templates", "workflow_template_steps", "workflow_runs"]) {
+      expect(workflowTemplatesMigration).toContain(`alter table public.${table} enable row level security`);
+    }
+    expect(workflowTemplatesMigration).toContain(
+      "revoke all on table public.workflow_templates, public.workflow_template_steps, public.workflow_runs from public, anon, authenticated",
+    );
+  });
+
+  it("rechecks Head authorization inside the role-change transaction", () => {
+    expect(roleHardeningMigration).toContain("role = 'HEAD_OF_MARKETING' and is_active");
+    expect(roleHardeningMigration).toContain("only active Head may change team roles");
+    expect(roleHardeningMigration).toContain("head role transfer is outside this flow");
+    expect(roleHardeningMigration).toContain("revoke all on function public.update_user_role_with_event");
+  });
+
+  it("versions edited workflow templates without changing historical steps", () => {
+    expect(workflowEditorMigration).toContain("create function public.save_workflow_template_version");
+    expect(workflowEditorMigration).toContain("role = 'HEAD_OF_MARKETING' and is_active");
+    expect(workflowEditorMigration).toContain("update public.workflow_templates set is_active = false");
+    expect(workflowEditorMigration).not.toContain("update public.workflow_template_steps");
+    expect(workflowEditorMigration).toContain("revoke all on function public.save_workflow_template_version");
+  });
+
+  it("stores only one-time login token hashes behind service-role access", () => {
+    expect(botLinkLoginMigration).toContain("browser_hash text not null unique");
+    expect(botLinkLoginMigration).toContain("code_hash text not null unique");
+    expect(botLinkLoginMigration).toContain("alter table public.web_login_challenges enable row level security");
+    expect(botLinkLoginMigration).toContain("revoke all on table public.web_login_challenges from public, anon, authenticated");
   });
 });
