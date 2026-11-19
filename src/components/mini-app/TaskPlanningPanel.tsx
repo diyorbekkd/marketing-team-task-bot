@@ -99,12 +99,17 @@ export function TaskPlanningPanel({ taskId, terminal, canEditCheckpoints = true,
 
   const toggleCheckpoint = async (id: string) => {
     setPending(true); setError(null);
+    const previous = checkpoints;
+    onCheckpoints(checkpoints.map((item) => item.id === id
+      ? { ...item, completedAt: item.completedAt ? null : new Date().toISOString() }
+      : item));
     try {
       const result = await write<{ checkpoint: Checkpoint }>(`/api/checkpoints/${id}`, "POST");
       onCheckpoints(checkpoints.map((item) => item.id === id ? result.checkpoint : item));
       onRefreshPlan();
       onRefreshDetail();
     } catch (cause) {
+      onCheckpoints(previous);
       setError(cause instanceof Error ? cause.message : "Checkpoint yangilanmadi.");
     } finally { setPending(false); }
   };

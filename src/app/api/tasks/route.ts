@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { after } from "next/server";
+import { ApplicationError } from "@/application/errors";
 import { getMarketingService } from "@/server/application";
 import { getNotificationRetryService } from "@/server/application";
 import { requireRequestActor } from "@/server/auth/request-actor";
@@ -29,7 +30,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const actor = await requireRequestActor();
-    const result = await getMarketingService().createTaskQueued(actor, await request.json());
+    // Browser retries must carry the same operation ID. Internal AI actions
+    // have their own one-time claim and call the service directly.
+    const input = z.object({ clientRequestId: z.uuid() }).passthrough().safeParse(await request.json());
+    if (!input.success) {
+      throw new ApplicationError("INVALID_INPUT", "Ilovani yangilab, vazifani qayta yuboring.");
+    }
+    const result = await getMarketingService().createTaskQueued(actor, input.data);
     after(async () => {
       try {
         await getNotificationRetryService().deliver(25);

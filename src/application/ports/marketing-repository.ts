@@ -39,6 +39,13 @@ export interface CreateTaskRecord {
   readonly scheduledOccurrenceAt?: string;
 }
 
+export interface CreateBrowserTaskRecord extends CreateTaskRecord {
+  readonly requestId: string;
+  readonly requestHash: string;
+  readonly videoBrief?: { kind: VideoKind; brief: Record<string, string | number | null> };
+  readonly taskTemplate?: { templateId: string; eventOn: string; deadlineOverride: boolean };
+}
+
 export interface UpdateTaskRecord {
   readonly taskId: string;
   readonly actorId: string;
@@ -123,6 +130,11 @@ export interface MarketingRepository {
   reactivateUser(input: { userId: string; actorId: string }): Promise<User>;
 
   createTask(input: CreateTaskRecord): Promise<Task>;
+  createBrowserTask(input: CreateBrowserTaskRecord): Promise<Task>;
+  listBrowserTasksAwaitingNotifications(limit: number): Promise<Array<{
+    requestId: string; taskId: string; actorId: string;
+  }>>;
+  markBrowserTaskNotificationsQueued(requestId: string): Promise<void>;
   createTaskFromTemplate(input: CreateTaskRecord & { templateId: string; eventOn: string; deadlineOverride: boolean }): Promise<Task>;
   listTaskTemplates(): Promise<TaskTemplate[]>;
   saveTaskTemplateVersion(input: { actorId: string; sourceTemplateId: string | null; name: string;
@@ -191,7 +203,7 @@ export interface MarketingRepository {
     resolutionNote?: string;
   }): Promise<DeadlineChangeRequest>;
 
-  getRecurringDefinitionForTask(taskId: string): Promise<RecurringDefinition | null>;
+  getRecurringDefinitionForTask(taskId: string, recurringDefinitionId?: string | null): Promise<RecurringDefinition | null>;
   getRecurringDefinition(id: string): Promise<RecurringDefinition | null>;
   listDueRecurringDefinitions(now: string): Promise<RecurringDefinition[]>;
   listRecurringDefinitionsByAssignee(assigneeId: string): Promise<RecurringDefinition[]>;

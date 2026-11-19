@@ -75,6 +75,7 @@ export function getNotificationRetryService(): NotificationRetryService {
     notificationRetryService = new NotificationRetryService(
       new SupabaseMarketingRepository(),
       getTelegramDispatcher(),
+      getReliableDispatcher(),
     );
   }
   return notificationRetryService;

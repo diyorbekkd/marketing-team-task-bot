@@ -13,7 +13,7 @@ import type {
 } from "./ports/notification-dispatcher";
 import { ApplicationError } from "./errors";
 import { z } from "zod";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { nextOccurrence, RecurrenceInputSchema, RecurrenceUpdateSchema } from "@/domain/recurrence";
 import { calculateAnalytics, isOpenTask, tashkentDayRange, workloadMetrics } from "@/domain/reporting";
 import { SaveTaskTemplateSchema } from "@/domain/task-template";
@@ -127,6 +127,7 @@ const VideoBriefInputSchema = z.discriminatedUnion("kind", [
   }).strict(),
 ]);
 const BrowserCreateTaskInputSchema = CreateTaskInputSchema.extend({
+  clientRequestId: z.string().uuid().optional(),
   videoBrief: VideoBriefInputSchema.optional(),
   taskTemplate: z.object({
     templateId: z.string().uuid(), eventOn: z.iso.date(), deadlineOverride: z.boolean(),
@@ -472,42 +473,22 @@ export class MarketingService {
     if (parsed.videoBrief?.kind === "SHOOT" && Date.parse(parsed.videoBrief.scheduledAt) <= Date.now()) {
       throw new ApplicationError("INVALID_INPUT", "Syomka vaqti kelajakda bo‘lishi kerak.");
     }
-    const task = parsed.taskTemplate
-      ? await this.repository.createTaskFromTemplate({
-        creatorId: actor.id, assigneeId: assignee.id, title: parsed.title,
-        description: parsed.description, priority: parsed.priority, deadline: parsed.deadline,
-        templateId: parsed.taskTemplate.templateId, eventOn: parsed.taskTemplate.eventOn,
-        deadlineOverride: parsed.taskTemplate.deadlineOverride,
-      })
-      : parsed.videoBrief
-      ? await this.repository.createTaskWithVideoBrief({
-        creatorId: actor.id, assigneeId: assignee.id, title: parsed.title,
-        description: parsed.description, priority: parsed.priority, deadline: parsed.deadline,
-        videoBrief: { kind: parsed.videoBrief.kind, brief: parsed.videoBrief },
-      })
-      : await this.persistTaskWithAssignee(actor, assignee, parsed);
-    const [assignment, confirmation, shootScenario] = await Promise.allSettled([
-      this.notificationQueue.queueAssignment({ task, creator: actor, assignee }),
-      actor.id !== assignee.id
-        ? this.notificationQueue.queueWorkflow({ event: "TASK_CREATED", task, actor, recipients: [actor] })
-        : Promise.resolve(),
-      parsed.videoBrief?.kind === "SHOOT"
-        ? this.notificationQueue.queueShootScenario?.({ task, scenarioUrl: parsed.videoBrief.scenarioUrl,
-          changeToken: task.createdAt })
-        : Promise.resolve(),
-    ]);
-    if (confirmation.status === "rejected") {
-      console.error(JSON.stringify({ event: "task_creator_confirmation_enqueue_failed", taskId: task.id }));
-    }
-    if (shootScenario.status === "rejected") {
-      console.error(JSON.stringify({ event: "shoot_scenario_enqueue_failed", taskId: task.id }));
-    }
-    if (assignment.status === "rejected") {
-      // The task has committed. Never make the client retry the creation and duplicate it.
-      console.error(JSON.stringify({ event: "task_assignment_enqueue_failed", taskId: task.id }));
-      return { task, assignee, notification: { status: "FAILED", reason: "DELIVERY_FAILED" } };
-    }
-    return { task, assignee, notification: { status: assignment.value } };
+    const requestHash = createHash("sha256").update(JSON.stringify({
+      creatorId: actor.id, assigneeId: assignee.id, title: parsed.title,
+      description: parsed.description ?? "", priority: parsed.priority, deadline: parsed.deadline,
+      videoBrief: parsed.videoBrief ?? null, taskTemplate: parsed.taskTemplate ?? null,
+    })).digest("hex");
+    const requestId = parsed.clientRequestId ?? randomUUID();
+    const task = await this.repository.createBrowserTask({
+      requestId, requestHash,
+      creatorId: actor.id, assigneeId: assignee.id, title: parsed.title,
+      description: parsed.description, priority: parsed.priority, deadline: parsed.deadline,
+      ...(parsed.taskTemplate ? { taskTemplate: parsed.taskTemplate } : {}),
+      ...(parsed.videoBrief ? { videoBrief: { kind: parsed.videoBrief.kind, brief: parsed.videoBrief } } : {}),
+    });
+    // The request row is the durable notification intent. The route's after()
+    // callback sends it immediately; the five-minute cron recovers crashes.
+    return { task, assignee, notification: { status: "QUEUED" } };
   }
 
   /**
@@ -817,7 +798,7 @@ export class MarketingService {
       this.repository.listTaskComments(taskId),
       this.repository.listDeadlineChangeRequests({ taskId }),
       this.repository.getPostingChecklist(taskId),
-      this.repository.getRecurringDefinitionForTask(taskId),
+      this.repository.getRecurringDefinitionForTask(taskId, task.recurringDefinitionId ?? null),
       this.repository.getUserTaskPlan(actor.id, taskId),
       this.repository.listTaskCheckpoints(taskId),
       task.workflowRunId ? this.repository.getWorkflowPlan(task.workflowRunId) : Promise.resolve(null),

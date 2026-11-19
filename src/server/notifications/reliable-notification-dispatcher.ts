@@ -230,7 +230,7 @@ export class ReliableNotificationDispatcher implements NotificationDispatcher, R
         key: dedupeKey("workflow", {
           event: input.event,
           taskId: input.task.id,
-          taskUpdatedAt: input.task.updatedAt,
+          taskUpdatedAt: input.event === "TASK_CREATED" ? input.task.createdAt : input.task.updatedAt,
           requestId: input.deadlineRequest?.id,
           recipientId: recipient.id,
         }),
@@ -259,7 +259,7 @@ export class ReliableNotificationDispatcher implements NotificationDispatcher, R
         dedupeKey: dedupeKey("workflow", {
           event: input.event,
           taskId: input.task.id,
-          taskUpdatedAt: input.task.updatedAt,
+          taskUpdatedAt: input.event === "TASK_CREATED" ? input.task.createdAt : input.task.updatedAt,
           requestId: input.deadlineRequest?.id,
           recipientId: recipient.id,
         }),
@@ -303,9 +303,48 @@ export class NotificationRetryService {
   constructor(
     private readonly repository: MarketingRepository,
     private readonly inner: NotificationDispatcher & ReportDispatcher,
+    private readonly queue?: NotificationQueue,
   ) {}
 
+  private async recoverBrowserTaskNotifications(limit: number): Promise<void> {
+    if (!this.queue) return;
+    const intents = await this.repository.listBrowserTasksAwaitingNotifications(limit);
+    for (const intent of intents) {
+      try {
+        const [task, creator] = await Promise.all([
+          this.repository.getTask(intent.taskId), this.repository.getUserById(intent.actorId),
+        ]);
+        if (!task || !creator) throw new Error("Browser task or creator missing.");
+        const assignee = task.assigneeId === creator.id
+          ? creator : await this.repository.getUserById(task.assigneeId);
+        if (!assignee) throw new Error("Browser task assignee missing.");
+        const brief = this.queue.queueShootScenario
+          ? await this.repository.getTaskVideoBrief(intent.taskId) : null;
+        const taskStillOpen = task.status !== "DONE" && task.status !== "CANCELLED";
+        const queued = await Promise.allSettled([
+          taskStillOpen && assignee.isActive
+            ? this.queue.queueAssignment({ task, creator, assignee }) : Promise.resolve("SKIPPED"),
+          taskStillOpen && creator.isActive && creator.id !== assignee.id
+            ? this.queue.queueWorkflow({ event: "TASK_CREATED", task, actor: creator, recipients: [creator] })
+            : Promise.resolve(),
+          taskStillOpen && this.queue.queueShootScenario && brief?.kind === "SHOOT" && brief.scenarioUrl
+            ? this.queue.queueShootScenario({ task, scenarioUrl: brief.scenarioUrl, changeToken: task.createdAt })
+            : Promise.resolve(),
+        ]);
+        if (queued.some((result) => result.status === "rejected")) {
+          throw new Error("Browser task notification enqueue failed.");
+        }
+        await this.repository.markBrowserTaskNotificationsQueued(intent.requestId);
+      } catch {
+        // The request row remains pending for the next cron run.
+        console.error(JSON.stringify({ event: "browser_task_notification_recovery_failed", taskId: intent.taskId }));
+      }
+    }
+  }
+
   async deliver(limit = 25) {
+    try { await this.recoverBrowserTaskNotifications(limit); }
+    catch { console.error(JSON.stringify({ event: "browser_task_notification_intent_scan_failed" })); }
     const rows = await this.repository.claimDueNotifications(limit);
     let sent = 0;
     let failed = 0;

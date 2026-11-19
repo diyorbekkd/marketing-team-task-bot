@@ -33,6 +33,7 @@ describe("Mini App task creation route", () => {
     };
     createTaskQueued.mockResolvedValueOnce(result);
     const input = {
+      clientRequestId: "90000000-0000-4000-8000-000000000001",
       title: "Publish reel",
       assigneeId: "assignee-1",
       deadline: "2026-09-08T13:00:00.000Z",
@@ -55,12 +56,22 @@ describe("Mini App task creation route", () => {
     createTaskQueued.mockResolvedValueOnce({ task: { id: "task-2" }, notification: { status: "QUEUED" } });
     const { POST } = await import("../src/app/api/tasks/route");
     const response = await POST(new Request("https://tasks.example.com/api/tasks", {
-      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ clientRequestId: "90000000-0000-4000-8000-000000000002" }),
     }));
     expect(response.status).toBe(201);
     expect(after).toHaveBeenCalledOnce();
     await after.mock.calls[0][0]();
     expect(deliver).toHaveBeenCalledWith(25);
+  });
+
+  it("rejects browser creation without a retry identity", async () => {
+    const { POST } = await import("../src/app/api/tasks/route");
+    const response = await POST(new Request("https://tasks.example.com/api/tasks", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    }));
+    expect(response.status).toBe(400);
+    expect(createTaskQueued).not.toHaveBeenCalled();
   });
 
   it("passes validated query options to the paginated task workflow", async () => {

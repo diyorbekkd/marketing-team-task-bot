@@ -101,6 +101,9 @@ function recurringDefinitionFixture(overrides: Partial<RecurringDefinition> = {}
 
 function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepository {
   return {
+    createBrowserTask: vi.fn(),
+    listBrowserTasksAwaitingNotifications: vi.fn(async () => []),
+    markBrowserTaskNotificationsQueued: vi.fn(async () => undefined),
     createTaskFromTemplate: vi.fn(),
     listTaskTemplates: vi.fn(async () => []),
     saveTaskTemplateVersion: vi.fn(),
@@ -621,26 +624,31 @@ describe("MarketingService MVP permissions", () => {
     expect(assignmentNotifier.notifyAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
   });
 
-  it("returns a queued browser task without waiting for outbound delivery", async () => {
+  it("returns a browser task without waiting for notification enqueue", async () => {
     const created = task();
-    const repo = repository({ createTask: vi.fn(async () => created) });
+    const repo = repository({ createBrowserTask: vi.fn(async () => created) });
     const notifications = notifier();
     const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
     const service = new MarketingService(repo, notifications, queue);
 
     const result = await service.createTaskQueued(creator, {
       title: created.title, assigneeId: assignee.id, deadline: created.deadline,
+      clientRequestId: "90000000-0000-4000-8000-000000000001",
     });
 
     expect(result).toEqual({ task: created, assignee, notification: { status: "QUEUED" } });
-    expect(queue.queueAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
-    expect(queue.queueWorkflow).toHaveBeenCalledWith({ event: "TASK_CREATED", task: created, actor: creator, recipients: [creator] });
+    expect(repo.createBrowserTask).toHaveBeenCalledWith(expect.objectContaining({
+      creatorId: creator.id, assigneeId: assignee.id,
+      requestId: "90000000-0000-4000-8000-000000000001", requestHash: expect.any(String),
+    }));
+    expect(queue.queueAssignment).not.toHaveBeenCalled();
+    expect(queue.queueWorkflow).not.toHaveBeenCalled();
     expect(notifications.notifyAssignment).not.toHaveBeenCalled();
   });
 
   it("creates a template task atomically and keeps assignment notification", async () => {
     const created = task();
-    const repo = repository({ createTaskFromTemplate: vi.fn(async () => created) });
+    const repo = repository({ createBrowserTask: vi.fn(async () => created) });
     const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
     const service = new MarketingService(repo, notifier(), queue);
     const result = await service.createTaskQueued(creator, {
@@ -648,11 +656,12 @@ describe("MarketingService MVP permissions", () => {
       taskTemplate: { templateId: "91000000-0000-4000-8000-000000000001", eventOn: "2099-11-10", deadlineOverride: false },
     });
     expect(result.notification.status).toBe("QUEUED");
-    expect(repo.createTaskFromTemplate).toHaveBeenCalledWith(expect.objectContaining({
-      creatorId: creator.id, assigneeId: assignee.id, eventOn: "2099-11-10", deadlineOverride: false,
+    expect(repo.createBrowserTask).toHaveBeenCalledWith(expect.objectContaining({
+      creatorId: creator.id, assigneeId: assignee.id,
+      taskTemplate: expect.objectContaining({ eventOn: "2099-11-10", deadlineOverride: false }),
     }));
     expect(repo.createTask).not.toHaveBeenCalled();
-    expect(queue.queueAssignment).toHaveBeenCalledOnce();
+    expect(queue.queueAssignment).not.toHaveBeenCalled();
   });
 
   it("limits task template edits and event date changes to their permitted actors", async () => {
@@ -1511,7 +1520,7 @@ describe("MarketingService MVP permissions", () => {
     it("creates an operator shoot with its brief in one repository transaction", async () => {
       const created = task();
       const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
-        createTaskWithVideoBrief: vi.fn(async () => created) });
+        createBrowserTask: vi.fn(async () => created) });
       const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined),
         queueShootScenario: vi.fn(async () => "QUEUED" as const) };
       const result = await new MarketingService(repo, notifier(), queue).createTaskQueued(creator, {
@@ -1520,24 +1529,23 @@ describe("MarketingService MVP permissions", () => {
       });
       expect(result.task).toEqual(created);
       expect(repo.createTask).not.toHaveBeenCalled();
-      expect(repo.createTaskWithVideoBrief).toHaveBeenCalledWith(expect.objectContaining({
+      expect(repo.createBrowserTask).toHaveBeenCalledWith(expect.objectContaining({
         assigneeId: operator.id, videoBrief: { kind: "SHOOT", brief: proposedShoot },
       }));
-      expect(queue.queueAssignment).toHaveBeenCalledOnce();
-      expect(queue.queueShootScenario).toHaveBeenCalledWith({ task: created, scenarioUrl: proposedShoot.scenarioUrl,
-        changeToken: created.createdAt });
+      expect(queue.queueAssignment).not.toHaveBeenCalled();
+      expect(queue.queueShootScenario).not.toHaveBeenCalled();
     });
 
     it("creates an edit task with only the montage level", async () => {
       const created = task();
       const repo = repository({ getUserById: vi.fn(async (id) => id === operator.id ? operator : creator),
-        createTaskWithVideoBrief: vi.fn(async () => created) });
+        createBrowserTask: vi.fn(async () => created) });
       const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
       await new MarketingService(repo, notifier(), queue).createTaskQueued(creator, {
         title: "Reels montaji", assigneeId: operator.id, deadline: "2099-11-21T10:00:00+05:00",
         videoBrief: { kind: "EDIT", editLevel: "STANDARD" },
       });
-      expect(repo.createTaskWithVideoBrief).toHaveBeenCalledWith(expect.objectContaining({
+      expect(repo.createBrowserTask).toHaveBeenCalledWith(expect.objectContaining({
         videoBrief: { kind: "EDIT", brief: { kind: "EDIT", editLevel: "STANDARD" } },
       }));
     });
@@ -1549,7 +1557,7 @@ describe("MarketingService MVP permissions", () => {
         title: "Syomka", assigneeId: assignee.id, deadline: "2099-11-21T10:00:00+05:00",
         videoBrief: proposedShoot,
       })).rejects.toMatchObject({ code: "INVALID_INPUT" });
-      expect(repo.createTaskWithVideoBrief).not.toHaveBeenCalled();
+      expect(repo.createBrowserTask).not.toHaveBeenCalled();
     });
 
     it("does not add a video type to an existing ordinary task", async () => {

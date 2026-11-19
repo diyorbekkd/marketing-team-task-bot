@@ -3,6 +3,7 @@ import "server-only";
 import { z } from "zod";
 import type {
   CreateTaskRecord,
+  CreateBrowserTaskRecord,
   MarketingRepository,
   NotificationOutboxRecord,
   NotificationPreferences,
@@ -574,6 +575,39 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return mapTask(rpcRecord(data));
   }
 
+  async createBrowserTask(input: CreateBrowserTaskRecord): Promise<Task> {
+    const { data, error } = await this.client.rpc("create_browser_task", {
+      p_request_id: input.requestId, p_request_hash: input.requestHash,
+      p_creator_id: input.creatorId, p_assignee_id: input.assigneeId,
+      p_title: input.title, p_description: input.description ?? "",
+      p_priority: input.priority, p_deadline: input.deadline,
+      p_video_kind: input.videoBrief?.kind ?? null,
+      p_video_brief: input.videoBrief?.brief ?? null,
+      p_template_id: input.taskTemplate?.templateId ?? null,
+      p_event_on: input.taskTemplate?.eventOn ?? null,
+      p_deadline_override: input.taskTemplate?.deadlineOverride ?? false,
+    });
+    if (error || !data) throwDataError(error, "Vazifani yaratib bo‘lmadi.");
+    return mapTask(rpcRecord(data));
+  }
+
+  async listBrowserTasksAwaitingNotifications(limit: number) {
+    const { data, error } = await this.client.from("browser_task_requests")
+      .select("request_id,task_id,actor_id")
+      .not("task_id", "is", null).is("notification_queued_at", null)
+      .order("created_at").limit(limit);
+    if (error) throwDataError(error, "Vazifa xabarlari navbatini yuklab bo‘lmadi.");
+    return (data ?? []).flatMap((row) => row.task_id
+      ? [{ requestId: row.request_id, taskId: row.task_id, actorId: row.actor_id }] : []);
+  }
+
+  async markBrowserTaskNotificationsQueued(requestId: string): Promise<void> {
+    const { error } = await this.client.from("browser_task_requests")
+      .update({ notification_queued_at: new Date().toISOString() })
+      .eq("request_id", requestId).is("notification_queued_at", null);
+    if (error) throwDataError(error, "Vazifa xabarlari navbatini yakunlab bo‘lmadi.");
+  }
+
   async createTaskFromTemplate(input: Parameters<MarketingRepository["createTaskFromTemplate"]>[0]): Promise<Task> {
     const { data, error } = await this.client.rpc("create_task_from_template", {
       p_creator_id: input.creatorId, p_assignee_id: input.assigneeId,
@@ -1016,12 +1050,15 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return mapDeadlineRequest(rpcRecord(data));
   }
 
-  async getRecurringDefinitionForTask(taskId: string): Promise<RecurringDefinition | null> {
-    const task = await this.getTask(taskId);
-    if (!task) return null;
+  async getRecurringDefinitionForTask(taskId: string, recurringDefinitionId?: string | null): Promise<RecurringDefinition | null> {
+    // The detail endpoint has already loaded and authorized the task. Other
+    // callers can omit the hint and retain the old existence check.
+    const task = recurringDefinitionId === undefined ? await this.getTask(taskId) : null;
+    if (recurringDefinitionId === undefined && !task) return null;
+    const definitionId = recurringDefinitionId === undefined ? task?.recurringDefinitionId : recurringDefinitionId;
     const query = this.client.from("recurring_definitions").select("*");
-    const { data, error } = task.recurringDefinitionId
-      ? await query.eq("id", task.recurringDefinitionId).maybeSingle()
+    const { data, error } = definitionId
+      ? await query.eq("id", definitionId).maybeSingle()
       : await query.eq("source_task_id", taskId).maybeSingle();
     if (error) throwDataError(error, "Takroriy vazifani yuklab bo‘lmadi.");
     return data ? mapRecurringDefinition(data) : null;

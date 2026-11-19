@@ -3228,6 +3228,7 @@ function QuickAddPanel({
   const [assigneeId, setAssigneeId] = useState(currentUser.id);
   const [deadline, setDeadline] = useState("");
   const [templates, setTemplates] = useState<TaskTemplate[]>([]);
+  const [templatesError, setTemplatesError] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState("");
   const [eventOn, setEventOn] = useState("");
   const [deadlineOverridden, setDeadlineOverridden] = useState(false);
@@ -3243,10 +3244,12 @@ function QuickAddPanel({
   const [openedAt] = useState(() => Date.now());
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const createRequestRef = useRef<{ body: string; id: string } | null>(null);
 
   const loadTemplates = useCallback(async () => {
-    const { data } = await apiFetch<{ templates: TaskTemplate[] }>("/api/task-templates");
-    if (data) setTemplates(data.templates);
+    const { data, error } = await apiFetch<{ templates: TaskTemplate[] }>("/api/task-templates");
+    if (data) { setTemplates(data.templates); setTemplatesError(null); }
+    else setTemplatesError(friendlyError(error) ?? "Shablonlarni yuklab bo‘lmadi.");
   }, []);
   useEffect(() => { void (async () => { await loadTemplates(); })(); }, [loadTemplates]);
   const selectedTemplate = templates.find((item) => item.id === templateId);
@@ -3290,6 +3293,11 @@ function QuickAddPanel({
       kind: "EDIT", editLevel,
     };
 
+    const requestBody = JSON.stringify(body);
+    if (createRequestRef.current?.body !== requestBody) {
+      createRequestRef.current = { body: requestBody, id: crypto.randomUUID() };
+    }
+    body.clientRequestId = createRequestRef.current.id;
     const { data, error: e } = await apiFetch<{ task: Task; notification: AssignmentNotificationResult }>("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3327,6 +3335,10 @@ function QuickAddPanel({
               <option value="">Shablonsiz</option>
               {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
             </select>
+            {templatesError && <div className="ma-error-inline" role="alert">
+              <span>{templatesError}</span>
+              <button type="button" className="ma-link-btn" onClick={() => { void loadTemplates(); }}>Qayta urinish</button>
+            </div>}
             {currentUser.role === "HEAD_OF_MARKETING" && <button type="button" className="ma-link-btn" onClick={() => setShowTemplateManager(true)}>Shablonlarni sozlash →</button>}
           </div>
           {selectedTemplate && <div className="ma-form-group">

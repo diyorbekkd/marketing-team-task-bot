@@ -42,6 +42,8 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     enqueueShootScenarioNotification: vi.fn(async () => outbox({ notificationType: "SHOOT_SCENARIO", recipientUserId: null })),
     claimNotification: vi.fn(async () => true),
     claimDueNotifications: vi.fn(async () => []),
+    listBrowserTasksAwaitingNotifications: vi.fn(async () => []),
+    markBrowserTaskNotificationsQueued: vi.fn(async () => undefined),
     completeNotification: vi.fn(async () => undefined),
     getNotificationPreferences: vi.fn(async () => ({ assignments: true, workflow: true, reminders: true, dailyCheck: true, reports: true })),
     updateNotificationPreferences: vi.fn(async (_userId, preferences) => preferences),
@@ -65,6 +67,55 @@ function dispatcher(overrides: Partial<NotificationDispatcher & ReportDispatcher
 
 describe("durable Telegram notification outbox", () => {
   afterEach(() => vi.unstubAllEnvs());
+
+  it("recovers a committed browser task after an enqueue error", async () => {
+    let rejectOnce = true;
+    const repo = repository({
+      listBrowserTasksAwaitingNotifications: vi.fn(async () => [{
+        requestId: "90000000-0000-4000-8000-000000000001", taskId: task.id, actorId: creator.id,
+      }]),
+      getTask: vi.fn(async () => task),
+      getUserById: vi.fn(async (id) => id === creator.id ? creator : assignee),
+      getTaskVideoBrief: vi.fn(async () => null),
+      enqueueNotification: vi.fn(async () => {
+        if (rejectOnce) { rejectOnce = false; throw new Error("Data API temporarily unavailable"); }
+        return outbox();
+      }),
+    });
+    const inner = dispatcher();
+    const queue = new ReliableNotificationDispatcher(repo, inner);
+    const retry = new NotificationRetryService(repo, inner, queue);
+    await retry.deliver();
+    expect(repo.markBrowserTaskNotificationsQueued).not.toHaveBeenCalled();
+    await retry.deliver();
+    expect(repo.markBrowserTaskNotificationsQueued).toHaveBeenCalledWith("90000000-0000-4000-8000-000000000001");
+  });
+
+  it("uses the creation time for creator-confirmation deduplication", async () => {
+    const repo = repository();
+    const queue = new ReliableNotificationDispatcher(repo, dispatcher());
+    const input = { event: "TASK_CREATED" as const, task, actor: creator, recipients: [creator] };
+    await queue.queueWorkflow(input);
+    await queue.queueWorkflow({ ...input, task: { ...task, updatedAt: "2026-11-19T10:00:00Z" } });
+    const calls = vi.mocked(repo.enqueueNotification).mock.calls;
+    expect(calls[0][0].dedupeKey).toBe(calls[1][0].dedupeKey);
+  });
+
+  it("does not send a late creation message for a closed task", async () => {
+    const repo = repository({
+      listBrowserTasksAwaitingNotifications: vi.fn(async () => [{
+        requestId: "90000000-0000-4000-8000-000000000002", taskId: task.id, actorId: creator.id,
+      }]),
+      getTask: vi.fn(async () => ({ ...task, status: "DONE" as const })),
+      getUserById: vi.fn(async (id) => id === creator.id ? creator : assignee),
+      getTaskVideoBrief: vi.fn(async () => null),
+    });
+    const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+    await new NotificationRetryService(repo, dispatcher(), queue).deliver();
+    expect(queue.queueAssignment).not.toHaveBeenCalled();
+    expect(queue.queueWorkflow).not.toHaveBeenCalled();
+    expect(repo.markBrowserTaskNotificationsQueued).toHaveBeenCalledOnce();
+  });
 
   it("keeps shoot topic delivery off until both destination IDs are configured", async () => {
     vi.stubEnv("VIDEO_MEDIA_CHAT_ID", "");

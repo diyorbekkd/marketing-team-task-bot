@@ -347,6 +347,10 @@ export interface Database {
       user_events: TableDefinition<UserEventRow>;
       task_reminder_deliveries: TableDefinition<ReminderDeliveryRow>;
       notification_outbox: TableDefinition<NotificationOutboxRow>;
+      browser_task_requests: TableDefinition<{
+        request_id: string; actor_id: string; request_hash: string; task_id: string | null;
+        created_at: string; notification_queued_at: string | null;
+      }>;
       user_notification_preferences: TableDefinition<NotificationPreferencesRow>;
       workflow_templates: TableDefinition<WorkflowTemplateRow>;
       task_templates: TableDefinition<TaskTemplateRow>;
@@ -358,6 +362,12 @@ export interface Database {
     };
     Views: Record<never, never>;
     Functions: {
+      create_browser_task: { Args: {
+        p_request_id: string; p_request_hash: string; p_creator_id: string; p_assignee_id: string;
+        p_title: string; p_description: string; p_priority: "high" | "normal" | "low";
+        p_deadline: string; p_video_kind: "SHOOT" | "EDIT" | null; p_video_brief: Json | null;
+        p_template_id: string | null; p_event_on: string | null; p_deadline_override: boolean;
+      }; Returns: TaskRow };
       save_task_template_version: { Args: { p_actor_id: string; p_source_template_id: string | null;
         p_name: string; p_deadline_offset_days: number; p_deadline_local_time: string; p_checkpoints: Json }; Returns: string };
       archive_task_template: { Args: { p_actor_id: string; p_template_id: string }; Returns: boolean };
