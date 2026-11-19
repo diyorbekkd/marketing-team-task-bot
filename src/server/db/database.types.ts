@@ -61,6 +61,17 @@ type WorkflowTemplateRow = {
   updated_at: string;
 }
 
+type TaskTemplateRow = {
+  id: string; replaces_id: string | null; name: string;
+  deadline_offset_days: number; deadline_local_time: string;
+  checkpoints: Json; is_active: boolean; created_by: string; created_at: string;
+}
+
+type TaskTemplateInstanceRow = {
+  task_id: string; template_id: string; event_on: string;
+  deadline_is_auto: boolean; created_at: string;
+}
+
 type WorkflowTemplateStepRow = {
   id: string;
   template_id: string;
@@ -166,6 +177,9 @@ type TaskCheckpointRow = {
   completed_by: string | null;
   completed_at: string | null;
   created_at: string;
+  template_offset_days: number | null;
+  template_local_time: string | null;
+  due_is_manual: boolean;
 }
 
 type WebLoginChallengeRow = {
@@ -335,6 +349,8 @@ export interface Database {
       notification_outbox: TableDefinition<NotificationOutboxRow>;
       user_notification_preferences: TableDefinition<NotificationPreferencesRow>;
       workflow_templates: TableDefinition<WorkflowTemplateRow>;
+      task_templates: TableDefinition<TaskTemplateRow>;
+      task_template_instances: TableDefinition<TaskTemplateInstanceRow>;
       workflow_template_steps: TableDefinition<WorkflowTemplateStepRow>;
       task_video_briefs: TableDefinition<TaskVideoBriefRow>;
       workflow_runs: TableDefinition<WorkflowRunRow>;
@@ -342,6 +358,14 @@ export interface Database {
     };
     Views: Record<never, never>;
     Functions: {
+      save_task_template_version: { Args: { p_actor_id: string; p_source_template_id: string | null;
+        p_name: string; p_deadline_offset_days: number; p_deadline_local_time: string; p_checkpoints: Json }; Returns: string };
+      archive_task_template: { Args: { p_actor_id: string; p_template_id: string }; Returns: boolean };
+      create_task_from_template: { Args: { p_creator_id: string; p_assignee_id: string;
+        p_template_id: string; p_event_on: string; p_title: string; p_description: string;
+        p_priority: "high" | "normal" | "low"; p_deadline_override: string | null }; Returns: TaskRow };
+      rebase_task_template_event: { Args: { p_task_id: string; p_actor_id: string; p_event_on: string }; Returns: TaskTemplateInstanceRow };
+      set_task_checkpoint_due: { Args: { p_checkpoint_id: string; p_actor_id: string; p_due_at: string | null }; Returns: TaskCheckpointRow };
       claim_assistant_action: {
         Args: { p_turn_id: string; p_user_id: string };
         Returns: Json;

@@ -7,6 +7,8 @@ import { MyDayPanel } from "./MyDayPanel";
 import { TaskPlanningPanel, type Checkpoint, type PersonalPlan } from "./TaskPlanningPanel";
 import { WebBotLogin } from "./WebBotLogin";
 import { AssistantPanel } from "./AssistantPanel";
+import { TaskTemplateManager, templatePreview } from "./TaskTemplateManager";
+import type { TaskTemplate } from "@/domain/task-template";
 import type { DayPlanGroup } from "@/domain/planning";
 import "./mini-app.css";
 
@@ -108,6 +110,7 @@ interface TaskDetail {
   checkpoints?: Checkpoint[];
   workflowPlan?: WorkflowPlan | null;
   videoBrief?: VideoBrief | null;
+  taskTemplate?: { eventOn: string; templateName: string; deadlineIsAuto: boolean } | null;
 }
 
 interface VideoBrief {
@@ -2031,6 +2034,8 @@ function TaskDetailPanel({
   const [commentBody, setCommentBody] = useState("");
   const [commentUrl, setCommentUrl] = useState("");
   const [commentPending, setCommentPending] = useState(false);
+  const [templateEventDraft, setTemplateEventDraft] = useState("");
+  const [templateEventPending, setTemplateEventPending] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const primaryActionRef = useRef<HTMLElement>(null);
 
@@ -2039,7 +2044,7 @@ function TaskDetailPanel({
     setError(null);
     const { data, error: e } = await apiFetch<TaskDetail>(`/api/tasks/${taskId}`);
     setLoading(false);
-    if (data) setDetail(data);
+    if (data) { setDetail(data); setTemplateEventDraft(data.taskTemplate?.eventOn ?? ""); }
     else setError(friendlyError(e) ?? "Vazifani yuklab bo‘lmadi");
   }, [taskId]);
 
@@ -2552,6 +2557,29 @@ function TaskDetailPanel({
               onRefreshPlan={onPlanSaved}
               onRefreshDetail={() => { void load(true); }}
             />
+
+            {detail.taskTemplate && <section className="ma-section ma-template-instance">
+              <h3>{detail.taskTemplate.templateName} · tadbir sanasi</h3>
+              <p className="ma-muted">Sana ko‘chsa, bajarilmagan avtomatik checkpointlar ko‘chadi. Bajarilgan yoki vaqti qo‘lda o‘zgartirilgan bandlar saqlanadi.</p>
+              <div className="ma-template-row">
+                <input aria-label="Tadbir sanasi" type="date" value={templateEventDraft}
+                  disabled={!canManageTask || isTerminal(task.status) || templateEventPending}
+                  onChange={(event) => setTemplateEventDraft(event.target.value)} />
+                {canManageTask && !isTerminal(task.status) && <button type="button" className="ma-btn secondary"
+                  disabled={templateEventPending || !templateEventDraft || templateEventDraft === detail.taskTemplate.eventOn}
+                  onClick={async () => {
+                    setTemplateEventPending(true); setActionError(null);
+                    const { data, error: e } = await apiFetch<TaskDetail>(`/api/tasks/${taskId}/template-event`, {
+                      method: "PATCH", headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ eventOn: templateEventDraft }),
+                    });
+                    setTemplateEventPending(false);
+                    if (e) { setActionError(friendlyError(e)); return; }
+                    if (data) { setDetail(data); onRefresh(); onPlanSaved(); }
+                  }}>Sanani saqlash</button>}
+              </div>
+              {!detail.taskTemplate.deadlineIsAuto && <p className="ma-muted">Umumiy muddat qo‘lda belgilangan; tadbir sanasi uni o‘zgartirmaydi.</p>}
+            </section>}
 
             <details className="ma-section ma-detail-disclosure">
               <summary>Qo‘shimcha ma’lumot va amallar</summary>
@@ -3199,6 +3227,11 @@ function QuickAddPanel({
   const [description, setDescription] = useState("");
   const [assigneeId, setAssigneeId] = useState(currentUser.id);
   const [deadline, setDeadline] = useState("");
+  const [templates, setTemplates] = useState<TaskTemplate[]>([]);
+  const [templateId, setTemplateId] = useState("");
+  const [eventOn, setEventOn] = useState("");
+  const [deadlineOverridden, setDeadlineOverridden] = useState(false);
+  const [showTemplateManager, setShowTemplateManager] = useState(false);
   const [priority, setPriority] = useState<Priority>("normal");
   const [videoKind, setVideoKind] = useState<VideoKind | "GENERAL" | null>(null);
   const [scenarioUrl, setScenarioUrl] = useState("");
@@ -3211,6 +3244,15 @@ function QuickAddPanel({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const loadTemplates = useCallback(async () => {
+    const { data } = await apiFetch<{ templates: TaskTemplate[] }>("/api/task-templates");
+    if (data) setTemplates(data.templates);
+  }, []);
+  useEffect(() => { void (async () => { await loadTemplates(); })(); }, [loadTemplates]);
+  const selectedTemplate = templates.find((item) => item.id === templateId);
+  const preview = selectedTemplate && eventOn ? templatePreview(selectedTemplate, eventOn) : null;
+  const effectiveDeadline = selectedTemplate && !deadlineOverridden ? preview?.deadline.slice(0, 16) ?? "" : deadline;
+
   const activeUsers = users.filter((u) => u.isActive);
   // Never allow submission before the team list is ready: an assignee
   // picked while it's still loading would either be missing from the
@@ -3221,29 +3263,30 @@ function QuickAddPanel({
   const validUrl = (value: string) => {
     try { return ["http:", "https:"].includes(new URL(value).protocol); } catch { return false; }
   };
-  const videoReady = !operatorSelected || videoKind === "GENERAL" || (videoKind === "SHOOT"
+  const videoReady = Boolean(selectedTemplate) || !operatorSelected || videoKind === "GENERAL" || (videoKind === "SHOOT"
     ? validUrl(scenarioUrl) && !!onCameraPerson.trim() && !!location.trim() &&
       !!scheduledAt && Date.parse(localDatetimeToISO(scheduledAt)) > openedAt &&
       Number.isInteger(Number(durationMinutes)) && Number(durationMinutes) >= 5 && Number(durationMinutes) <= 1440
     : videoKind === "EDIT" && !!editLevel);
 
   const submit = async () => {
-    if (pending || !teamReady || !title.trim() || !assigneeId || !deadline || !videoReady) return;
+    if (pending || !teamReady || !title.trim() || !assigneeId || !effectiveDeadline || !videoReady || (templateId && !eventOn)) return;
     setPending(true);
     setError(null);
     const body: Record<string, unknown> = {
       title: title.trim(),
       priority,
       assigneeId,
-      deadline: localDatetimeToISO(deadline),
+      deadline: localDatetimeToISO(effectiveDeadline),
     };
     if (description.trim()) body.description = description.trim();
-    if (operatorSelected && videoKind === "SHOOT") body.videoBrief = {
+    if (selectedTemplate) body.taskTemplate = { templateId, eventOn, deadlineOverride: deadlineOverridden };
+    if (!selectedTemplate && operatorSelected && videoKind === "SHOOT") body.videoBrief = {
       kind: "SHOOT", scenarioUrl: scenarioUrl.trim(), onCameraPerson: onCameraPerson.trim(),
       location: location.trim(), scheduledAt: localDatetimeToISO(scheduledAt),
       durationMinutes: Number(durationMinutes),
     };
-    if (operatorSelected && videoKind === "EDIT") body.videoBrief = {
+    if (!selectedTemplate && operatorSelected && videoKind === "EDIT") body.videoBrief = {
       kind: "EDIT", editLevel,
     };
 
@@ -3272,6 +3315,28 @@ function QuickAddPanel({
           <span className="ma-panel-title">Yangi vazifa</span>
         </div>
         <div className="ma-panel-body">
+          {showTemplateManager ? <TaskTemplateManager templates={templates}
+            onSaved={() => { void loadTemplates(); }} onClose={() => setShowTemplateManager(false)} /> : <>
+          <div className="ma-form-group">
+            <label htmlFor="qa-template">Checkpointli shablon</label>
+            <select id="qa-template" value={templateId} onChange={(event) => {
+              const id = event.target.value; setDeadline(effectiveDeadline); setTemplateId(id); setDeadlineOverridden(false); setVideoKind(null);
+              const chosen = templates.find((item) => item.id === id);
+              if (chosen && !title) setTitle(chosen.name);
+            }}>
+              <option value="">Shablonsiz</option>
+              {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+            </select>
+            {currentUser.role === "HEAD_OF_MARKETING" && <button type="button" className="ma-link-btn" onClick={() => setShowTemplateManager(true)}>Shablonlarni sozlash →</button>}
+          </div>
+          {selectedTemplate && <div className="ma-form-group">
+            <label htmlFor="qa-event-on">Tadbir sanasi *</label>
+            <input id="qa-event-on" type="date" value={eventOn} onChange={(event) => setEventOn(event.target.value)} />
+            {preview && <div className="ma-template-preview" aria-label="Checkpoint sanalari">
+              <strong>Reja</strong>
+              {preview.checkpoints.map((item, index) => <span key={index}>{item.title} · {item.dueAt.slice(0, 16).replace("T", " ")}</span>)}
+            </div>}
+          </div>}
           <div className="ma-form-group">
             <label htmlFor="qa-title">Nomi *</label>
             <input
@@ -3309,12 +3374,14 @@ function QuickAddPanel({
           </div>
           <div className="ma-form-group">
             <label htmlFor="qa-deadline">Muddat *</label>
-            <input id="qa-deadline" type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
-            {relativeDeadlineSummary(deadline) && (
-              <span className="ma-deadline-summary">{relativeDeadlineSummary(deadline)}</span>
+            {selectedTemplate && <label className="ma-template-override"><input type="checkbox" checked={deadlineOverridden}
+              onChange={(event) => { setDeadline(effectiveDeadline); setDeadlineOverridden(event.target.checked); }} /> Umumiy muddatni qo‘lda belgilash</label>}
+            <input id="qa-deadline" type="datetime-local" value={effectiveDeadline} readOnly={Boolean(selectedTemplate && !deadlineOverridden)} onChange={(e) => setDeadline(e.target.value)} />
+            {relativeDeadlineSummary(effectiveDeadline) && (
+              <span className="ma-deadline-summary">{relativeDeadlineSummary(effectiveDeadline)}</span>
             )}
           </div>
-          {operatorSelected && <div className="ma-form-group ma-video-create">
+          {operatorSelected && !selectedTemplate && <div className="ma-form-group ma-video-create">
             <span className="ma-field-label">Bu qanday vazifa? *</span>
             <div className="ma-video-type-picker" role="group" aria-label="Operator vazifasi turi">
               {(["GENERAL", "SHOOT", "EDIT"] as const).map((kind) => <button key={kind}
@@ -3367,9 +3434,10 @@ function QuickAddPanel({
             </div>
           </details>
           {error && <div className="ma-error-inline" role="alert">{error}</div>}
-          <button className="ma-btn primary full" disabled={pending || !teamReady || !title.trim() || !deadline || !assigneeId || !videoReady} onClick={submit}>
+          <button className="ma-btn primary full" disabled={pending || !teamReady || !title.trim() || !effectiveDeadline || !assigneeId || !videoReady || Boolean(selectedTemplate && !eventOn)} onClick={submit}>
             {pending ? "Yaratilmoqda…" : !teamReady ? "Jamoa yuklanmoqda…" : "Vazifa yaratish"}
           </button>
+          </>}
         </div>
       </div>
     </div>

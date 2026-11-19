@@ -1653,6 +1653,21 @@
 .ma-planning-checkpoints h3 { display: flex; gap: 8px; align-items: center; }
 .ma-planning-checkpoints progress { width: 100%; accent-color: var(--primary); }
 .ma-planning-checkpoint { display: flex; align-items: center; gap: 8px; min-height: 38px; }
+.ma-planning-checkpoint { flex-wrap: wrap; }
+.ma-template-due-editor { display: flex; flex: 1 0 100%; gap: 8px; flex-wrap: wrap; padding: 6px 0 10px 34px; }
+.ma-template-due-editor input { min-width: 180px; flex: 1; }
+.ma-template-editor, .ma-template-preview { display: grid; gap: 10px; }
+.ma-template-editor h3, .ma-template-editor h4 { margin: 4px 0; }
+.ma-template-editor label, .ma-template-row label { display: grid; gap: 5px; font-size: .8rem; font-weight: 650; }
+.ma-template-editor input, .ma-template-row input { min-width: 0; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; }
+.ma-template-row { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+.ma-template-row label:first-child { flex: 2 1 160px; }
+.ma-template-row label:not(:first-child) { flex: 1 1 90px; }
+.ma-template-list, .ma-template-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ma-template-preview { padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--card); font-size: .82rem; }
+.ma-template-override { display: flex; gap: 8px; align-items: center; font-size: .82rem; }
+.ma-template-override input { width: auto; }
+.ma-template-instance { display: grid; gap: 10px; }
 .ma-planning-checkpoint span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .ma-planning-checkpoint .completed { text-decoration: line-through; color: var(--muted); }
 .ma-planning-checkpoint button { background: transparent; border: 0; color: var(--ink); font-size: 1.25rem; min-width: 34px; min-height: 34px; cursor: pointer; }

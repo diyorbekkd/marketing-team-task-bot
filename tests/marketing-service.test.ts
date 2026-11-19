@@ -101,6 +101,13 @@ function recurringDefinitionFixture(overrides: Partial<RecurringDefinition> = {}
 
 function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepository {
   return {
+    createTaskFromTemplate: vi.fn(),
+    listTaskTemplates: vi.fn(async () => []),
+    saveTaskTemplateVersion: vi.fn(),
+    archiveTaskTemplate: vi.fn(),
+    getTaskTemplateInstance: vi.fn(async () => null),
+    rebaseTaskTemplateEvent: vi.fn(),
+    setTaskCheckpointDue: vi.fn(),
     registerTelegramUser: vi.fn(),
     getUserById: vi.fn(async (id) => [head, creator, assignee, unrelated].find((candidate) => candidate.id === id) ?? null),
     getUserByTelegramId: vi.fn(),
@@ -629,6 +636,39 @@ describe("MarketingService MVP permissions", () => {
     expect(queue.queueAssignment).toHaveBeenCalledWith({ task: created, creator, assignee });
     expect(queue.queueWorkflow).toHaveBeenCalledWith({ event: "TASK_CREATED", task: created, actor: creator, recipients: [creator] });
     expect(notifications.notifyAssignment).not.toHaveBeenCalled();
+  });
+
+  it("creates a template task atomically and keeps assignment notification", async () => {
+    const created = task();
+    const repo = repository({ createTaskFromTemplate: vi.fn(async () => created) });
+    const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+    const service = new MarketingService(repo, notifier(), queue);
+    const result = await service.createTaskQueued(creator, {
+      title: "Webinar", assigneeId: assignee.id, deadline: "2099-11-11T18:00:00+05:00",
+      taskTemplate: { templateId: "91000000-0000-4000-8000-000000000001", eventOn: "2099-11-10", deadlineOverride: false },
+    });
+    expect(result.notification.status).toBe("QUEUED");
+    expect(repo.createTaskFromTemplate).toHaveBeenCalledWith(expect.objectContaining({
+      creatorId: creator.id, assigneeId: assignee.id, eventOn: "2099-11-10", deadlineOverride: false,
+    }));
+    expect(repo.createTask).not.toHaveBeenCalled();
+    expect(queue.queueAssignment).toHaveBeenCalledOnce();
+  });
+
+  it("limits task template edits and event date changes to their permitted actors", async () => {
+    const repo = repository({ saveTaskTemplateVersion: vi.fn(async () => "91000000-0000-4000-8000-000000000001") });
+    const service = new MarketingService(repo, notifier());
+    const input = { sourceTemplateId: null, name: "Webinar", deadlineOffsetDays: 1,
+      checkpoints: [{ title: "E’lon qilish", offsetDays: -2 }] };
+    await expect(service.saveTaskTemplate(assignee, input)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await service.saveTaskTemplate(head, input);
+    expect(repo.saveTaskTemplateVersion).toHaveBeenCalledWith(expect.objectContaining({
+      actorId: head.id, deadlineLocalTime: "18:00", checkpoints: [{ title: "E’lon qilish", offsetDays: -2, localTime: "18:00" }],
+    }));
+    await expect(service.rebaseTaskTemplateEvent(assignee, ids.task, { eventOn: "2099-11-12" }))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    await service.rebaseTaskTemplateEvent(creator, ids.task, { eventOn: "2099-11-12" });
+    expect(repo.rebaseTaskTemplateEvent).toHaveBeenCalledWith({ taskId: ids.task, actorId: creator.id, eventOn: "2099-11-12" });
   });
 
   it("resolves positional assignees before persistence and preserves assignment notification delivery", async () => {

@@ -59,6 +59,8 @@ export function TaskPlanningPanel({ taskId, terminal, canEditCheckpoints = true,
   const [title, setTitle] = useState("");
   const [dueDateTime, setDueDateTime] = useState("");
   const [pending, setPending] = useState(false);
+  const [editingDueId, setEditingDueId] = useState<string | null>(null);
+  const [editingDueValue, setEditingDueValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const completed = checkpoints.filter((item) => item.completedAt).length;
 
@@ -119,6 +121,18 @@ export function TaskPlanningPanel({ taskId, terminal, canEditCheckpoints = true,
     } finally { setPending(false); }
   };
 
+  const saveDue = async (id: string) => {
+    setPending(true); setError(null);
+    try {
+      const result = await write<{ checkpoint: Checkpoint }>(`/api/checkpoints/${id}`, "PATCH", {
+        dueAt: editingDueValue ? `${editingDueValue}:00+05:00` : null,
+      });
+      onCheckpoints(checkpoints.map((item) => item.id === id ? result.checkpoint : item));
+      setEditingDueId(null); onRefreshPlan(); onRefreshDetail();
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Checkpoint vaqti yangilanmadi."); }
+    finally { setPending(false); }
+  };
+
   return <section className="ma-section ma-planning" aria-label="Shaxsiy reja va checkpointlar">
     <h3>Reja va progress</h3>
     <p className="ma-muted">Barchasi ixtiyoriy. Shoshilinchlik deadline’dan 48 soat oldin avtomatik taklif qilinadi.</p>
@@ -149,7 +163,16 @@ export function TaskPlanningPanel({ taskId, terminal, canEditCheckpoints = true,
         <span className={item.completedAt ? "completed" : ""}>{item.title}
           {item.dueAt && <small className="ma-muted"> · {tashkentDateTime(item.dueAt)}</small>}
         </span>
+        {canEditCheckpoints && !terminal && <button type="button" disabled={pending} onClick={() => {
+          setEditingDueId(item.id);
+          setEditingDueValue(item.dueAt ? new Date(Date.parse(item.dueAt) + 5 * 60 * 60 * 1000).toISOString().slice(0, 16) : "");
+        }} aria-label={`${item.title} vaqtini o‘zgartirish`}>✎</button>}
         {canEditCheckpoints && <button type="button" disabled={pending} onClick={() => removeCheckpoint(item.id)} aria-label={`${item.title} checkpointini o‘chirish`}>×</button>}
+        {editingDueId === item.id && <div className="ma-template-due-editor">
+          <input aria-label="Checkpoint vaqti" type="datetime-local" value={editingDueValue} onChange={(event) => setEditingDueValue(event.target.value)} />
+          <button type="button" className="ma-btn secondary" disabled={pending} onClick={() => saveDue(item.id)}>Saqlash</button>
+          <button type="button" className="ma-btn secondary" onClick={() => setEditingDueId(null)}>Bekor qilish</button>
+        </div>}
       </div>)}
       {!terminal && canEditCheckpoints && checkpoints.length < 50 && <div className="ma-planning-add">
         <textarea aria-label="Yangi checkpoint" placeholder="Natija yoki oraliq maqsad" maxLength={200} rows={2}

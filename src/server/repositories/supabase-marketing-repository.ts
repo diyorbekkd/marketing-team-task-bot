@@ -15,6 +15,7 @@ import type { TeamRole } from "@/domain/permissions";
 import type { TaskStatus } from "@/domain/task";
 import type { ReminderType } from "@/domain/reminders";
 import { canonicalTelegramUsername } from "@/domain/telegram-username";
+import { SaveTaskTemplateSchema, type TaskTemplate } from "@/domain/task-template";
 import type {
   DeadlineChangeRequest,
   PostingChecklist,
@@ -573,6 +574,62 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return mapTask(rpcRecord(data));
   }
 
+  async createTaskFromTemplate(input: Parameters<MarketingRepository["createTaskFromTemplate"]>[0]): Promise<Task> {
+    const { data, error } = await this.client.rpc("create_task_from_template", {
+      p_creator_id: input.creatorId, p_assignee_id: input.assigneeId,
+      p_template_id: input.templateId, p_event_on: input.eventOn,
+      p_title: input.title, p_description: input.description ?? "",
+      p_priority: input.priority, p_deadline_override: input.deadlineOverride ? input.deadline : null,
+    });
+    if (error || !data) throwDataError(error, "Shablondan vazifa yaratib bo‘lmadi.");
+    return mapTask(rpcRecord(data));
+  }
+
+  async listTaskTemplates(): Promise<TaskTemplate[]> {
+    const { data, error } = await this.client.from("task_templates").select("*").eq("is_active", true).order("name");
+    if (error) throwDataError(error, "Vazifa shablonlarini yuklab bo‘lmadi.");
+    return (data ?? []).map((row) => ({ id: row.id, ...SaveTaskTemplateSchema.parse({
+      sourceTemplateId: row.replaces_id, name: row.name, deadlineOffsetDays: row.deadline_offset_days,
+      deadlineLocalTime: row.deadline_local_time.slice(0, 5), checkpoints: row.checkpoints,
+    }) }));
+  }
+
+  async saveTaskTemplateVersion(input: Parameters<MarketingRepository["saveTaskTemplateVersion"]>[0]): Promise<string> {
+    const { data, error } = await this.client.rpc("save_task_template_version", {
+      p_actor_id: input.actorId, p_source_template_id: input.sourceTemplateId,
+      p_name: input.name, p_deadline_offset_days: input.deadlineOffsetDays,
+      p_deadline_local_time: input.deadlineLocalTime, p_checkpoints: input.checkpoints,
+    });
+    if (error || !data) throwDataError(error, "Vazifa shablonini saqlab bo‘lmadi.");
+    return data;
+  }
+
+  async archiveTaskTemplate(input: Parameters<MarketingRepository["archiveTaskTemplate"]>[0]): Promise<boolean> {
+    const { data, error } = await this.client.rpc("archive_task_template", {
+      p_actor_id: input.actorId, p_template_id: input.templateId,
+    });
+    if (error) throwDataError(error, "Shablonni arxivlab bo‘lmadi.");
+    return data ?? false;
+  }
+
+  async getTaskTemplateInstance(taskId: string) {
+    const { data, error } = await this.client.from("task_template_instances")
+      .select("event_on,deadline_is_auto,template_id").eq("task_id", taskId).maybeSingle();
+    if (error) throwDataError(error, "Vazifa shablonini yuklab bo‘lmadi.");
+    if (!data) return null;
+    const { data: template, error: templateError } = await this.client.from("task_templates")
+      .select("name").eq("id", data.template_id).single();
+    if (templateError) throwDataError(templateError, "Vazifa shablonini yuklab bo‘lmadi.");
+    return { eventOn: data.event_on, deadlineIsAuto: data.deadline_is_auto, templateName: template?.name ?? "Shablon" };
+  }
+
+  async rebaseTaskTemplateEvent(input: Parameters<MarketingRepository["rebaseTaskTemplateEvent"]>[0]): Promise<void> {
+    const { error } = await this.client.rpc("rebase_task_template_event", {
+      p_task_id: input.taskId, p_actor_id: input.actorId, p_event_on: input.eventOn,
+    });
+    if (error) throwDataError(error, "Tadbir sanasini o‘zgartirib bo‘lmadi.");
+  }
+
   async createTaskWithVideoBrief(input: Parameters<MarketingRepository["createTaskWithVideoBrief"]>[0]): Promise<Task> {
     const { data, error } = await this.client.rpc("create_task_with_video_brief", {
       p_creator_id: input.creatorId, p_assignee_id: input.assigneeId,
@@ -883,6 +940,14 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       p_checkpoint_id: input.id, p_actor_id: input.actorId,
     });
     if (error || !data) throwDataError(error, "Checkpoint yangilanmadi.");
+    return mapTaskCheckpoint(rpcRecord(data));
+  }
+
+  async setTaskCheckpointDue(input: Parameters<MarketingRepository["setTaskCheckpointDue"]>[0]): Promise<TaskCheckpoint> {
+    const { data, error } = await this.client.rpc("set_task_checkpoint_due", {
+      p_checkpoint_id: input.id, p_actor_id: input.actorId, p_due_at: input.dueAt,
+    });
+    if (error || !data) throwDataError(error, "Checkpoint vaqti yangilanmadi.");
     return mapTaskCheckpoint(rpcRecord(data));
   }
 

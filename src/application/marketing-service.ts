@@ -16,6 +16,7 @@ import { z } from "zod";
 import { createHash, randomBytes } from "node:crypto";
 import { nextOccurrence, RecurrenceInputSchema, RecurrenceUpdateSchema } from "@/domain/recurrence";
 import { calculateAnalytics, isOpenTask, tashkentDayRange, workloadMetrics } from "@/domain/reporting";
+import { SaveTaskTemplateSchema } from "@/domain/task-template";
 
 /**
  * Deterministic per-block idempotency key reusing the existing unique
@@ -127,7 +128,10 @@ const VideoBriefInputSchema = z.discriminatedUnion("kind", [
 ]);
 const BrowserCreateTaskInputSchema = CreateTaskInputSchema.extend({
   videoBrief: VideoBriefInputSchema.optional(),
-});
+  taskTemplate: z.object({
+    templateId: z.string().uuid(), eventOn: z.iso.date(), deadlineOverride: z.boolean(),
+  }).strict().optional(),
+}).refine((value) => !(value.videoBrief && value.taskTemplate), "Video brif va vazifa shabloni birga tanlanmaydi.");
 
 export type TaskScope = "my" | "created" | "team" | "today" | "overdue" | "review";
 
@@ -468,7 +472,14 @@ export class MarketingService {
     if (parsed.videoBrief?.kind === "SHOOT" && Date.parse(parsed.videoBrief.scheduledAt) <= Date.now()) {
       throw new ApplicationError("INVALID_INPUT", "Syomka vaqti kelajakda bo‘lishi kerak.");
     }
-    const task = parsed.videoBrief
+    const task = parsed.taskTemplate
+      ? await this.repository.createTaskFromTemplate({
+        creatorId: actor.id, assigneeId: assignee.id, title: parsed.title,
+        description: parsed.description, priority: parsed.priority, deadline: parsed.deadline,
+        templateId: parsed.taskTemplate.templateId, eventOn: parsed.taskTemplate.eventOn,
+        deadlineOverride: parsed.taskTemplate.deadlineOverride,
+      })
+      : parsed.videoBrief
       ? await this.repository.createTaskWithVideoBrief({
         creatorId: actor.id, assigneeId: assignee.id, title: parsed.title,
         description: parsed.description, priority: parsed.priority, deadline: parsed.deadline,
@@ -801,7 +812,7 @@ export class MarketingService {
 
   async getTaskDetails(actor: User, taskId: string) {
     const task = await this.requireVisibleTask(actor, taskId);
-    const [events, comments, requests, postingChecklist, recurringDefinition, personalPlan, checkpoints, workflowPlan, videoBrief] = await Promise.all([
+    const [events, comments, requests, postingChecklist, recurringDefinition, personalPlan, checkpoints, workflowPlan, videoBrief, taskTemplate] = await Promise.all([
       this.repository.listTaskEvents(taskId),
       this.repository.listTaskComments(taskId),
       this.repository.listDeadlineChangeRequests({ taskId }),
@@ -811,6 +822,7 @@ export class MarketingService {
       this.repository.listTaskCheckpoints(taskId),
       task.workflowRunId ? this.repository.getWorkflowPlan(task.workflowRunId) : Promise.resolve(null),
       this.repository.getTaskVideoBrief(taskId),
+      this.repository.getTaskTemplateInstance(taskId),
     ]);
     return {
       task,
@@ -823,6 +835,7 @@ export class MarketingService {
       checkpoints,
       workflowPlan,
       videoBrief,
+      taskTemplate,
     };
   }
 
@@ -900,6 +913,17 @@ export class MarketingService {
       throw new ApplicationError("FORBIDDEN", "Checkpointni faqat mas’ul yoki yaratuvchi o‘zgartira oladi.");
     }
     return this.repository.toggleTaskCheckpoint({ id, actorId: actor.id });
+  }
+
+  async setCheckpointDue(actor: User, id: string, input: unknown) {
+    const { dueAt } = z.object({ dueAt: z.string().datetime({ offset: true }).nullable() }).strict().parse(input);
+    const checkpoint = await this.repository.getTaskCheckpoint(id);
+    if (!checkpoint) throw new ApplicationError("NOT_FOUND", "Checkpoint topilmadi.");
+    const task = await this.requireVisibleTask(actor, checkpoint.taskId);
+    if (actor.role !== "HEAD_OF_MARKETING" && task.creatorId !== actor.id && task.assigneeId !== actor.id) {
+      throw new ApplicationError("FORBIDDEN", "Checkpointni faqat mas’ul yoki yaratuvchi o‘zgartira oladi.");
+    }
+    return this.repository.setTaskCheckpointDue({ id, actorId: actor.id, dueAt });
   }
 
   async removeCheckpoint(actor: User, id: string) {
@@ -1137,6 +1161,39 @@ export class MarketingService {
   listWorkflowTemplates(actor: User) {
     if (!actor.isActive) throw new ApplicationError("UNAUTHENTICATED", "Aktiv jamoa a’zosi bo‘lishingiz kerak.");
     return this.repository.listWorkflowTemplates();
+  }
+
+  listTaskTemplates(actor: User) {
+    if (!actor.isActive) throw new ApplicationError("UNAUTHENTICATED", "Aktiv jamoa a’zosi bo‘lishingiz kerak.");
+    return this.repository.listTaskTemplates();
+  }
+
+  async saveTaskTemplate(actor: User, input: unknown) {
+    if (!actor.isActive || !isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Shablonni faqat Marketing rahbari sozlay oladi.");
+    }
+    const parsed = SaveTaskTemplateSchema.parse(input);
+    return { id: await this.repository.saveTaskTemplateVersion({ actorId: actor.id, ...parsed }) };
+  }
+
+  async archiveTaskTemplate(actor: User, id: string) {
+    if (!actor.isActive || !isHead(actorFromUser(actor))) {
+      throw new ApplicationError("FORBIDDEN", "Shablonni faqat Marketing rahbari arxivlay oladi.");
+    }
+    if (!await this.repository.archiveTaskTemplate({ actorId: actor.id, templateId: z.string().uuid().parse(id) })) {
+      throw new ApplicationError("NOT_FOUND", "Faol shablon topilmadi.");
+    }
+    return { ok: true };
+  }
+
+  async rebaseTaskTemplateEvent(actor: User, taskId: string, input: unknown) {
+    const { eventOn } = z.object({ eventOn: z.iso.date() }).strict().parse(input);
+    const task = await this.requireVisibleTask(actor, taskId);
+    if (actor.role !== "HEAD_OF_MARKETING" && task.creatorId !== actor.id) {
+      throw new ApplicationError("FORBIDDEN", "Tadbir sanasini faqat yaratuvchi yoki rahbar o‘zgartiradi.");
+    }
+    await this.repository.rebaseTaskTemplateEvent({ taskId, actorId: actor.id, eventOn });
+    return this.getTaskDetails(actor, taskId);
   }
 
   async archiveWorkflowTemplate(actor: User, id: string) {

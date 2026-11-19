@@ -1,4 +1,5 @@
 import type { TeamRole } from "@/domain/permissions";
+import type { TaskTemplate } from "@/domain/task-template";
 import type { TaskPriority, TaskStatus } from "@/domain/task";
 import type { ReminderType } from "@/domain/reminders";
 import type {
@@ -122,6 +123,13 @@ export interface MarketingRepository {
   reactivateUser(input: { userId: string; actorId: string }): Promise<User>;
 
   createTask(input: CreateTaskRecord): Promise<Task>;
+  createTaskFromTemplate(input: CreateTaskRecord & { templateId: string; eventOn: string; deadlineOverride: boolean }): Promise<Task>;
+  listTaskTemplates(): Promise<TaskTemplate[]>;
+  saveTaskTemplateVersion(input: { actorId: string; sourceTemplateId: string | null; name: string;
+    deadlineOffsetDays: number; deadlineLocalTime: string; checkpoints: TaskTemplate["checkpoints"] }): Promise<string>;
+  archiveTaskTemplate(input: { actorId: string; templateId: string }): Promise<boolean>;
+  getTaskTemplateInstance(taskId: string): Promise<{ eventOn: string; templateName: string; deadlineIsAuto: boolean } | null>;
+  rebaseTaskTemplateEvent(input: { taskId: string; actorId: string; eventOn: string }): Promise<void>;
   createTaskWithVideoBrief(input: CreateTaskRecord & { videoBrief: {
     kind: VideoKind; brief: Record<string, string | number | null>;
   } }): Promise<Task>;
@@ -165,6 +173,7 @@ export interface MarketingRepository {
   getTaskCheckpoint(id: string): Promise<TaskCheckpoint | null>;
   addTaskCheckpoint(input: { taskId: string; actorId: string; title: string; dueAt: string | null }): Promise<TaskCheckpoint>;
   toggleTaskCheckpoint(input: { id: string; actorId: string }): Promise<TaskCheckpoint>;
+  setTaskCheckpointDue(input: { id: string; actorId: string; dueAt: string | null }): Promise<TaskCheckpoint>;
   removeTaskCheckpoint(input: { id: string; actorId: string }): Promise<void>;
 
   createDeadlineChangeRequest(input: {

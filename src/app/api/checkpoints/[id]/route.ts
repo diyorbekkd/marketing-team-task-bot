@@ -21,3 +21,11 @@ export async function DELETE(_request: Request, context: { params: Promise<{ id:
     return errorResponse(error);
   }
 }
+
+export async function PATCH(request: Request, context: { params: Promise<{ id: string }> }) {
+  try {
+    const actor = await requireRequestActor();
+    const { id } = await context.params;
+    return Response.json({ checkpoint: await getMarketingService().setCheckpointDue(actor, id, await request.json()) });
+  } catch (error) { return errorResponse(error); }
+}
