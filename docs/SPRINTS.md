@@ -1,5 +1,9 @@
 # Delivery roadmap
 
+## Focus and reliable release — authorized 2026-11-23
+
+The Head accepted the audit recommendations and requested a split of work between Codex and the Head. The active sprint is [the focus and reliable release plan](SPRINT_2026-11-23_FOCUS.md): durable action notifications, web sign-out, daily focus, weekly outcomes, actionable risk prompts, simpler Home, measured speed, and release rehearsal. The Head will configure the Production AI key and test as an ordinary employee. The production operator-bot check is deferred until the Head reports its status; it is not considered verified. Production changes remain gated on backup/restore and Preview acceptance.
+
 Each sprint is intentionally bounded. Later-sprint work should not leak into an earlier sprint without an explicit scope change.
 
 ## AI work assistant — authorized 2026-11-17

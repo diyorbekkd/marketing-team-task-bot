@@ -1689,6 +1689,10 @@
 .ma-matrix-cell { display: grid; align-content: start; gap: 4px; min-height: 82px; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); font: inherit; font-size: .82rem; text-align: left; cursor: pointer; }
 .ma-matrix-cell:last-child { grid-column: 1 / -1; min-height: 58px; }
 .ma-matrix-cell span { color: var(--muted); }
+.ma-planning-matrix-disclosure { border-top: 1px solid var(--line); padding-top: 9px; }
+.ma-planning-matrix-disclosure summary { color: var(--primary); font-weight: 650; cursor: pointer; }
+.ma-planning-matrix-disclosure summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.ma-planning-matrix-disclosure .ma-matrix { margin-top: 8px; }
 .ma-day-summary-card:focus-visible, .ma-matrix-cell:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .ma-planning-page { display: grid; gap: 12px; }
 .ma-planning-page h1 { margin: 0; font-size: 1.4rem; }

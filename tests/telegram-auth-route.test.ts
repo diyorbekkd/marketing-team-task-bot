@@ -7,6 +7,15 @@ afterEach(() => {
 });
 
 describe("Telegram Mini App authentication route", () => {
+  it("clears a web session cookie when signing out", async () => {
+    const { DELETE } = await import("../src/app/api/auth/telegram/route");
+    const response = await DELETE();
+
+    expect(response.status).toBe(200);
+    expect(response.cookies.get("marketing_session")?.value).toBe("");
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+
   it("returns a sanitized unauthorized response for forged init data", async () => {
     vi.stubEnv("TELEGRAM_BOT_TOKEN", testBotToken);
     vi.stubEnv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret");

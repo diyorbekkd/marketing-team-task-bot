@@ -1078,6 +1078,7 @@ export default function MiniApp() {
       {showProfile && currentUser && (
         <ProfilePanel
           user={currentUser}
+          canSignOut={!window.Telegram?.WebApp?.initData}
           themePreference={themePreference}
           onThemePreference={(choice) => {
             window.localStorage.setItem("marketing-theme", choice);
@@ -1211,10 +1212,10 @@ function HomeView({
 
   const counts = countsFor(tasks);
   const firstName = displayName.split(" ")[0] || displayName;
-  const todayTasks = tasks.filter((t) => !isTerminal(t.status) && isToday(t.deadline));
-  // "Upcoming" excludes what Today already showed, so the two sections stay
-  // complementary instead of repeating the same one or two tasks.
+  // Keep the short future list distinct from today's checkpoint/deadline view.
   const upcoming = priorityTasks(tasks.filter((t) => !isToday(t.deadline)));
+  const myDay = <MyDayPanel tasks={tasks} userId={currentUserId} refreshKey={planningRefreshKey}
+    view={null} onOpen={setPlanningView} onBack={() => setPlanningView(null)} onSelectTask={onSelectTask} />;
 
   return (
     <div className="ma-home">
@@ -1222,6 +1223,8 @@ function HomeView({
         <h1>{tashkentGreeting()}, {firstName}</h1>
         <p className="ma-muted">{isHead ? "Jamoaning bugungi holati." : "Sizning bugungi vazifalaringiz."}</p>
       </div>
+
+      {!isHead && myDay}
 
       <div className="ma-stat-grid">
         {STAT_TILES.map((tile) => {
@@ -1240,8 +1243,7 @@ function HomeView({
         })}
       </div>
 
-      <MyDayPanel tasks={tasks} userId={currentUserId} refreshKey={planningRefreshKey}
-        view={null} onOpen={setPlanningView} onBack={() => setPlanningView(null)} onSelectTask={onSelectTask} />
+      {isHead && myDay}
 
       {isHead && <section className="ma-section ma-template-entry">
         <div><h3>Ish jarayoni shablonlari</h3><p className="ma-muted">Tayyor bosqichlarni yarating, tahrirlang yoki arxivlang.</p></div>
@@ -1257,15 +1259,6 @@ function HomeView({
           <WorkloadList tasks={tasks} users={users} onSelectMember={onSelectMember} limit={4} />
         </section>
       )}
-
-      <section className="ma-section">
-        <h3>Bugun</h3>
-        {todayTasks.length === 0 ? (
-          <div className="ma-empty">Bugun vazifa yo‘q.</div>
-        ) : (
-          <TaskList tasks={todayTasks} users={users} onSelect={onSelectTask} />
-        )}
-      </section>
 
       <section className="ma-section">
         <h3>Yaqin vazifalar</h3>
@@ -3583,11 +3576,13 @@ function PendingUsersPanel({
 
 function ProfilePanel({
   user,
+  canSignOut,
   themePreference,
   onThemePreference,
   onClose,
 }: {
   user: User;
+  canSignOut: boolean;
   themePreference: ThemePreference;
   onThemePreference: (choice: ThemePreference) => void;
   onClose: () => void;
@@ -3595,6 +3590,21 @@ function ProfilePanel({
   const [preferences, setPreferences] = useState<NotificationPreferences | null>(null);
   const [preferencesError, setPreferencesError] = useState<string | null>(null);
   const [savingPreference, setSavingPreference] = useState<keyof NotificationPreferences | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+
+  const signOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    setSignOutError(null);
+    const { error } = await apiFetch<{ ok: true }>("/api/auth/telegram", { method: "DELETE" });
+    if (error) {
+      setSignOutError(friendlyError(error));
+      setSigningOut(false);
+      return;
+    }
+    window.location.reload();
+  };
 
   useEffect(() => {
     void (async () => {
@@ -3675,6 +3685,14 @@ function ProfilePanel({
             ))}
             {preferencesError && <div className="ma-error-inline" role="alert">{preferencesError}</div>}
           </section>
+          {canSignOut && <section className="ma-section" aria-label="Web sessiya">
+            <h3>Web sessiya</h3>
+            <p className="ma-muted">Umumiy kompyuterdan ketishdan oldin hisobdan chiqing.</p>
+            <button type="button" className="ma-btn secondary" disabled={signingOut} onClick={signOut}>
+              {signingOut ? "Chiqilmoqda…" : "Hisobdan chiqish"}
+            </button>
+            {signOutError && <div className="ma-error-inline" role="alert">{signOutError}</div>}
+          </section>}
         </div>
       </div>
     </div>

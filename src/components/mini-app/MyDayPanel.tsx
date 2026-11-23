@@ -83,12 +83,15 @@ export function MyDayPanel({ tasks, userId, refreshKey, view, onOpen, onBack, on
         `${item.task.title}: ${item.checkpoints[0] ? `${item.checkpoints[0].title} · ${checkpointTime.format(new Date(item.checkpoints[0].dueAt!))}` : item.shootToday && item.task.shootAt ? `syomka · ${checkpointTime.format(new Date(item.task.shootAt))}` : "deadline bugun"}`,
       ).join(" · ") : "Vazifada bugungi checkpoint belgilashingiz mumkin"}</small>
     </button>
-    <p className="ma-muted ma-matrix-caption">Quyidagi kartalar bugungi ishlarni muhimlik va shoshilinchlik bo‘yicha ajratadi.</p>
-    <div className="ma-matrix" aria-label="Bugungi vazifalar matritsasi">
-      {GROUPS.map((group) => <button className="ma-matrix-cell" key={group.key} onClick={() => onOpen(group.key)}>
-        <strong>{group.label}</strong><span>{grouped[group.key].length} ta</span>
-      </button>)}
-    </div>
+    <details className="ma-planning-matrix-disclosure">
+      <summary>Muhimlik matritsasi</summary>
+      <p className="ma-muted ma-matrix-caption">Bugungi ishlar muhimlik va shoshilinchlik bo‘yicha.</p>
+      <div className="ma-matrix" aria-label="Bugungi vazifalar matritsasi">
+        {GROUPS.map((group) => <button className="ma-matrix-cell" key={group.key} onClick={() => onOpen(group.key)}>
+          <strong>{group.label}</strong><span>{grouped[group.key].length} ta</span>
+        </button>)}
+      </div>
+    </details>
     </>}
   </section>;
 }
