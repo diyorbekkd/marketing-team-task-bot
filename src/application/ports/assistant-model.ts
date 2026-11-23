@@ -1,4 +1,4 @@
-import type { Task, User } from "@/domain/models";
+import type { Task, TaskCheckpoint, User } from "@/domain/models";
 import type { AssistantTurn } from "./assistant-repository";
 import type { AssistantAction } from "../assistant-action";
 
@@ -9,6 +9,7 @@ export interface AssistantModel {
     question: string;
     history: AssistantTurn[];
     tasks: Task[];
+    checkpoints: TaskCheckpoint[];
     users: User[];
   }): Promise<{ answer: string; action: AssistantAction | null;
     inputTokens: number | null; outputTokens: number | null }>;

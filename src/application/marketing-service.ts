@@ -905,6 +905,22 @@ export class MarketingService {
     return this.repository.toggleTaskCheckpoint({ id, actorId: actor.id });
   }
 
+  async listCheckpointsForTask(actor: User, taskId: string) {
+    await this.requireVisibleTask(actor, taskId);
+    return this.repository.listTaskCheckpoints(taskId);
+  }
+
+  async completeCheckpoint(actor: User, id: string, expectedTaskId: string) {
+    const checkpoint = await this.repository.getTaskCheckpoint(id);
+    if (!checkpoint) throw new ApplicationError("NOT_FOUND", "Checkpoint topilmadi.");
+    if (checkpoint.taskId !== expectedTaskId) throw new ApplicationError("CONFLICT", "Checkpoint boshqa vazifaga tegishli.");
+    const task = await this.requireVisibleTask(actor, checkpoint.taskId);
+    if (actor.role !== "HEAD_OF_MARKETING" && task.creatorId !== actor.id && task.assigneeId !== actor.id) {
+      throw new ApplicationError("FORBIDDEN", "Checkpointni faqat mas’ul yoki yaratuvchi o‘zgartira oladi.");
+    }
+    return this.repository.completeTaskCheckpoint({ id, actorId: actor.id });
+  }
+
   async setCheckpointDue(actor: User, id: string, input: unknown) {
     const { dueAt } = z.object({ dueAt: z.string().datetime({ offset: true }).nullable() }).strict().parse(input);
     const checkpoint = await this.repository.getTaskCheckpoint(id);

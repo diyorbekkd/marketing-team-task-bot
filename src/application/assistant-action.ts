@@ -13,6 +13,7 @@ export const AssistantActionSchema = z.union([
     requestedDeadline: DateTime, reason: z.string().trim().min(1).max(5000) }).strict(),
   z.object({ kind: z.enum(["ADD_CHECKPOINT"]), taskId: z.uuid(),
     title: z.string().trim().min(1).max(200), dueAt: DateTime.nullable() }).strict(),
+  z.object({ kind: z.enum(["COMPLETE_CHECKPOINT"]), taskId: z.uuid(), checkpointId: z.uuid() }).strict(),
 ]);
 export type AssistantAction = z.infer<typeof AssistantActionSchema>;
 

@@ -3,8 +3,7 @@ import { ApplicationError } from "./errors";
 import type { MarketingService } from "./marketing-service";
 import type { AssistantModel } from "./ports/assistant-model";
 import type { AssistantRepository } from "./ports/assistant-repository";
-import type { User } from "@/domain/models";
-import type { Task } from "@/domain/models";
+import type { Task, TaskCheckpoint, User } from "@/domain/models";
 import type { AssistantAction, AssistantProposal } from "./assistant-action";
 import { canTransition } from "@/domain/workflow";
 
@@ -69,12 +68,27 @@ export class AssistantService {
       ]);
       const tasks = [...new Map([...page.tasks, ...recentPage.tasks]
         .map((task) => [task.id, task])).values()];
+      const priorTurns = history.filter((item) => item.id !== claimed.turn.id);
+      const mentionedTasks = tasks.filter((task) => parsed.text.toLocaleLowerCase()
+        .includes(task.title.trim().toLocaleLowerCase()));
+      const longestMentionLength = Math.max(0, ...mentionedTasks.map((task) => task.title.trim().length));
+      const exactMentions = mentionedTasks.filter((task) => task.title.trim().length === longestMentionLength);
+      const lastAdded = priorTurns.find((item) => item.proposalStatus === "DONE" &&
+        item.proposal?.action.kind === "ADD_CHECKPOINT")?.proposal?.action;
+      const checkpointTask = exactMentions.length === 1 ? exactMentions[0]
+        : mentionedTasks.length === 0 && /check.?point|chek.?point|band|bajar|belgila|done|complete/i.test(parsed.text) &&
+          lastAdded?.kind === "ADD_CHECKPOINT"
+          ? tasks.find((task) => task.id === lastAdded.taskId) : undefined;
+      const checkpoints = checkpointTask
+        ? await this.marketing.listCheckpointsForTask(actor, checkpointTask.id) : [];
       const response = await this.model.generate({ actor, question: parsed.text,
-        history: history.filter((item) => item.id !== claimed.turn.id), tasks, users });
-      const proposal = response.action ? this.prepareProposal(actor, response.action, tasks, users, parsed.text) : null;
+        history: priorTurns, tasks, checkpoints, users });
+      const proposal = response.action ? this.prepareProposal(actor, response.action, tasks, checkpoints, users, parsed.text) : null;
       const answer = (response.action && !proposal
         ? response.action.kind === "ADD_CHECKPOINT"
           ? "Bu checkpointni hozir qo‘sha olmayman. Vazifa va checkpoint nomini aniq yozing; vazifa mas’uli, yaratuvchisi yoki rahbarigina band qo‘sha oladi."
+          : response.action.kind === "COMPLETE_CHECKPOINT"
+            ? "Bu checkpointni hozir belgilay olmayman. Vazifa va ochiq checkpoint nomini aniq yozing."
           : "Bu amalni hozir tasdiqlash uchun vazifa yoki mas’ulni aniq topolmadim yoxud ruxsat yetarli emas. Kerakli tafsilotlarni aniqlashtiring."
         : response.answer).trim().slice(0, 9000);
       if (!answer) throw new Error("AI returned an empty answer");
@@ -94,7 +108,7 @@ export class AssistantService {
     }
   }
 
-  private prepareProposal(actor: User, action: AssistantAction, tasks: Task[], users: User[], question: string): AssistantProposal | null {
+  private prepareProposal(actor: User, action: AssistantAction, tasks: Task[], checkpoints: TaskCheckpoint[], users: User[], question: string): AssistantProposal | null {
     if (action.kind === "CREATE_TASK") {
       const assignee = users.find((user) => user.id === action.assigneeId && user.isActive);
       if (!assignee || Date.parse(action.deadline) <= Date.now()) return null;
@@ -112,6 +126,16 @@ export class AssistantService {
       if ((actor.role !== "HEAD_OF_MARKETING" && task.creatorId !== actor.id && task.assigneeId !== actor.id) ||
         task.status === "DONE" || task.status === "CANCELLED") return null;
       return { action, summary: `Checkpoint qo‘shish: ${task.title}\nBand: ${action.title}${action.dueAt ? `\nVaqt: ${localDeadline(action.dueAt)}` : ""}` };
+    }
+    if (action.kind === "COMPLETE_CHECKPOINT") {
+      const checkpoint = checkpoints.find((item) => item.id === action.checkpointId && item.taskId === task.id);
+      if (!checkpoint || checkpoint.completedAt ||
+        (actor.role !== "HEAD_OF_MARKETING" && task.creatorId !== actor.id && task.assigneeId !== actor.id) ||
+        task.status === "DONE" || task.status === "CANCELLED") return null;
+      if (checkpoints.filter((item) => !item.completedAt &&
+        item.title.trim().toLocaleLowerCase() === checkpoint.title.trim().toLocaleLowerCase()).length > 1 &&
+        !question.includes(checkpoint.id)) return null;
+      return { action, summary: `Checkpointni bajarildi deb belgilash: ${task.title}\nBand: ${checkpoint.title}` };
     }
     if (action.kind === "REQUEST_DEADLINE") {
       if (task.assigneeId !== actor.id || Date.parse(action.requestedDeadline) <= Date.now()) return null;
@@ -152,6 +176,9 @@ export class AssistantService {
           title: action.title, dueAt: action.dueAt,
         });
         answer = `✅ Checkpoint qo‘shildi: ${checkpoint.title}.`;
+      } else if (action.kind === "COMPLETE_CHECKPOINT") {
+        const checkpoint = await this.marketing.completeCheckpoint(actor, action.checkpointId, action.taskId);
+        answer = `✅ Checkpoint bajarildi: ${checkpoint.title}.`;
       } else {
         const request = await this.marketing.requestDeadlineChange(actor, action.taskId, {
           requestedDeadline: action.requestedDeadline, reason: action.reason,

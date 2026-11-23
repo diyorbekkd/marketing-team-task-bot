@@ -162,6 +162,7 @@ function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepo
     getTaskCheckpoint: vi.fn(async () => null),
     addTaskCheckpoint: vi.fn(),
     toggleTaskCheckpoint: vi.fn(),
+    completeTaskCheckpoint: vi.fn(),
     removeTaskCheckpoint: vi.fn(),
     createDeadlineChangeRequest: vi.fn(async () => deadlineRequest()),
     getDeadlineChangeRequest: vi.fn(async () => deadlineRequest()),
@@ -349,6 +350,23 @@ describe("MarketingService MVP permissions", () => {
     await expect(service.toggleCheckpoint(unrelated, "90000000-0000-4000-8000-000000000001"))
       .rejects.toMatchObject({ code: "FORBIDDEN" });
     expect(repo.toggleTaskCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("completes only a checkpoint on the proposed task and rechecks actor permission", async () => {
+    const checkpoint = { id: "90000000-0000-4000-8000-000000000001", taskId: ids.task,
+      title: "Draft", dueAt: null, position: 1, createdBy: creator.id,
+      completedBy: null, completedAt: null, createdAt: "2026-11-15T08:00:00Z" };
+    const repo = repository({ getTaskCheckpoint: vi.fn(async () => checkpoint),
+      completeTaskCheckpoint: vi.fn(async () => ({ ...checkpoint, completedBy: creator.id,
+        completedAt: "2026-11-23T12:00:00Z" })) });
+    const service = new MarketingService(repo, notifier());
+    await expect(service.completeCheckpoint(creator, checkpoint.id, "90000000-0000-4000-8000-000000000002"))
+      .rejects.toMatchObject({ code: "CONFLICT" });
+    await expect(service.completeCheckpoint(unrelated, checkpoint.id, ids.task))
+      .rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(repo.completeTaskCheckpoint).not.toHaveBeenCalled();
+    await service.completeCheckpoint(creator, checkpoint.id, ids.task);
+    expect(repo.completeTaskCheckpoint).toHaveBeenCalledWith({ id: checkpoint.id, actorId: creator.id });
   });
 
   it("preserves cancellation as a terminal state unless Head reopens it", async () => {

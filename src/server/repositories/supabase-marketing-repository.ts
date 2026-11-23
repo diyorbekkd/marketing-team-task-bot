@@ -968,6 +968,14 @@ export class SupabaseMarketingRepository implements MarketingRepository {
     return mapTaskCheckpoint(rpcRecord(data));
   }
 
+  async completeTaskCheckpoint(input: Parameters<MarketingRepository["completeTaskCheckpoint"]>[0]): Promise<TaskCheckpoint> {
+    const { data, error } = await this.client.rpc("complete_task_checkpoint_with_event", {
+      p_checkpoint_id: input.id, p_actor_id: input.actorId,
+    });
+    if (error || !data) throwDataError(error, "Checkpoint bajarilmadi.");
+    return mapTaskCheckpoint(rpcRecord(data));
+  }
+
   async setTaskCheckpointDue(input: Parameters<MarketingRepository["setTaskCheckpointDue"]>[0]): Promise<TaskCheckpoint> {
     const { data, error } = await this.client.rpc("set_task_checkpoint_due", {
       p_checkpoint_id: input.id, p_actor_id: input.actorId, p_due_at: input.dueAt,

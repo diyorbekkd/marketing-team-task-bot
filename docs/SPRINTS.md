@@ -15,6 +15,7 @@ Each sprint is intentionally bounded. Later-sprint work should not leak into an 
 - Do not add video handoff between shooting and editing: one operator performs both. Keep group material management separate from the task action flow.
 - Verify staging database idempotency and permissions, local quality gate, and Preview before production release.
 - 2026-11-23 feedback extends the confirmed-action flow to adding a named checkpoint to one unambiguous visible task. An optional time is accepted; permission is checked again on confirmation.
+- 2026-11-23 feedback further extends it to marking one existing checkpoint complete after confirmation. Replays must not reopen it or duplicate the audit event.
 
 ## Sprint 0 — Foundation
 

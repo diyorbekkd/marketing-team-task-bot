@@ -1,6 +1,6 @@
 # AI assistant setup and operation
 
-The Head authorized a friendly, task-aware assistant for the private Telegram bot and Mini App. It offers plans and SOP answers. Task creation, status changes, deadline requests, and checkpoint creation are proposed first; a user must confirm each exact action once before the shared permission-checking service executes it. Both interfaces call the same server service.
+The Head authorized a friendly, task-aware assistant for the private Telegram bot and Mini App. It offers plans and SOP answers. Task creation, status changes, deadline requests, checkpoint creation, and checkpoint completion are proposed first; a user must confirm each exact action once before the shared permission-checking service executes it. Both interfaces call the same server service. Completion is idempotent: a retry cannot reopen the checkpoint or add a second audit event. Mention the task name when asking to complete a checkpoint; a follow-up after confirming checkpoint creation can also use that recent task.
 
 ## OpenAI API credit setup
 

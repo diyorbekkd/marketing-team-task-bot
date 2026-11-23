@@ -563,6 +563,10 @@ export interface Database {
         Args: { p_checkpoint_id: string; p_actor_id: string };
         Returns: TaskCheckpointRow;
       };
+      complete_task_checkpoint_with_event: {
+        Args: { p_checkpoint_id: string; p_actor_id: string };
+        Returns: TaskCheckpointRow;
+      };
       remove_task_checkpoint_with_event: {
         Args: { p_checkpoint_id: string; p_actor_id: string };
         Returns: undefined;

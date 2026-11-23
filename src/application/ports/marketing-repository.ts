@@ -186,6 +186,7 @@ export interface MarketingRepository {
   getTaskCheckpoint(id: string): Promise<TaskCheckpoint | null>;
   addTaskCheckpoint(input: { taskId: string; actorId: string; title: string; dueAt: string | null }): Promise<TaskCheckpoint>;
   toggleTaskCheckpoint(input: { id: string; actorId: string }): Promise<TaskCheckpoint>;
+  completeTaskCheckpoint(input: { id: string; actorId: string }): Promise<TaskCheckpoint>;
   setTaskCheckpointDue(input: { id: string; actorId: string; dueAt: string | null }): Promise<TaskCheckpoint>;
   removeTaskCheckpoint(input: { id: string; actorId: string }): Promise<void>;
 

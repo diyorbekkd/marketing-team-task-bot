@@ -30,7 +30,7 @@ describe("OpenAI API availability", () => {
     const actor = { id: "10000000-0000-4000-8000-000000000001", displayName: "Editor",
       role: "OPERATOR_VIDEO_EDITOR", isActive: true } as User;
     const reply = await new OpenAIAssistantModel().generate({
-      actor, question: "Bugun nima qilay?", tasks: [], history: [], users: [actor],
+      actor, question: "Bugun nima qilay?", tasks: [], checkpoints: [], history: [], users: [actor],
     });
     expect(reply.answer).toBe("Avval postni tayyorlang.");
     expect(generateText).toHaveBeenCalledWith(expect.objectContaining({
@@ -46,7 +46,7 @@ describe("OpenAI API availability", () => {
       usage: { inputTokens: 25, outputTokens: 8 } } as Awaited<ReturnType<typeof generateText>>);
     const actor = { id: "10000000-0000-4000-8000-000000000001", displayName: "Editor",
       role: "OPERATOR_VIDEO_EDITOR", isActive: true } as User;
-    await new OpenAIAssistantModel().generate({ actor, question: "Keyingi qadam?", tasks: [], users: [actor],
+    await new OpenAIAssistantModel().generate({ actor, question: "Keyingi qadam?", tasks: [], checkpoints: [], users: [actor],
       history: [{ userText: "Oldingi savol", answerText: null }] as Parameters<OpenAIAssistantModel["generate"]>[0]["history"],
     });
     const args = vi.mocked(generateText).mock.calls.at(-1)?.[0];
@@ -60,13 +60,13 @@ describe("OpenAI API availability", () => {
       usage: { inputTokens: 25, outputTokens: 8 } } as Awaited<ReturnType<typeof generateText>>);
     const actor = { id: "10000000-0000-4000-8000-000000000001", displayName: "Editor",
       role: "OPERATOR_VIDEO_EDITOR", isActive: true } as User;
-    await new OpenAIAssistantModel().generate({ actor, question: "Checkpoint qo‘sh", tasks: [], history: [], users: [actor] });
+    await new OpenAIAssistantModel().generate({ actor, question: "Checkpoint qo‘sh", tasks: [], checkpoints: [], history: [], users: [actor] });
     const outputOptions = vi.mocked(Output.object).mock.calls.at(-1)?.[0] as unknown as { schema: z.ZodType };
     const schema = outputOptions.schema;
     const json = z.toJSONSchema(schema, { target: "draft-07" });
     const encoded = JSON.stringify(json);
     expect(encoded).not.toContain('"oneOf"');
     expect(encoded).not.toContain('"const"');
-    expect((json.properties?.action as { anyOf?: unknown[] })?.anyOf).toHaveLength(5);
+    expect((json.properties?.action as { anyOf?: unknown[] })?.anyOf).toHaveLength(6);
   });
 });
