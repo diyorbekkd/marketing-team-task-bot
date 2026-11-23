@@ -2560,7 +2560,8 @@ function TaskDetailPanel({
               plan={detail?.personalPlan ?? null}
               checkpoints={detail?.checkpoints ?? []}
               onPlan={(plan) => setDetail((previous) => previous ? { ...previous, personalPlan: plan } : previous)}
-              onCheckpoints={(checkpoints) => setDetail((previous) => previous ? { ...previous, checkpoints } : previous)}
+              onCheckpoints={(update) => setDetail((previous) => previous
+                ? { ...previous, checkpoints: update(previous.checkpoints ?? []) } : previous)}
               onRefreshPlan={onPlanSaved}
               onRefreshDetail={() => { void load(true); }}
             />

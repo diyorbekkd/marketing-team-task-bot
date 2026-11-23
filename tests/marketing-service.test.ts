@@ -352,6 +352,22 @@ describe("MarketingService MVP permissions", () => {
     expect(repo.toggleTaskCheckpoint).not.toHaveBeenCalled();
   });
 
+  it("uses the atomic permission-checking RPC for a fast checkpoint tap", async () => {
+    const checkpointId = "90000000-0000-4000-8000-000000000001";
+    const repo = repository({ toggleTaskCheckpoint: vi.fn(async () => ({
+      id: checkpointId, taskId: ids.task, title: "Draft", dueAt: null, position: 1,
+      createdBy: creator.id, completedBy: assignee.id,
+      completedAt: "2026-11-23T12:00:00Z", createdAt: "2026-11-15T08:00:00Z",
+    })) });
+    const service = new MarketingService(repo, notifier());
+    await service.toggleCheckpointFast(assignee, checkpointId);
+    expect(repo.toggleTaskCheckpoint).toHaveBeenCalledWith({ id: checkpointId, actorId: assignee.id });
+    expect(repo.getTaskCheckpoint).not.toHaveBeenCalled();
+    expect(repo.getTask).not.toHaveBeenCalled();
+    await expect(service.toggleCheckpointFast(user(ids.assignee, "SMM_MANAGER", { isActive: false }), checkpointId))
+      .rejects.toMatchObject({ code: "UNAUTHENTICATED" });
+  });
+
   it("completes only a checkpoint on the proposed task and rechecks actor permission", async () => {
     const checkpoint = { id: "90000000-0000-4000-8000-000000000001", taskId: ids.task,
       title: "Draft", dueAt: null, position: 1, createdBy: creator.id,

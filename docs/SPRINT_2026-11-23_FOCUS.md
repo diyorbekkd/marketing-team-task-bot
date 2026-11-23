@@ -37,3 +37,4 @@ Quick Add stays title, owner, and deadline. Personal focus choices do not change
 
 - Started: the web profile now offers sign-out using the existing cookie-clearing endpoint. Employee Home leads with My Day; the duplicate Today list is removed and the optional matrix is collapsed. Head Home keeps team status tiles first. Production is unchanged.
 - Next: durable action-notification recovery, followed by the persisted daily focus choices. The remaining rows above are planned, not implemented or verified yet.
+- Preview follow-up: checkpoint checkboxes now update independently and immediately. One slow toggle no longer disables the others; a failed request restores only its own item. The tap uses the existing atomic permission-checking database function in one call and avoids reloading the whole task detail after each toggle.

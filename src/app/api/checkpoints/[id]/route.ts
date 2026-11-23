@@ -6,7 +6,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   try {
     const actor = await requireRequestActor();
     const { id } = await context.params;
-    return Response.json({ checkpoint: await getMarketingService().toggleCheckpoint(actor, id) });
+    return Response.json({ checkpoint: await getMarketingService().toggleCheckpointFast(actor, id) });
   } catch (error) {
     return errorResponse(error);
   }

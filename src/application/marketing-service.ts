@@ -905,6 +905,13 @@ export class MarketingService {
     return this.repository.toggleTaskCheckpoint({ id, actorId: actor.id });
   }
 
+  async toggleCheckpointFast(actor: User, id: string) {
+    if (!actor.isActive) throw new ApplicationError("UNAUTHENTICATED", "Aktiv jamoa a’zosi bo‘lishingiz kerak.");
+    // The atomic RPC rechecks active membership and creator/assignee/Head
+    // permission while locking the checkpoint. One tap needs only this call.
+    return this.repository.toggleTaskCheckpoint({ id: z.string().uuid().parse(id), actorId: actor.id });
+  }
+
   async listCheckpointsForTask(actor: User, taskId: string) {
     await this.requireVisibleTask(actor, taskId);
     return this.repository.listTaskCheckpoints(taskId);
