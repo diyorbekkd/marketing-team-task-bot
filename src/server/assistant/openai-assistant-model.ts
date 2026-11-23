@@ -11,7 +11,7 @@ import { AssistantActionSchema } from "@/application/assistant-action";
 const DEFAULT_MODEL = "gpt-6.1-terra";
 const ResponseSchema = z.object({
   answer: z.string().trim().min(1).max(9000),
-  action: AssistantActionSchema.nullable(),
+  action: z.union([...AssistantActionSchema.options, z.null()]),
 });
 
 async function approvedKnowledge(): Promise<string> {
@@ -80,10 +80,16 @@ export class OpenAIAssistantModel implements AssistantModel {
       // and the provider response body must stay out of runtime logs.
       let cause: unknown = error;
       for (let depth = 0; depth < 3 && cause && typeof cause === "object"; depth++) {
-        const apiError = cause as { name?: string; statusCode?: number; cause?: unknown };
+        const apiError = cause as { name?: string; statusCode?: number; cause?: unknown;
+          data?: { error?: { code?: unknown; param?: unknown; type?: unknown } } };
         if (apiError.statusCode || apiError.name?.includes("APICall")) {
+          const safeDetail = (value: unknown) => typeof value === "string" && /^[a-zA-Z0-9_.-]{1,80}$/.test(value)
+            ? value : undefined;
           console.error(JSON.stringify({ event: "assistant_openai_error", name: apiError.name,
-            statusCode: apiError.statusCode }));
+            statusCode: apiError.statusCode,
+            code: safeDetail(apiError.data?.error?.code),
+            param: safeDetail(apiError.data?.error?.param),
+            type: safeDetail(apiError.data?.error?.type) }));
           break;
         }
         cause = apiError.cause;

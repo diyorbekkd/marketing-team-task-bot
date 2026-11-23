@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { generateText } from "ai";
+import { generateText, Output } from "ai";
+import { z } from "zod";
 import type { User } from "../src/domain/models";
 
 vi.mock("server-only", () => ({}));
@@ -51,5 +52,21 @@ describe("OpenAI API availability", () => {
     const args = vi.mocked(generateText).mock.calls.at(-1)?.[0];
     expect(args?.messages).toHaveLength(1);
     expect(args?.messages?.[0]).toMatchObject({ role: "user" });
+  });
+
+  it("sends an OpenAI-compatible structured output schema for all proposed actions", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    vi.mocked(generateText).mockResolvedValue({ output: { answer: "Tushunarli.", action: null },
+      usage: { inputTokens: 25, outputTokens: 8 } } as Awaited<ReturnType<typeof generateText>>);
+    const actor = { id: "10000000-0000-4000-8000-000000000001", displayName: "Editor",
+      role: "OPERATOR_VIDEO_EDITOR", isActive: true } as User;
+    await new OpenAIAssistantModel().generate({ actor, question: "Checkpoint qo‘sh", tasks: [], history: [], users: [actor] });
+    const outputOptions = vi.mocked(Output.object).mock.calls.at(-1)?.[0] as unknown as { schema: z.ZodType };
+    const schema = outputOptions.schema;
+    const json = z.toJSONSchema(schema, { target: "draft-07" });
+    const encoded = JSON.stringify(json);
+    expect(encoded).not.toContain('"oneOf"');
+    expect(encoded).not.toContain('"const"');
+    expect((json.properties?.action as { anyOf?: unknown[] })?.anyOf).toHaveLength(5);
   });
 });
