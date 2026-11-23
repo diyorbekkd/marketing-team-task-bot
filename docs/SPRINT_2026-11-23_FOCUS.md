@@ -33,6 +33,8 @@ This sprint is built on the current Preview branch. Production remains unchanged
 
 Quick Add stays title, owner, and deadline. Personal focus choices do not change the shared task priority or deadline. AI may suggest a plan, but factual reminders/reports stay deterministic and every AI write still requires explicit confirmation. Do not add task-count leaderboards, automatic priority scores, gamification, or mandatory SMART/video fields. Track focus commitments finished, agreed-deadline on-time rate, aged overdue work, and blocked duration for two weeks before adding more controls.
 
+The [removal audit](REDUCTION_AUDIT_2026-11-23.md) recommends a small outcome pilot instead of a full OKR hierarchy and postpones gamification until the daily focus loop has real usage evidence. Review its ranked UI cuts before adding new controls.
+
 ## Progress
 
 - Started: the web profile now offers sign-out using the existing cookie-clearing endpoint. Employee Home leads with My Day; the duplicate Today list is removed and the optional matrix is collapsed. Head Home keeps team status tiles first. Production is unchanged.
