@@ -1159,7 +1159,8 @@
 }
 
 /* Assistant stays inside the existing keyboard-aware sheet. */
-.ma-assistant-trigger { color: var(--primary); font-size: 1.25rem; }
+.ma-assistant-trigger { display: flex; gap: 2px; color: #fff; font-size: .75rem; font-weight: 800; }
+.ma-assistant-trigger span:first-child { font-size: 1.15rem; }
 .ma-assistant-panel { height: min(760px, calc(var(--ma-keyboard-height, 100dvh) - 12px)); }
 .ma-assistant-messages { flex: 1; min-height: 0; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 16px; }
 .ma-assistant-intro { color: var(--muted); line-height: 1.5; }
@@ -1674,6 +1675,11 @@
 .ma-planning-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
 .ma-planning-add textarea { grid-column: 1 / -1; min-height: 72px; resize: vertical; }
 .ma-checkpoint-add { justify-self: stretch; font-weight: 700; }
+.ma-quick-checkpoints { border-top: 1px solid var(--line); padding-top: 14px; }
+.ma-quick-checkpoint { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ma-quick-checkpoint span { min-width: 0; overflow-wrap: anywhere; }
+.ma-quick-checkpoint-entry { display: grid; gap: 7px; }
+.ma-quick-checkpoint-entry .ma-btn { justify-self: start; }
 .ma-my-day { display: grid; gap: 9px; }
 .ma-day-summary-card { display: grid; gap: 5px; width: 100%; padding: 13px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--card); color: var(--ink); text-align: left; cursor: pointer; }
 .ma-day-summary-card span { color: var(--primary); font-weight: 700; }

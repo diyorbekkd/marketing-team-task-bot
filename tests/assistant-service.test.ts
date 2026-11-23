@@ -35,6 +35,7 @@ function fixture() {
     createTaskQueued: vi.fn(async () => ({ task, assignee: actor, notification: { status: "QUEUED" } })),
     performTaskAction: vi.fn(async () => ({ ...task, status: "IN_PROGRESS" })),
     requestDeadlineChange: vi.fn(async () => ({ id: "40000000-0000-4000-8000-000000000001" })),
+    addCheckpoint: vi.fn(async (_actor: User, _taskId: string, input: { title: string }) => ({ title: input.title })),
   } as unknown as MarketingService;
   return { service: new AssistantService(repository, model, marketing), repository, model, marketing };
 }
@@ -136,6 +137,21 @@ describe("assistant authorization and cost boundary", () => {
     await service.confirm(actor, turn.id);
     expect(marketing.requestDeadlineChange).toHaveBeenCalledWith(actor, task.id,
       { requestedDeadline: "2099-11-21T12:00:00+05:00", reason: "Mijoz javobi kutilmoqda" });
+  });
+
+  it("requires confirmation before adding a checkpoint to a visible task", async () => {
+    const { service, repository, model, marketing } = fixture();
+    const action = { kind: "ADD_CHECKPOINT" as const, taskId: task.id,
+      title: "Ssenariyni tekshirish", dueAt: null };
+    model.generate.mockResolvedValue({ answer: "Checkpoint qo‘shishni taklif qilaman.", action,
+      inputTokens: 30, outputTokens: 15 });
+    const response = await service.respond(actor, { source: "WEB", requestKey: "web_checkpoint", text: "Post tayyorlashga ssenariyni tekshirish checkpointini qo‘sh" });
+    expect(response.proposal?.action).toEqual(action);
+    expect(marketing.addCheckpoint).not.toHaveBeenCalled();
+    repository.claimAction.mockResolvedValueOnce({ fresh: true, proposal: response.proposal! });
+    await service.confirm(actor, turn.id);
+    expect(marketing.addCheckpoint).toHaveBeenCalledWith(actor, task.id,
+      { title: "Ssenariyni tekshirish", dueAt: null });
   });
 
   it("records a refused task action and never reports it as complete", async () => {

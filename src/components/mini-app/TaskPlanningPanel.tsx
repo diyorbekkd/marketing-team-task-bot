@@ -83,16 +83,25 @@ export function TaskPlanningPanel({ taskId, terminal, canEditCheckpoints = true,
   const addCheckpoint = async () => {
     if (!title.trim()) return;
     setPending(true); setError(null);
+    const previous = checkpoints;
+    const optimistic: Checkpoint = {
+      id: crypto.randomUUID(), taskId, title: title.trim(),
+      dueAt: dueDateTime ? `${dueDateTime}:00+05:00` : null,
+      position: checkpoints.length, createdBy: "", completedBy: null,
+      completedAt: null, createdAt: new Date().toISOString(),
+    };
+    onCheckpoints([...checkpoints, optimistic]);
     try {
       const result = await write<{ checkpoint: Checkpoint }>(`/api/tasks/${taskId}/checkpoints`, "POST", {
         title: title.trim(),
         dueAt: dueDateTime ? `${dueDateTime}${dueDateTime.length === 16 ? ":00" : ""}+05:00` : null,
       });
-      onCheckpoints([...checkpoints, result.checkpoint]);
+      onCheckpoints([...previous, result.checkpoint]);
       setTitle(""); setDueDateTime("");
       onRefreshPlan();
       onRefreshDetail();
     } catch (cause) {
+      onCheckpoints(previous);
       setError(cause instanceof Error ? cause.message : "Checkpoint qo‘shilmadi.");
     } finally { setPending(false); }
   };
@@ -187,7 +196,8 @@ export function TaskPlanningPanel({ taskId, terminal, canEditCheckpoints = true,
             event.currentTarget.style.height = `${Math.min(event.currentTarget.scrollHeight, 180)}px`;
           }} />
         <input aria-label="Checkpoint sana va vaqti (ixtiyoriy)" type="datetime-local" value={dueDateTime} onChange={(event) => setDueDateTime(event.target.value)} />
-        <button className="ma-btn primary ma-checkpoint-add" disabled={pending || !title.trim()} onClick={addCheckpoint}>+ Checkpoint qo‘shish</button>
+        <button type="button" className="ma-btn primary ma-checkpoint-add" disabled={pending || !title.trim()}
+          onMouseDown={(event) => event.preventDefault()} onClick={addCheckpoint}>+ Checkpoint qo‘shish</button>
       </div>}
     </div>
     {error && <p className="ma-error" role="alert">{error}</p>}

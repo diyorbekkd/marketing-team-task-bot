@@ -38,4 +38,18 @@ describe("OpenAI API availability", () => {
       providerOptions: { openai: { reasoningEffort: "low", store: false } },
     }));
   });
+
+  it("omits failed history turns rather than sending an empty assistant message", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    vi.mocked(generateText).mockResolvedValue({ output: { answer: "Tushunarli.", action: null },
+      usage: { inputTokens: 25, outputTokens: 8 } } as Awaited<ReturnType<typeof generateText>>);
+    const actor = { id: "10000000-0000-4000-8000-000000000001", displayName: "Editor",
+      role: "OPERATOR_VIDEO_EDITOR", isActive: true } as User;
+    await new OpenAIAssistantModel().generate({ actor, question: "Keyingi qadam?", tasks: [], users: [actor],
+      history: [{ userText: "Oldingi savol", answerText: null }] as Parameters<OpenAIAssistantModel["generate"]>[0]["history"],
+    });
+    const args = vi.mocked(generateText).mock.calls.at(-1)?.[0];
+    expect(args?.messages).toHaveLength(1);
+    expect(args?.messages?.[0]).toMatchObject({ role: "user" });
+  });
 });

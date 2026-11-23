@@ -128,6 +128,10 @@ const VideoBriefInputSchema = z.discriminatedUnion("kind", [
 ]);
 const BrowserCreateTaskInputSchema = CreateTaskInputSchema.extend({
   clientRequestId: z.string().uuid().optional(),
+  manualCheckpoints: z.array(z.object({
+    title: z.string().trim().min(1).max(200),
+    dueAt: z.iso.datetime({ offset: true }).nullable(),
+  }).strict()).max(50).optional(),
   videoBrief: VideoBriefInputSchema.optional(),
   taskTemplate: z.object({
     templateId: z.string().uuid(), eventOn: z.iso.date(), deadlineOverride: z.boolean(),
@@ -477,12 +481,14 @@ export class MarketingService {
       creatorId: actor.id, assigneeId: assignee.id, title: parsed.title,
       description: parsed.description ?? "", priority: parsed.priority, deadline: parsed.deadline,
       videoBrief: parsed.videoBrief ?? null, taskTemplate: parsed.taskTemplate ?? null,
+      manualCheckpoints: parsed.manualCheckpoints ?? [],
     })).digest("hex");
     const requestId = parsed.clientRequestId ?? randomUUID();
     const task = await this.repository.createBrowserTask({
       requestId, requestHash,
       creatorId: actor.id, assigneeId: assignee.id, title: parsed.title,
       description: parsed.description, priority: parsed.priority, deadline: parsed.deadline,
+      manualCheckpoints: parsed.manualCheckpoints ?? [],
       ...(parsed.taskTemplate ? { taskTemplate: parsed.taskTemplate } : {}),
       ...(parsed.videoBrief ? { videoBrief: { kind: parsed.videoBrief.kind, brief: parsed.videoBrief } } : {}),
     });
@@ -880,6 +886,9 @@ export class MarketingService {
   async addCheckpoint(actor: User, taskId: string, input: unknown) {
     const parsed = CheckpointInputSchema.parse(input);
     const task = await this.requireVisibleTask(actor, taskId);
+    if (task.status === "DONE" || task.status === "CANCELLED") {
+      throw new ApplicationError("CONFLICT", "Yopilgan vazifaga checkpoint qo‘shib bo‘lmaydi.");
+    }
     if (actor.role !== "HEAD_OF_MARKETING" && task.creatorId !== actor.id && task.assigneeId !== actor.id) {
       throw new ApplicationError("FORBIDDEN", "Checkpointni faqat mas’ul yoki yaratuvchi o‘zgartira oladi.");
     }

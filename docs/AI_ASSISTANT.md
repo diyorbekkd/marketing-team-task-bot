@@ -1,6 +1,6 @@
 # AI assistant setup and operation
 
-The Head authorized a friendly, task-aware assistant for the private Telegram bot and Mini App. It is read-only: it offers plans and SOP answers, and never creates or approves tasks. Both interfaces call the same server service.
+The Head authorized a friendly, task-aware assistant for the private Telegram bot and Mini App. It offers plans and SOP answers. Task creation, status changes, deadline requests, and checkpoint creation are proposed first; a user must confirm each exact action once before the shared permission-checking service executes it. Both interfaces call the same server service.
 
 ## OpenAI API credit setup
 
@@ -16,7 +16,7 @@ The staging Supabase migration `20261116192837_assistant_turns.sql` is already a
 
 ## Limits and costs
 
-The application allows at most **30 new prompts per active user per Asia/Tashkent day**. Requests are idempotent by browser UUID or Telegram update ID. Each model call times out after 20 seconds and caps output at 700 tokens. The assistant sends at most 20 open tasks and a short personal chat history. At the model's listed price checked 2026-11-17, `gpt-6.1-terra` costs about **$1 per million input tokens** and **$5 per million output tokens**. Five users asking 30 questions each daily at about 2,000 input and 300 output tokens per answer would incur roughly **$16/month** before applicable API credits. Actual cost and credit eligibility depend on the OpenAI account and usage.
+The application allows at most **30 new prompts per active user per Asia/Tashkent day**. Requests are idempotent by browser UUID or Telegram update ID. Each model call times out after 20 seconds and caps output at 900 tokens. The assistant sends at most 40 visible open tasks and a short personal chat history; failed turns with no answer are omitted. At the model's listed price checked 2026-11-17, `gpt-6.1-terra` costs about **$1 per million input tokens** and **$5 per million output tokens**. Five users asking 30 questions each daily at about 2,000 input and 300 output tokens per answer would incur roughly **$16/month** before applicable API credits. Actual cost and credit eligibility depend on the OpenAI account and usage.
 
 ## SOP content
 

@@ -73,7 +73,9 @@ export class AssistantService {
         history: history.filter((item) => item.id !== claimed.turn.id), tasks, users });
       const proposal = response.action ? this.prepareProposal(actor, response.action, tasks, users, parsed.text) : null;
       const answer = (response.action && !proposal
-        ? "Bu amal uchun vazifa yoki mas’ulni aniq topolmadim. Vazifa nomi, mas’ul va aniq muddatni yozing."
+        ? response.action.kind === "ADD_CHECKPOINT"
+          ? "Bu checkpointni hozir qo‘sha olmayman. Vazifa va checkpoint nomini aniq yozing; vazifa mas’uli, yaratuvchisi yoki rahbarigina band qo‘sha oladi."
+          : "Bu amalni hozir tasdiqlash uchun vazifa yoki mas’ulni aniq topolmadim yoxud ruxsat yetarli emas. Kerakli tafsilotlarni aniqlashtiring."
         : response.answer).trim().slice(0, 9000);
       if (!answer) throw new Error("AI returned an empty answer");
       await this.repository.setProposal({ turnId: claimed.turn.id, userId: actor.id, proposal });
@@ -106,6 +108,11 @@ export class AssistantService {
     if (!task) return null;
     if (tasks.filter((item) => item.title.trim().toLocaleLowerCase() === task.title.trim().toLocaleLowerCase()).length > 1 &&
       !question.includes(task.id)) return null;
+    if (action.kind === "ADD_CHECKPOINT") {
+      if ((actor.role !== "HEAD_OF_MARKETING" && task.creatorId !== actor.id && task.assigneeId !== actor.id) ||
+        task.status === "DONE" || task.status === "CANCELLED") return null;
+      return { action, summary: `Checkpoint qo‘shish: ${task.title}\nBand: ${action.title}${action.dueAt ? `\nVaqt: ${localDeadline(action.dueAt)}` : ""}` };
+    }
     if (action.kind === "REQUEST_DEADLINE") {
       if (task.assigneeId !== actor.id || Date.parse(action.requestedDeadline) <= Date.now()) return null;
       return { action, summary: `Muddat so‘rovi: ${task.title}\nYangi muddat: ${localDeadline(action.requestedDeadline)}\nSabab: ${action.reason}` };
@@ -140,6 +147,11 @@ export class AssistantService {
           ...(action.nextDeadline ? { nextDeadline: action.nextDeadline } : {}),
         }, { deferNotifications: true });
         answer = `✅ ${task.title}: holat ${task.status} ga o‘zgardi.`;
+      } else if (action.kind === "ADD_CHECKPOINT") {
+        const checkpoint = await this.marketing.addCheckpoint(actor, action.taskId, {
+          title: action.title, dueAt: action.dueAt,
+        });
+        answer = `✅ Checkpoint qo‘shildi: ${checkpoint.title}.`;
       } else {
         const request = await this.marketing.requestDeadlineChange(actor, action.taskId, {
           requestedDeadline: action.requestedDeadline, reason: action.reason,

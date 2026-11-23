@@ -6,6 +6,7 @@ import { errorResponse } from "@/server/http/errors";
 import { TelegramInitDataError, verifyTelegramInitData } from "@/server/auth/telegram-init-data";
 import { createSessionToken, SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from "@/server/auth/session";
 import { ApplicationError } from "@/application/errors";
+import { getBootstrapData } from "@/server/bootstrap";
 
 const BodySchema = z.object({ initData: z.string().min(1).max(8192) }).strict();
 
@@ -16,7 +17,12 @@ export async function POST(request: Request) {
     const identity = verifyTelegramInitData(body.initData, config.botToken);
     const user = await getMarketingService().requireActorByTelegramId(identity.telegramUserId);
     const token = createSessionToken({ userId: user.id, telegramUserId: user.telegramUserId }, config.webhookSecret);
-    const response = NextResponse.json({ user });
+    // If the Home query fails, keep the valid login and let the client retry
+    // the bootstrap request. The normal path returns everything in one trip.
+    let initialData: Awaited<ReturnType<typeof getBootstrapData>> | null = null;
+    try { initialData = await getBootstrapData(user); }
+    catch { console.error(JSON.stringify({ event: "telegram_auth_bootstrap_failed" })); }
+    const response = NextResponse.json(initialData ?? { user });
     response.cookies.set(SESSION_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: "strict",

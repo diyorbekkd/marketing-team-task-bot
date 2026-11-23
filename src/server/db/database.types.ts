@@ -362,6 +362,13 @@ export interface Database {
     };
     Views: Record<never, never>;
     Functions: {
+      create_browser_task_with_checkpoints: { Args: {
+        p_request_id: string; p_request_hash: string; p_creator_id: string; p_assignee_id: string;
+        p_title: string; p_description: string; p_priority: "high" | "normal" | "low";
+        p_deadline: string; p_video_kind: "SHOOT" | "EDIT" | null; p_video_brief: Json | null;
+        p_template_id: string | null; p_event_on: string | null; p_deadline_override: boolean;
+        p_manual_checkpoints: Json;
+      }; Returns: TaskRow };
       create_browser_task: { Args: {
         p_request_id: string; p_request_hash: string; p_creator_id: string; p_assignee_id: string;
         p_title: string; p_description: string; p_priority: "high" | "normal" | "low";

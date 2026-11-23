@@ -43,6 +43,7 @@ describe("Mini App bootstrap route", () => {
     expect(listHomeTasks).toHaveBeenCalledWith(actor);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
+      user: actor,
       users: [{
         id: "u1",
         telegramUsername: undefined,

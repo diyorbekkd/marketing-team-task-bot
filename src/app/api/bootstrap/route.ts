@@ -1,34 +1,13 @@
-import { getMarketingService } from "@/server/application";
+import { getBootstrapData } from "@/server/bootstrap";
 import { requireRequestActor } from "@/server/auth/request-actor";
 import { errorResponse } from "@/server/http/errors";
 
-// Thin consolidating endpoint for the Mini App's first paint: the current
-// user's identity is already known from auth, so this returns only the
-// active team list (needed for the assignee picker) and the Home-scope task
-// list, fetched in parallel server-side. No new business logic — both
-// queries already exist as MarketingService methods; this just avoids two
-// sequential client round trips (each paying the Vercel<->Supabase
-// cross-region latency) before the first useful screen can render.
+// Returning identity with the Home data lets an existing web session start in
+// one request rather than waiting for /api/auth/me and then loading Home.
 export async function GET() {
   try {
     const actor = await requireRequestActor();
-    const service = getMarketingService();
-    const [users, tasks] = await Promise.all([
-      service.listUsers(actor),
-      service.listHomeTasks(actor),
-    ]);
-
-    return Response.json({
-      users: users.map((user) => ({
-        id: user.id,
-        telegramUsername: user.telegramUsername,
-        displayName: user.displayName,
-        role: user.role,
-        isActive: user.isActive,
-        deactivatedAt: user.deactivatedAt,
-      })),
-      tasks,
-    });
+    return Response.json(await getBootstrapData(actor));
   } catch (error) {
     return errorResponse(error);
   }

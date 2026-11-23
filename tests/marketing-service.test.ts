@@ -646,6 +646,26 @@ describe("MarketingService MVP permissions", () => {
     expect(notifications.notifyAssignment).not.toHaveBeenCalled();
   });
 
+  it("passes optional checkpoints into the atomic browser task create", async () => {
+    const created = task();
+    const repo = repository({ createBrowserTask: vi.fn(async () => created) });
+    const queue = { queueAssignment: vi.fn(async () => "QUEUED" as const), queueWorkflow: vi.fn(async () => undefined) };
+    const service = new MarketingService(repo, notifier(), queue);
+    const manualCheckpoints = [{ title: "Ssenariyni tekshirish", dueAt: "2099-11-10T18:00:00+05:00" }];
+    await service.createTaskQueued(creator, {
+      title: created.title, assigneeId: assignee.id, deadline: created.deadline, manualCheckpoints,
+    });
+    expect(repo.createBrowserTask).toHaveBeenCalledWith(expect.objectContaining({ manualCheckpoints }));
+    expect(repo.addTaskCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it("does not add checkpoints to a closed task", async () => {
+    const repo = repository({ getTask: vi.fn(async () => task({ status: "DONE", completedAt: "2026-11-23T10:00:00Z" })) });
+    await expect(new MarketingService(repo, notifier()).addCheckpoint(creator, ids.task,
+      { title: "Late checkpoint", dueAt: null })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(repo.addTaskCheckpoint).not.toHaveBeenCalled();
+  });
+
   it("creates a template task atomically and keeps assignment notification", async () => {
     const created = task();
     const repo = repository({ createBrowserTask: vi.fn(async () => created) });

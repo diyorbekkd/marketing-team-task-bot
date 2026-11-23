@@ -556,6 +556,7 @@ export default function MiniApp() {
   const usersAbortRef = useRef<AbortController | null>(null);
   const tasksAbortRef = useRef<AbortController | null>(null);
   const homeAbortRef = useRef<AbortController | null>(null);
+  const initialDataReadyRef = useRef(false);
 
   // Auth on mount
   useEffect(() => {
@@ -563,7 +564,7 @@ export default function MiniApp() {
       const initData = window.Telegram?.WebApp?.initData ?? "";
 
       if (initData) {
-        const { data, error } = await apiFetch<{ user: User }>(
+        const { data, error } = await apiFetch<{ user: User; users?: User[]; tasks?: Task[] }>(
           "/api/auth/telegram",
           {
             method: "POST",
@@ -572,6 +573,10 @@ export default function MiniApp() {
           }
         );
         if (data?.user) {
+          if (data.users && data.tasks) {
+            initialDataReadyRef.current = true;
+            setUsers(data.users); setUsersLoaded(true); setHomeTasks(data.tasks);
+          }
           setCurrentUser(data.user);
           setAuthState("authed");
           window.Telegram?.WebApp?.ready();
@@ -585,10 +590,21 @@ export default function MiniApp() {
         }
       }
 
-      // Fallback: existing session
-      const { data } = await apiFetch<{ user: User }>("/api/auth/me");
+      // A signed web session can receive identity and Home in one request.
+      const { data } = await apiFetch<{ user: User; users: User[]; tasks: Task[] }>("/api/bootstrap");
       if (data?.user) {
+        initialDataReadyRef.current = true;
+        setUsers(data.users); setUsersLoaded(true); setHomeTasks(data.tasks);
         setCurrentUser(data.user);
+        setAuthState("authed");
+        return;
+      }
+
+      // A transient Home failure should not turn a valid session into a
+      // login screen. The ordinary bootstrap retry remains available.
+      const { data: session } = await apiFetch<{ user: User }>("/api/auth/me");
+      if (session?.user) {
+        setCurrentUser(session.user);
         setAuthState("authed");
         return;
       }
@@ -790,8 +806,7 @@ export default function MiniApp() {
   }, []);
 
   useEffect(() => {
-    if (authState !== "authed") return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (authState !== "authed" || initialDataReadyRef.current) return;
     void loadBootstrap();
     // Deliberately run once per authed session, not on every render of
     // loadBootstrap (which is stable/[]) — this is the one-time first paint.
@@ -891,7 +906,7 @@ export default function MiniApp() {
           <span className="ma-username">{currentUser?.displayName}</span>
         </button>
         <div className="ma-topbar-actions">
-          <button className="ma-icon-btn ma-assistant-trigger" onClick={() => setShowAssistant(true)} aria-label="AI yordamchi">✦</button>
+          <button className="ma-icon-btn ma-assistant-trigger" onClick={() => setShowAssistant(true)} aria-label="AI yordamchi"><span aria-hidden="true">✦</span><span>AI</span></button>
           {isHead && pendingUsers.length > 0 && (
             <button
               className="ma-badge-btn"
@@ -2030,7 +2045,6 @@ function TaskDetailPanel({
   const [editAssigneeId, setEditAssigneeId] = useState("");
   const [editDeadline, setEditDeadline] = useState("");
   const [editPublication, setEditPublication] = useState("");
-  const [commentKind, setCommentKind] = useState<TaskComment["kind"]>("COMMENT");
   const [commentBody, setCommentBody] = useState("");
   const [commentUrl, setCommentUrl] = useState("");
   const [commentPending, setCommentPending] = useState(false);
@@ -2206,7 +2220,7 @@ function TaskDetailPanel({
     onRefresh();
   };
 
-  const submitComment = async () => {
+  const submitComment = async (kind: TaskComment["kind"]) => {
     if (!commentBody.trim() && !commentUrl.trim()) return;
     setCommentPending(true);
     setActionError(null);
@@ -2214,7 +2228,7 @@ function TaskDetailPanel({
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        kind: commentKind,
+        kind,
         ...(commentBody.trim() ? { body: commentBody.trim() } : {}),
         ...(commentUrl.trim() ? { attachmentUrl: commentUrl.trim() } : {}),
       }),
@@ -2736,17 +2750,15 @@ function TaskDetailPanel({
                 </ol>
               )}
               <div className="ma-block-form ma-comment-form">
-                <label htmlFor="comment-kind">Yozuv turi</label>
-                <select id="comment-kind" value={commentKind} onChange={(event) => setCommentKind(event.target.value as TaskComment["kind"])}>
-                  <option value="COMMENT">Izoh</option><option value="RESULT">Ish natijasi</option>
-                </select>
                 <label htmlFor="comment-body">Izoh</label>
-                <textarea id="comment-body" rows={3} maxLength={4000} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder={commentKind === "RESULT" ? "Natija haqida qisqacha yozing" : "Fikr yoki savolingizni yozing"} />
+                <textarea id="comment-body" rows={3} maxLength={4000} value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="Fikr yoki natijani yozing" />
                 <label htmlFor="comment-url">Google Drive yoki boshqa havola (ixtiyoriy)</label>
                 <input id="comment-url" type="url" value={commentUrl} onChange={(event) => setCommentUrl(event.target.value)} placeholder="https://…" />
-                <button className="ma-btn primary" disabled={commentPending || (!commentBody.trim() && !commentUrl.trim())} onClick={submitComment}>
-                  {commentPending ? "Yuborilmoqda…" : commentKind === "RESULT" ? "Natijani topshirish" : "Izoh yuborish"}
-                </button>
+                <div className="ma-form-row">
+                  <button className="ma-btn secondary" disabled={commentPending || (!commentBody.trim() && !commentUrl.trim())} onClick={() => { void submitComment("COMMENT"); }}>Izoh yuborish</button>
+                  <button className="ma-btn primary" disabled={commentPending || (!commentBody.trim() && !commentUrl.trim())} onClick={() => { void submitComment("RESULT"); }}>Natijani topshirish</button>
+                </div>
+                {commentPending && <span className="ma-muted" role="status">Yuborilmoqda…</span>}
                 {actionError && <div className="ma-error-inline" role="alert">{actionError}</div>}
               </div>
             </section>
@@ -3241,6 +3253,9 @@ function QuickAddPanel({
   const [scheduledAt, setScheduledAt] = useState("");
   const [durationMinutes, setDurationMinutes] = useState("");
   const [editLevel, setEditLevel] = useState<"SIMPLE" | "STANDARD" | "COMPLEX" | "">("");
+  const [checkpointTitle, setCheckpointTitle] = useState("");
+  const [checkpointDue, setCheckpointDue] = useState("");
+  const [manualCheckpoints, setManualCheckpoints] = useState<Array<{ title: string; dueAt: string | null }>>([]);
   const [openedAt] = useState(() => Date.now());
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3271,6 +3286,13 @@ function QuickAddPanel({
       !!scheduledAt && Date.parse(localDatetimeToISO(scheduledAt)) > openedAt &&
       Number.isInteger(Number(durationMinutes)) && Number(durationMinutes) >= 5 && Number(durationMinutes) <= 1440
     : videoKind === "EDIT" && !!editLevel);
+  const addDraftCheckpoint = () => {
+    const name = checkpointTitle.trim();
+    if (!name || manualCheckpoints.length >= 50) return;
+    setManualCheckpoints((current) => [...current, { title: name,
+      dueAt: checkpointDue ? localDatetimeToISO(checkpointDue) : null }]);
+    setCheckpointTitle(""); setCheckpointDue("");
+  };
 
   const submit = async () => {
     if (pending || !teamReady || !title.trim() || !assigneeId || !effectiveDeadline || !videoReady || (templateId && !eventOn)) return;
@@ -3283,6 +3305,12 @@ function QuickAddPanel({
       deadline: localDatetimeToISO(effectiveDeadline),
     };
     if (description.trim()) body.description = description.trim();
+    if (!selectedTemplate) {
+      const checkpointsToCreate = checkpointTitle.trim() && manualCheckpoints.length < 50
+        ? [...manualCheckpoints, { title: checkpointTitle.trim(), dueAt: checkpointDue ? localDatetimeToISO(checkpointDue) : null }]
+        : manualCheckpoints;
+      if (checkpointsToCreate.length > 0) body.manualCheckpoints = checkpointsToCreate;
+    }
     if (selectedTemplate) body.taskTemplate = { templateId, eventOn, deadlineOverride: deadlineOverridden };
     if (!selectedTemplate && operatorSelected && videoKind === "SHOOT") body.videoBrief = {
       kind: "SHOOT", scenarioUrl: scenarioUrl.trim(), onCameraPerson: onCameraPerson.trim(),
@@ -3319,16 +3347,18 @@ function QuickAddPanel({
     >
       <div className="ma-panel">
         <div className="ma-panel-header">
-          <button className="ma-back-btn" onClick={onClose} aria-label="Yopish">←</button>
-          <span className="ma-panel-title">Yangi vazifa</span>
+          <button className="ma-back-btn" onClick={showTemplateManager ? () => setShowTemplateManager(false) : onClose}
+            aria-label={showTemplateManager ? "Yangi vazifaga qaytish" : "Yopish"}>←</button>
+          <span className="ma-panel-title">{showTemplateManager ? "Shablonlarni sozlash" : "Yangi vazifa"}</span>
         </div>
         <div className="ma-panel-body">
           {showTemplateManager ? <TaskTemplateManager templates={templates}
-            onSaved={() => { void loadTemplates(); }} onClose={() => setShowTemplateManager(false)} /> : <>
+            onSaved={() => { void loadTemplates(); }} /> : <>
           <div className="ma-form-group">
             <label htmlFor="qa-template">Checkpointli shablon</label>
             <select id="qa-template" value={templateId} onChange={(event) => {
               const id = event.target.value; setDeadline(effectiveDeadline); setTemplateId(id); setDeadlineOverridden(false); setVideoKind(null);
+              if (id) { setManualCheckpoints([]); setCheckpointTitle(""); setCheckpointDue(""); }
               const chosen = templates.find((item) => item.id === id);
               if (chosen && !title) setTitle(chosen.name);
             }}>
@@ -3422,6 +3452,22 @@ function QuickAddPanel({
                 <option value="">Tanlang</option><option value="SIMPLE">Oddiy</option>
                 <option value="STANDARD">Standart</option><option value="COMPLEX">Murakkab</option>
               </select>
+            </div>}
+          </div>}
+          {!selectedTemplate && <div className="ma-form-group ma-quick-checkpoints">
+            <span className="ma-field-label">Checkpointlar <span className="ma-muted">(ixtiyoriy)</span></span>
+            {manualCheckpoints.map((checkpoint, index) => <div className="ma-quick-checkpoint" key={`${checkpoint.title}-${index}`}>
+              <span>{checkpoint.title}{checkpoint.dueAt && <small className="ma-muted"> · {checkpoint.dueAt.slice(0, 16).replace("T", " ")}</small>}</span>
+              <button type="button" className="ma-link-btn" aria-label={`${checkpoint.title}ni olib tashlash`}
+                onClick={() => setManualCheckpoints((current) => current.filter((_, position) => position !== index))}>×</button>
+            </div>)}
+            {manualCheckpoints.length < 50 && <div className="ma-quick-checkpoint-entry">
+              <input aria-label="Checkpoint nomi" placeholder="Oraliq natija" maxLength={200} value={checkpointTitle}
+                onChange={(event) => setCheckpointTitle(event.target.value)} />
+              <input aria-label="Checkpoint vaqti" type="datetime-local" value={checkpointDue}
+                onChange={(event) => setCheckpointDue(event.target.value)} />
+              <button type="button" className="ma-btn secondary" disabled={!checkpointTitle.trim()}
+                onMouseDown={(event) => event.preventDefault()} onClick={addDraftCheckpoint}>+ Checkpoint qo‘shish</button>
             </div>}
           </div>}
           <details className="ma-more-details">

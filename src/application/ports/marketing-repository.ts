@@ -42,6 +42,7 @@ export interface CreateTaskRecord {
 export interface CreateBrowserTaskRecord extends CreateTaskRecord {
   readonly requestId: string;
   readonly requestHash: string;
+  readonly manualCheckpoints: ReadonlyArray<{ title: string; dueAt: string | null }>;
   readonly videoBrief?: { kind: VideoKind; brief: Record<string, string | number | null> };
   readonly taskTemplate?: { templateId: string; eventOn: string; deadlineOverride: boolean };
 }

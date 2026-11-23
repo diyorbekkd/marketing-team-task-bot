@@ -12,8 +12,8 @@ const webinarRows: Row[] = [
   { title: "YouTube’ga yuklash", offsetDays: 1, localTime: "18:00" },
 ];
 
-export function TaskTemplateManager({ templates, onSaved, onClose }: {
-  templates: TaskTemplate[]; onSaved: () => void; onClose: () => void;
+export function TaskTemplateManager({ templates, onSaved }: {
+  templates: TaskTemplate[]; onSaved: () => void;
 }) {
   const [sourceId, setSourceId] = useState<string | null>(null);
   const [name, setName] = useState("Webinar");
@@ -62,7 +62,6 @@ export function TaskTemplateManager({ templates, onSaved, onClose }: {
     finally { setPending(false); }
   };
   return <div className="ma-template-editor">
-    <button type="button" className="ma-link-btn" onClick={onClose}>← Vazifaga qaytish</button>
     <h3>Checkpointli vazifa shablonlari</h3>
     <p className="ma-muted">Sanalar tadbir kuniga nisbatan kalendar kunlarda, Toshkent vaqti bilan hisoblanadi. Eski vazifalar shablon tahriridan o‘zgarmaydi.</p>
     <div className="ma-template-list">

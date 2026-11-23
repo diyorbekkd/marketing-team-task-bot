@@ -16,6 +16,7 @@ import type { TeamRole } from "@/domain/permissions";
 import type { TaskStatus } from "@/domain/task";
 import type { ReminderType } from "@/domain/reminders";
 import { canonicalTelegramUsername } from "@/domain/telegram-username";
+import { TaskEventTypeSchema } from "@/domain/task-events";
 import { SaveTaskTemplateSchema, type TaskTemplate } from "@/domain/task-template";
 import type {
   DeadlineChangeRequest,
@@ -167,18 +168,7 @@ const EventRowSchema = z.object({
   task_id: z.string().uuid(),
   actor_id: z.string().uuid().nullable(),
   actor_kind: z.enum(["USER", "SYSTEM"]),
-  event_type: z.enum([
-    "TASK_CREATED", "TASK_ACCEPTED", "STATUS_CHANGED", "TITLE_CHANGED", "DESCRIPTION_CHANGED",
-    "PRIORITY_CHANGED", "DEADLINE_CHANGE_REQUESTED", "DEADLINE_CHANGE_APPROVED",
-    "DEADLINE_CHANGE_REJECTED", "DEADLINE_CHANGED", "REASSIGN_REQUESTED", "REASSIGN_APPROVED",
-    "REASSIGN_REJECTED", "ASSIGNEE_CHANGED", "TASK_BLOCKED", "TASK_UNBLOCKED", "REVIEW_REQUESTED",
-    "REVISION_REQUESTED", "TASK_COMPLETED", "TASK_CANCELLED", "TASK_REOPENED",
-    "POSTING_CHECKLIST_CREATED", "POSTING_CHECKLIST_ITEM_TOGGLED", "RECURRING_TASK_GENERATED",
-    "PUBLICATION_DATE_CHANGED", "COMMENT_ADDED", "RESULT_SUBMITTED", "WORKFLOW_STARTED",
-    "WORKFLOW_STEP_ACTIVATED", "WORKFLOW_COMPLETED",
-    "CHECKPOINT_ADDED", "CHECKPOINT_COMPLETED", "CHECKPOINT_REOPENED", "CHECKPOINT_REMOVED",
-    "VIDEO_BRIEF_SAVED", "SHOOT_CONFIRMED",
-  ]),
+  event_type: TaskEventTypeSchema,
   old_value: z.unknown(),
   new_value: z.unknown(),
   metadata: z.record(z.string(), z.unknown()),
@@ -576,7 +566,7 @@ export class SupabaseMarketingRepository implements MarketingRepository {
   }
 
   async createBrowserTask(input: CreateBrowserTaskRecord): Promise<Task> {
-    const { data, error } = await this.client.rpc("create_browser_task", {
+    const { data, error } = await this.client.rpc("create_browser_task_with_checkpoints", {
       p_request_id: input.requestId, p_request_hash: input.requestHash,
       p_creator_id: input.creatorId, p_assignee_id: input.assigneeId,
       p_title: input.title, p_description: input.description ?? "",
@@ -586,6 +576,7 @@ export class SupabaseMarketingRepository implements MarketingRepository {
       p_template_id: input.taskTemplate?.templateId ?? null,
       p_event_on: input.taskTemplate?.eventOn ?? null,
       p_deadline_override: input.taskTemplate?.deadlineOverride ?? false,
+      p_manual_checkpoints: input.manualCheckpoints.map((checkpoint) => ({ ...checkpoint })),
     });
     if (error || !data) throwDataError(error, "Vazifani yaratib bo‘lmadi.");
     return mapTask(rpcRecord(data));
