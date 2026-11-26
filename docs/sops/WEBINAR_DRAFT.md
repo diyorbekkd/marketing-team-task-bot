@@ -4,10 +4,16 @@
 
 **Owner:** To be agreed with the Head.
 
-**Primary result:** To be agreed with the Head.
+**Primary results (chosen by the Head):** Live attendance and peak number of concurrent attendees. These are event outcomes, not counts of completed preparation checkpoints.
 
-**Last reviewed:** 2026-11-23 (Asia/Tashkent).
+**Last reviewed:** 2026-11-26 (Asia/Tashkent).
 **Scope:** One repeatable webinar from the initial brief through live delivery and follow-up. Exact marketing purpose and format are still open.
+
+## Success measures to define
+
+- **Live attendance:** Count the people who joined during the live event. Decide the webinar platform's source of truth and whether brief visits count before this becomes a reporting rule.
+- **Peak concurrent attendance:** The highest number of people present at the same time during the live event. Record the value and the platform report or screenshot that supports it.
+- Targets and any supporting numbers (for example, registrations or replay views) are still open. Do not treat them as approved targets or replace the two chosen results with them.
 
 ## Product mechanics already agreed
 
@@ -30,7 +36,7 @@ These describe the current app, not the team's approval or quality policy.
 
 ## SOP decisions to make together
 
-1. **Purpose:** Primary measurable result and what is counted as a qualified result.
+1. **Measurement:** Platform, exact live-attendance counting rule, peak-attendance evidence, and realistic targets for both chosen results.
 2. **Accountability:** One overall owner; content, SMM, digital, operator, speaker, and Head roles only where needed.
 3. **Start rule:** Minimum lead time and required brief before setting the event date.
 4. **Preparation:** Topic, speaker, registration, landing/invite, promotion, technical setup, rehearsal, and backup owner. Remove any step that is not part of your real process.
