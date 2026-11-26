@@ -3,6 +3,7 @@ import { ApplicationError } from "../src/application/errors";
 import type { MarketingService } from "../src/application/marketing-service";
 import type { Task, User } from "../src/domain/models";
 import { createTelegramUpdateHandler } from "../src/telegram/handler";
+import type { AssistantService } from "../src/application/assistant-service";
 import { TelegramUpdateSchema } from "../src/telegram/update";
 
 const actor: User = {
@@ -35,6 +36,7 @@ const task: Task = {
   creatorId: actor.id,
   assigneeId: assignee.id,
   deadline: "2026-09-08T13:00:00.000Z",
+  publicationAt: null,
   blockedReason: null,
   completedAt: null,
   cancelledAt: null,
@@ -51,6 +53,7 @@ function serviceMock(overrides: Record<string, unknown> = {}) {
   return {
     onboardTelegram: vi.fn(async () => actor),
     requireActorByTelegramId: vi.fn(async () => actor),
+    approveWebBotLogin: vi.fn(async () => true),
     createTaskForUsername: vi.fn(async () => ({ task, assignee, notification: { status: "SENT" as const } })),
     createTasksBulk: vi.fn(async () => []),
     performTaskAction: vi.fn(async () => ({ ...task, status: "IN_PROGRESS" })),
@@ -73,6 +76,49 @@ describe("Telegram MVP handler", () => {
     vi.useRealTimers();
   });
 
+  it("answers a private question through the scoped assistant but ignores group conversation", async () => {
+    const service = serviceMock();
+    const assistant = { respond: vi.fn(async () => ({ status: "COMPLETE", answer: "Avval muhim ishni bajaring.", reused: false })) } as unknown as AssistantService;
+    const handler = createTelegramUpdateHandler(service, handlerConfig, assistant);
+    const privateUpdate = TelegramUpdateSchema.parse({
+      update_id: 812, message: { message_id: 10, chat: { id: 42, type: "private" },
+        from: { id: 42, is_bot: false, first_name: "Team" }, text: "Bugun nimadan boshlay?" },
+    });
+    expect((await handler(privateUpdate)).messages[0]?.text).toContain("muhim ishni");
+    expect(assistant.respond).toHaveBeenCalledWith(actor, {
+      source: "TELEGRAM", requestKey: "tg_812", text: "Bugun nimadan boshlay?",
+    });
+    const groupUpdate = TelegramUpdateSchema.parse({
+      update_id: 813, message: { message_id: 11, chat: { id: -100123, type: "supergroup" },
+        from: { id: 42, is_bot: false, first_name: "Team" }, text: "Bugun nimadan boshlay?" },
+    });
+    expect((await handler(groupUpdate)).messages).toEqual([]);
+    expect(assistant.respond).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a private AI action proposal and confirms its exact turn through the assistant service", async () => {
+    const service = serviceMock();
+    const turnId = "20000000-0000-4000-8000-000000000099";
+    const assistant = { respond: vi.fn(async () => ({ status: "COMPLETE", answer: "Taklif tayyor.",
+      proposal: { summary: "Vazifa yaratish: Reels" }, turnId })),
+      confirm: vi.fn(async () => ({ answer: "✅ Vazifa yaratildi.", reused: false })) } as unknown as AssistantService;
+    const handler = createTelegramUpdateHandler(service, handlerConfig, assistant);
+    const message = await handler(TelegramUpdateSchema.parse({ update_id: 901,
+      message: { message_id: 1, chat: { id: 42, type: "private" },
+        from: { id: 42, is_bot: false, first_name: "Team" }, text: "Reels vazifasini och" } }));
+    expect(message.messages[0]?.replyMarkup?.inline_keyboard[0][0].callback_data).toBe(`ai:${turnId}`);
+    const callback = await handler(TelegramUpdateSchema.parse({ update_id: 902,
+      callback_query: { id: "ai-callback", from: { id: 42, is_bot: false, first_name: "Team" },
+        data: `ai:${turnId}`, message: { message_id: 2, chat: { id: 42, type: "private" } } } }));
+    expect(assistant.confirm).toHaveBeenCalledWith(actor, turnId);
+    expect(callback.messages[0]?.text).toContain("Vazifa yaratildi");
+
+    await handler(TelegramUpdateSchema.parse({ update_id: 903,
+      callback_query: { id: "ai-group", from: { id: 42, is_bot: false, first_name: "Team" },
+        data: `ai:${turnId}`, message: { message_id: 3, chat: { id: -100123, type: "supergroup" } } } }));
+    expect(assistant.confirm).toHaveBeenCalledTimes(1);
+  });
+
   it("onboards a private-chat user from Telegram identity", async () => {
     const service = serviceMock();
     const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
@@ -93,7 +139,22 @@ describe("Telegram MVP handler", () => {
       },
       "42",
     );
-    expect(result.messages[0]?.text).toContain("HEAD_OF_MARKETING");
+    expect(result.messages[0]?.text).toContain("Marketing rahbari");
+  });
+
+  it("confirms a browser login from an active user's private deep link without onboarding", async () => {
+    const service = serviceMock();
+    const code = `wl_${"a".repeat(24)}`;
+    const result = await createTelegramUpdateHandler(service, handlerConfig)(TelegramUpdateSchema.parse({
+      update_id: 11,
+      message: {
+        message_id: 2, chat: { id: 42, type: "private" },
+        from: { id: 42, is_bot: false, first_name: "Team" }, text: `/start ${code}`,
+      },
+    }));
+    expect(service.approveWebBotLogin).toHaveBeenCalledWith("42", code);
+    expect(service.onboardTelegram).not.toHaveBeenCalled();
+    expect(result.messages[0]?.text).toContain("Web kirish tasdiqlandi");
   });
 
   it("creates an idempotent group task through the notification-aware service", async () => {
@@ -113,7 +174,7 @@ describe("Telegram MVP handler", () => {
       assigneeUsername: "editor",
     }), 11);
     expect(result.messages.map((message) => message.chatId)).toEqual([-100123]);
-    expect(result.messages[0]?.text).toContain("Task created.");
+    expect(result.messages[0]?.text).toContain("Vazifa yaratildi.");
   });
 
   it("keeps accepting an explicit bot mention with the labeled format", async () => {
@@ -153,7 +214,7 @@ describe("Telegram MVP handler", () => {
       deadline: "2026-09-08T13:00:00.000Z",
       priority: "normal",
     }, 18);
-    expect(result.messages[0]?.text).toContain("Task created.");
+    expect(result.messages[0]?.text).toContain("Vazifa yaratildi.");
   });
 
   it("silently ignores ordinary three-line group conversation before actor lookup", async () => {
@@ -191,7 +252,7 @@ describe("Telegram MVP handler", () => {
         },
       }));
 
-      expect(result.messages[0]?.text).toContain("Task yaratilmadi");
+      expect(result.messages[0]?.text).toContain("Vazifa yaratilmadi");
       expect(service.createTaskForUsername).not.toHaveBeenCalled();
     }
   });
@@ -213,7 +274,7 @@ describe("Telegram MVP handler", () => {
     }));
 
     expect(result.messages[0]?.text).toBe("No active teammate matches @unknownuser.");
-    expect(result.messages[0]?.text).not.toContain("Task created.");
+    expect(result.messages[0]?.text).not.toContain("Vazifa yaratildi.");
   });
 
   it("returns a useful format response for incomplete group shorthand", async () => {
@@ -231,7 +292,7 @@ describe("Telegram MVP handler", () => {
     }));
 
     expect(service.createTaskForUsername).not.toHaveBeenCalled();
-    expect(result.messages[0]?.text).toContain("Task yaratilmadi");
+    expect(result.messages[0]?.text).toContain("Vazifa yaratilmadi");
     expect(result.messages[0]?.text).toContain("@username");
     expect(result.messages[0]?.text).toContain("DD.MM.YYYY HH:mm");
     expect(warning).toHaveBeenCalledWith(expect.stringContaining('"event":"task_parse_failed"'));
@@ -255,7 +316,7 @@ describe("Telegram MVP handler", () => {
       },
     }));
 
-    expect(result.messages[0]?.text).toContain("Task saqlandi");
+    expect(result.messages[0]?.text).toContain("Vazifa saqlandi");
     expect(result.messages[0]?.text).toContain("/start");
   });
 
@@ -272,7 +333,7 @@ describe("Telegram MVP handler", () => {
     }));
 
     expect(service.createTaskForUsername).not.toHaveBeenCalled();
-    expect(result.messages[0]?.text).toBe("Tasks may only be created in the configured marketing group.");
+    expect(result.messages[0]?.text).toBe("Vazifalarni faqat belgilangan marketing guruhida yaratish mumkin.");
   });
 
   it("maps a Telegram callback to the shared workflow service", async () => {
@@ -305,7 +366,7 @@ describe("Telegram MVP handler", () => {
     }));
 
     expect(service.resolveDeadlineChangeRequest).toHaveBeenCalledWith(actor, requestId, true);
-    expect(result.messages[0]?.text).toContain("APPROVED");
+    expect(result.messages[0]?.text).toContain("tasdiqlandi");
     expect(result.callbackQueryId).toBe("callback-2");
   });
 
@@ -345,7 +406,7 @@ describe("Telegram MVP handler", () => {
     }));
     expect(service.togglePostingChecklistItem).toHaveBeenCalledWith(actor, checklist.items[0].id);
     expect(result.messages[0]?.replyMarkup?.inline_keyboard.flat().map((button) => button.text))
-      .toContain("✅ Reviewga yuborish");
+      .toContain("✅ Tekshiruvga yuborish");
   });
 
   describe("private-chat task creation", () => {
@@ -367,7 +428,7 @@ describe("Telegram MVP handler", () => {
         deadline: "2026-09-08T13:00:00.000Z",
         priority: "normal",
       }, 30);
-      expect(result.messages[0]?.text).toContain("Task created.");
+      expect(result.messages[0]?.text).toContain("Vazifa yaratildi.");
     });
 
     it("creates a task from the labeled format sent directly to the bot", async () => {
@@ -386,7 +447,7 @@ describe("Telegram MVP handler", () => {
         title: "Publish launch reel",
         assigneeUsername: "editor",
       }), 31);
-      expect(result.messages[0]?.text).toContain("Task created.");
+      expect(result.messages[0]?.text).toContain("Vazifa yaratildi.");
     });
 
     it("never parses /start as a task even in a private chat", async () => {
@@ -418,7 +479,7 @@ describe("Telegram MVP handler", () => {
       }));
 
       expect(service.createTaskForUsername).not.toHaveBeenCalled();
-      expect(result.messages[0]?.text).toContain("Task yaratish formati");
+      expect(result.messages[0]?.text).toContain("Vazifa yaratish formati");
       expect(result.messages[0]?.text).toContain("---");
     });
 
@@ -475,7 +536,7 @@ describe("Telegram MVP handler", () => {
         expect.objectContaining({ title: "First task", assigneeUsername: "editor" }),
         expect.objectContaining({ title: "Second task", assigneeUsername: "lead" }),
       ], 40);
-      expect(result.messages[0]?.text).toContain("✅ 2 ta task yaratildi");
+      expect(result.messages[0]?.text).toContain("✅ 2 ta vazifa yaratildi");
       expect(result.messages[0]?.text).not.toContain("❌");
     });
 
@@ -497,9 +558,9 @@ describe("Telegram MVP handler", () => {
         },
       }));
 
-      expect(result.messages[0]?.text).toContain("✅ 1 ta task yaratildi");
-      expect(result.messages[0]?.text).toContain("❌ 1 ta task yaratilmadi");
-      expect(result.messages[0]?.text).toContain("2-task:");
+      expect(result.messages[0]?.text).toContain("✅ 1 ta vazifa yaratildi");
+      expect(result.messages[0]?.text).toContain("❌ 1 ta vazifa yaratilmadi");
+      expect(result.messages[0]?.text).toContain("2-vazifa:");
       expect(result.messages[0]?.text).toContain("@unknown aktiv jamoa a'zolari orasida topilmadi.");
     });
 
@@ -521,9 +582,9 @@ describe("Telegram MVP handler", () => {
       expect(service.createTasksBulk).toHaveBeenCalledWith(actor, [
         expect.objectContaining({ title: "Valid task" }),
       ], 42);
-      expect(result.messages[0]?.text).toContain("✅ 1 ta task yaratildi");
-      expect(result.messages[0]?.text).toContain("❌ 1 ta task yaratilmadi");
-      expect(result.messages[0]?.text).toContain("2-task:");
+      expect(result.messages[0]?.text).toContain("✅ 1 ta vazifa yaratildi");
+      expect(result.messages[0]?.text).toContain("❌ 1 ta vazifa yaratilmadi");
+      expect(result.messages[0]?.text).toContain("2-vazifa:");
     });
 
     it("never treats a lone separator with no real content as a task creation attempt", async () => {
@@ -563,7 +624,7 @@ describe("Telegram MVP handler", () => {
       }));
 
       expect(service.createTasksBulk).toHaveBeenCalledWith(actor, expect.any(Array), 44);
-      expect(result.messages[0]?.text).toContain("✅ 2 ta task yaratildi");
+      expect(result.messages[0]?.text).toContain("✅ 2 ta vazifa yaratildi");
     });
 
     it("rejects a batch over the 20-task limit with the documented message instead of silently truncating", async () => {
@@ -583,7 +644,7 @@ describe("Telegram MVP handler", () => {
         },
       }));
 
-      expect(result.messages[0]?.text).toContain("Bir xabarda maksimum 20 ta task yaratish mumkin.");
+      expect(result.messages[0]?.text).toContain("Bir xabarda ko‘pi bilan 20 ta vazifa yaratish mumkin.");
     });
   });
 });

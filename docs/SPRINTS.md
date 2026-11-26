@@ -1,6 +1,25 @@
 # Delivery roadmap
 
+## Focus and reliable release — authorized 2026-11-23
+
+The Head accepted the audit recommendations and requested a split of work between Codex and the Head. The active sprint is [the focus and reliable release plan](SPRINT_2026-11-23_FOCUS.md): durable action notifications, web sign-out, daily focus, weekly outcomes, actionable risk prompts, simpler Home, measured speed, and release rehearsal. The Head will configure the Production AI key and test as an ordinary employee. The production operator-bot check is deferred until the Head reports its status; it is not considered verified. Production changes remain gated on backup/restore and Preview acceptance.
+
 Each sprint is intentionally bounded. Later-sprint work should not leak into an earlier sprint without an explicit scope change.
+
+## AI work assistant — authorized 2026-11-17
+
+- Private bot and Mini App conversations share one actor-scoped service.
+- Provide daily planning, task decomposition, and approved SOP answers without task mutation.
+- Bound spending with a daily allowance and output-token cap; keep credentials server-side and verify on staging before production.
+
+## AI task actions — authorized 2026-11-18
+
+- Extend the existing assistant to propose ordinary task creation, valid task status actions, and deadline-change requests from Web and private bot chat.
+- Require an exact, actor-bound, ten-minute proposal with explicit one-time confirmation before executing through the existing shared permission service. Keep task history and notification behavior intact.
+- Do not add video handoff between shooting and editing: one operator performs both. Keep group material management separate from the task action flow.
+- Verify staging database idempotency and permissions, local quality gate, and Preview before production release.
+- 2026-11-23 feedback extends the confirmed-action flow to adding a named checkpoint to one unambiguous visible task. An optional time is accepted; permission is checked again on confirmation.
+- 2026-11-23 feedback further extends it to marking one existing checkpoint complete after confirmation. Replays must not reopen it or duplicate the audit event.
 
 ## Sprint 0 — Foundation
 
@@ -88,3 +107,17 @@ Second same-day increment on `fast-track/mvp`, again without touching the Telegr
 
 - Reminders: five deterministic thresholds (24h/3h/at-deadline/1h-overdue/24h-overdue) per active task, `(task_id, deadline, reminder_type)` idempotency ledger, assignee-only before/at-deadline and assignee+creator+Head overdue escalation, protected Vercel Cron every 10 minutes, a bounded catch-up window so a scheduler gap or first deploy doesn't burst-notify on old deadlines.
 - Team membership: explicit deactivated-vs-pending distinction (`deactivated_at`), Head-only deactivate/reactivate with self/Head protection, mandatory open-task disposition (reassign/cancel/keep) before removal, automatic pause of the removed member's active recurring definitions, atomic `*_with_event` state-change functions with a new `user_events` audit trail, and every task-creation/recurrence path already rejecting inactive assignees was audited and closed where it wasn't (recurring configuration and generation).
+
+## Staging usability follow-up — authorized 2026-11-15
+
+- Smooth task creation and checklist interaction: immediate Home insertion after a successful creation response, independent optimistic checklist toggles, and visual-viewport handling that distinguishes native date/time picker zoom from a keyboard.
+- Make reusable workflow templates discoverable from Home, with Head-only archive in addition to existing create, copy, and versioned edit.
+- Verify existing "Mening kunim" checkpoint/deadline groups and report-card task filters; preserve their server-side permissions and count semantics.
+- Verify the full quality gate and Vercel Preview with isolated staging data before any production release.
+
+## Video materials topic relay — authorized 2026-11-18
+
+- The team continues to work with scenarios and raw media in its separate Telegram forum group. Post only a shoot task's title and scenario link to a configured Syomka topic when the link is first saved or changed; do not ingest group messages or files.
+- Keep the destination optional per environment. Leave it disabled until the bot has posting access and the group/topic IDs are supplied during release setup.
+- Use the existing durable retry queue, retain a task reference, prevent duplicate delivery for repeated saves, and never fail a committed task or brief because Telegram is unavailable.
+- Verify locally and against staging database before a production rollout; production migration/configuration and a real topic message remain pending.

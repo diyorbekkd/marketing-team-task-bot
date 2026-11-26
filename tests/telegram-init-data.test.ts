@@ -32,7 +32,7 @@ describe("Telegram Mini App initData verification", () => {
 
   it("rejects forged identity data", () => {
     const forged = signedInitData().replace("Ada", "Mallory");
-    expect(() => verifyTelegramInitData(forged, botToken, now)).toThrow(/signature is invalid/);
+    expect(() => verifyTelegramInitData(forged, botToken, now)).toThrow(/imzosi noto‘g‘ri/);
   });
 
   it("rejects correctly signed but expired data", () => {

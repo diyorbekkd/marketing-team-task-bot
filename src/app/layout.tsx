@@ -11,8 +11,10 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Marketing Team Task Bot",
-  description: "A focused task workspace for the marketing team.",
+  title: "Marketing Team Tasks",
+  description: "Marketing jamoasi uchun vazifalarni boshqarish tizimi.",
+  icons: { icon: "/icon.svg", apple: "/icon-180.png" },
+  appleWebApp: { capable: true, statusBarStyle: "default", title: "Marketing Tasks" },
 };
 
 export const viewport: Viewport = {
@@ -24,7 +26,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="uz" className={inter.variable}>
       <body>
         <Script src="https://telegram.org/js/telegram-web-app.js" strategy="beforeInteractive" />
         {children}

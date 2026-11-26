@@ -71,7 +71,7 @@ describe("User role edit route", () => {
   });
 
   it("surfaces a forbidden result when the service denies the change", async () => {
-    updateUserRole.mockRejectedValueOnce(new ApplicationError("FORBIDDEN", "Only Head may change another teammate's role."));
+    updateUserRole.mockRejectedValueOnce(new ApplicationError("FORBIDDEN", "Only Head may change team roles."));
     const { POST } = await import("../src/app/api/users/[id]/role/route");
 
     const response = await POST(

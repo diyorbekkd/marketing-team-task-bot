@@ -23,7 +23,7 @@ function task(overrides: Partial<Task> = {}): Task {
   return {
     id: "20000000-0000-4000-8000-000000000001", title: "Import creative", description: null,
     priority: "normal", status: "IN_PROGRESS", creatorId: creator.id, assigneeId: assignee.id,
-    deadline: DEADLINE, blockedReason: null, completedAt: null, cancelledAt: null,
+    deadline: DEADLINE, publicationAt: null, blockedReason: null, completedAt: null, cancelledAt: null,
     createdAt: "2026-09-08T00:00:00Z", updatedAt: "2026-09-08T00:00:00Z",
     ...overrides,
   };
@@ -31,9 +31,9 @@ function task(overrides: Partial<Task> = {}): Task {
 
 function repository(overrides: Partial<MarketingRepository> = {}): MarketingRepository {
   return {
-    listTasks: vi.fn(async () => [task()]),
+    listReminderCandidates: vi.fn(async () => [task()]),
     listUsers: vi.fn(async () => [head, creator, assignee]),
-    claimReminderDelivery: vi.fn(async () => true),
+    claimReminderDelivery: vi.fn(async () => ({ claimed: true, deliveries: [] })),
     completeReminderDelivery: vi.fn(async () => undefined),
     ...overrides,
   } as unknown as MarketingRepository;
@@ -50,7 +50,7 @@ function dispatcher(overrides: Partial<NotificationDispatcher> = {}): Notificati
 
 describe("deadline reminder delivery", () => {
   it("does not remind on a DONE task", async () => {
-    const repo = repository({ listTasks: vi.fn(async () => [task({ status: "DONE", completedAt: "2026-09-09T00:00:00Z" })]) });
+    const repo = repository({ listReminderCandidates: vi.fn(async () => [task({ status: "DONE", completedAt: "2026-09-09T00:00:00Z" })]) });
     const notifier = dispatcher();
     const result = await new ReminderService(repo, notifier).deliver(NOW);
     expect(result.tasksChecked).toBe(0);
@@ -58,7 +58,7 @@ describe("deadline reminder delivery", () => {
   });
 
   it("does not remind on a CANCELLED task", async () => {
-    const repo = repository({ listTasks: vi.fn(async () => [task({ status: "CANCELLED", cancelledAt: "2026-09-09T00:00:00Z" })]) });
+    const repo = repository({ listReminderCandidates: vi.fn(async () => [task({ status: "CANCELLED", cancelledAt: "2026-09-09T00:00:00Z" })]) });
     const notifier = dispatcher();
     const result = await new ReminderService(repo, notifier).deliver(NOW);
     expect(result.tasksChecked).toBe(0);
@@ -86,7 +86,7 @@ describe("deadline reminder delivery", () => {
   });
 
   it("deduplicates recipients when the assignee is also the creator", async () => {
-    const repo = repository({ listTasks: vi.fn(async () => [task({ creatorId: assignee.id })]) });
+    const repo = repository({ listReminderCandidates: vi.fn(async () => [task({ creatorId: assignee.id })]) });
     const notifier = dispatcher();
     await new ReminderService(repo, notifier).deliver(NOW);
     const call = (notifier.notifyReminder as ReturnType<typeof vi.fn>).mock.calls[0][0] as ReminderNotificationInput;
@@ -107,9 +107,9 @@ describe("deadline reminder delivery", () => {
     let claimed = false;
     const repo = repository({
       claimReminderDelivery: vi.fn(async () => {
-        if (claimed) return false;
+        if (claimed) return { claimed: false, deliveries: [] };
         claimed = true;
-        return true;
+        return { claimed: true, deliveries: [] };
       }),
     });
     const notifier = dispatcher();
@@ -129,9 +129,9 @@ describe("deadline reminder delivery", () => {
     const repo = repository({
       claimReminderDelivery: vi.fn(async (input) => {
         const key = `${input.taskId}:${input.deadline}:${input.reminderType}`;
-        if (claims.includes(key)) return false;
+        if (claims.includes(key)) return { claimed: false, deliveries: [] };
         claims.push(key);
-        return true;
+        return { claimed: true, deliveries: [] };
       }),
     });
     const notifier = dispatcher();
@@ -140,7 +140,7 @@ describe("deadline reminder delivery", () => {
     await service.deliver(NOW); // original deadline, H1_OVERDUE claimed
     const newDeadline = "2026-09-11T15:00:00.000Z";
     const laterRepo = repository({
-      listTasks: vi.fn(async () => [task({ deadline: newDeadline })]),
+      listReminderCandidates: vi.fn(async () => [task({ deadline: newDeadline })]),
       claimReminderDelivery: repo.claimReminderDelivery,
     });
     const laterNow = new Date("2026-09-11T21:00:00.000Z"); // 5h after the NEW deadline, same isolated-window shape as NOW
@@ -158,5 +158,32 @@ describe("deadline reminder delivery", () => {
     const result = await new ReminderService(repo, notifier).deliver(NOW);
     expect(result.failed).toBe(1);
     expect(repo.completeReminderDelivery).toHaveBeenCalledWith(expect.objectContaining({ status: "FAILED" }));
+  });
+
+  it("retries only failed recipients after a partial delivery", async () => {
+    let previousDeliveries: Array<{ recipientUserId: string; status: "SENT" | "FAILED"; reason?: string }> = [];
+    const repo = repository({
+      claimReminderDelivery: vi.fn(async () => ({ claimed: true, deliveries: previousDeliveries })),
+      completeReminderDelivery: vi.fn(async (input) => {
+        previousDeliveries = (input.metadata?.deliveries ?? []) as typeof previousDeliveries;
+      }),
+    });
+    let attempt = 0;
+    const notifier = dispatcher({
+      notifyReminder: vi.fn(async ({ recipients }: ReminderNotificationInput) => {
+        attempt += 1;
+        return {
+          deliveries: recipients.map((recipient) => attempt === 1 && recipient.id === creator.id
+            ? { recipientUserId: recipient.id, status: "FAILED" as const, reason: "DELIVERY_FAILED" as const }
+            : { recipientUserId: recipient.id, status: "SENT" as const }),
+        };
+      }),
+    });
+    const service = new ReminderService(repo, notifier);
+
+    expect((await service.deliver(NOW)).failed).toBe(1);
+    expect((await service.deliver(NOW)).sent).toBe(1);
+    const retryInput = (notifier.notifyReminder as ReturnType<typeof vi.fn>).mock.calls[1][0] as ReminderNotificationInput;
+    expect(retryInput.recipients.map((recipient) => recipient.id)).toEqual([creator.id]);
   });
 });

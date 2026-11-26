@@ -152,7 +152,7 @@ export function calculateAnalytics(input: {
     onTimeCompletionRate: completed.length
       ? completed.filter((task) => new Date(task.completedAt!).getTime() <= new Date(task.deadline).getTime()).length / completed.length
       : null,
-    carryOver: tasks.filter((task) => new Date(task.createdAt).getTime() < end.getTime() && isOpenTask(task)).length,
+    carryOver: tasks.filter((task) => new Date(task.createdAt).getTime() < start.getTime() && isOpenTask(task)).length,
     currentOverdue: tasks.filter((task) => isOpenTask(task) && new Date(task.deadline).getTime() < end.getTime()).length,
     revisionCount: revisions.length,
     revisionRate: completed.length

@@ -1,8 +1,10 @@
 import { ApplicationError } from "@/application/errors";
+import type { AssistantService } from "@/application/assistant-service";
 import type { MarketingService } from "@/application/marketing-service";
 import type { Task, User } from "@/domain/models";
 import type { PostingChecklist } from "@/domain/models";
 import type { TaskAction } from "@/domain/workflow";
+import { uz } from "@/i18n/uz";
 import {
   BULK_SEPARATOR,
   TaskShorthandError,
@@ -45,7 +47,7 @@ function compactTask(task: Task, assignee: User): string {
     minute: "2-digit",
     hour12: false,
   }).format(new Date(task.deadline));
-  return `#${task.id.slice(0, 8)} · ${task.title}\nAssignee: ${assignee.displayName}\nDeadline: ${deadline}\nPriority: ${task.priority}`;
+  return `#${task.id.slice(0, 8)} · ${task.title}\nMas’ul: ${assignee.displayName}\nMuddat: ${deadline}\nUstuvorlik: ${uz.priority[task.priority]}`;
 }
 
 function commandAction(command: string): TaskAction | null {
@@ -68,11 +70,11 @@ function looksLikeTaskCreationAttempt(text: string): boolean {
 
 function taskFormatError(reason: string): string {
   return [
-    "❌ Task yaratilmadi.",
+    "❌ Vazifa yaratilmadi.",
     `Sabab: ${reason}`,
     "",
     "Kerakli format:",
-    "Task nomi",
+    "Vazifa nomi",
     "@username",
     "DD.MM.YYYY HH:mm",
   ].join("\n");
@@ -84,16 +86,16 @@ function taskFormatError(reason: string): string {
  * actually looked like an attempted task and failed. */
 function privateTaskFormatHelp(reason?: string): string {
   return [
-    ...(reason ? ["❌ Task yaratilmadi.", `Sabab: ${reason}`, ""] : []),
-    "Task yaratish formati:",
+    ...(reason ? ["❌ Vazifa yaratilmadi.", `Sabab: ${reason}`, ""] : []),
+    "Vazifa yaratish formati:",
     "",
-    "Task nomi",
-    "@assignee",
+    "Vazifa nomi",
+    "@masul_username",
     "DD.MM.YYYY HH:mm",
     "priority",
     "description",
     "",
-    "Bir nechta task uchun ularni:",
+    "Bir nechta vazifa uchun ularni:",
     "",
     BULK_SEPARATOR,
     "",
@@ -102,7 +104,7 @@ function privateTaskFormatHelp(reason?: string): string {
 }
 
 function notificationWarning(): string {
-  return "⚠️ Task saqlandi, lekin assignee'ga private xabar yuborilmadi. Assignee botga private chatda /start yuborsin.";
+  return "⚠️ Vazifa saqlandi, lekin mas’ulga shaxsiy xabar yuborilmadi. Mas’ul botga shaxsiy chatda /start yuborsin.";
 }
 
 function postingChecklistMessage(taskId: string, checklist: PostingChecklist): {
@@ -111,14 +113,14 @@ function postingChecklistMessage(taskId: string, checklist: PostingChecklist): {
 } {
   const complete = checklist.items.every((item) => item.isCompleted);
   return {
-    text: ["📤 Posting checklist", "", ...checklist.items.map((item) => `${item.isCompleted ? "✅" : "⬜"} ${item.label}`)].join("\n"),
+    text: ["📤 Joylash tekshiruv ro‘yxati", "", ...checklist.items.map((item) => `${item.isCompleted ? "✅" : "⬜"} ${item.label}`)].join("\n"),
     replyMarkup: {
       inline_keyboard: [
         ...checklist.items.map((item) => [{
           text: `${item.isCompleted ? "✅" : "⬜"} ${item.label}`,
           callback_data: `check:${item.id}`,
         }]),
-        ...(complete ? [[{ text: "✅ Reviewga yuborish", callback_data: `task:${taskId}:SUBMIT_REVIEW` }]] : []),
+        ...(complete ? [[{ text: "✅ Tekshiruvga yuborish", callback_data: `task:${taskId}:SUBMIT_REVIEW` }]] : []),
       ],
     },
   };
@@ -164,7 +166,7 @@ async function handleTaskCreationText(
         messages: [{
           chatId,
           text: [
-            `Task created.\n${compactTask(task, assignee)}`,
+            `Vazifa yaratildi.\n${compactTask(task, assignee)}`,
             ...(notification.status === "FAILED" ? [notificationWarning()] : []),
           ].join("\n"),
         }],
@@ -200,18 +202,19 @@ async function handleTaskCreationText(
   console.info(JSON.stringify({ event: "bulk_tasks_created", updateId, created: createdCount, failed: failures.length }));
 
   const lines = [
-    `✅ ${createdCount} ta task yaratildi`,
-    ...(failures.length > 0 ? [`❌ ${failures.length} ta task yaratilmadi`] : []),
-    ...failures.flatMap((failure) => ["", `${failure.index}-task:`, failure.message]),
-    ...(parsedMessage.truncated ? ["", "Bir xabarda maksimum 20 ta task yaratish mumkin."] : []),
+    `✅ ${createdCount} ta vazifa yaratildi`,
+    ...(failures.length > 0 ? [`❌ ${failures.length} ta vazifa yaratilmadi`] : []),
+    ...failures.flatMap((failure) => ["", `${failure.index}-vazifa:`, failure.message]),
+    ...(parsedMessage.truncated ? ["", "Bir xabarda ko‘pi bilan 20 ta vazifa yaratish mumkin."] : []),
   ];
   return { messages: [{ chatId, text: lines.join("\n") }] };
 }
 
-export function createTelegramUpdateHandler(service: MarketingService, config: TelegramHandlerConfig) {
+export function createTelegramUpdateHandler(service: MarketingService, config: TelegramHandlerConfig, assistant?: AssistantService) {
   return async function handle(update: TelegramUpdate): Promise<TelegramHandlerResult> {
     try {
       if (update.callback_query?.data) {
+        const assistantMatch = update.callback_query.data.match(/^ai:([0-9a-f-]{36})$/i);
         const checklistMatch = update.callback_query.data.match(/^check:([0-9a-f-]{36})$/i);
         const taskMatch = update.callback_query.data.match(
           /^task:([0-9a-f-]{36}):(ACCEPT|SUBMIT_REVIEW|APPROVE|REQUEST_REVISION|RESUME)$/i,
@@ -219,11 +222,19 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
         const deadlineMatch = update.callback_query.data.match(
           /^deadline:([0-9a-f-]{36}):(APPROVE|REJECT)$/i,
         );
-        if (!taskMatch && !deadlineMatch && !checklistMatch) {
+        if (!taskMatch && !deadlineMatch && !checklistMatch && !assistantMatch) {
           return { messages: [], callbackQueryId: update.callback_query.id };
         }
 
         const actor = await service.requireActorByTelegramId(String(update.callback_query.from.id));
+        if (assistantMatch) {
+          if (update.callback_query.message?.chat.type !== "private" || !assistant) {
+            throw new ApplicationError("FORBIDDEN", "AI amalini faqat botning shaxsiy chatida tasdiqlang.");
+          }
+          const result = await assistant.confirm(actor, assistantMatch[1]);
+          return { callbackQueryId: update.callback_query.id,
+            messages: [{ chatId: update.callback_query.message.chat.id, text: result.answer }] };
+        }
         if (checklistMatch) {
           const checklist = await service.togglePostingChecklistItem(actor, checklistMatch[1]);
           return {
@@ -249,7 +260,7 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
           return {
             callbackQueryId: update.callback_query.id,
             messages: update.callback_query.message
-              ? [{ chatId: update.callback_query.message.chat.id, text: `Task is now ${task.status}.` }]
+              ? [{ chatId: update.callback_query.message.chat.id, text: `Vazifa holati: ${uz.taskStatus[task.status]}.` }]
               : [],
           };
         }
@@ -265,7 +276,7 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
             messages: update.callback_query.message
               ? [{
                   chatId: update.callback_query.message.chat.id,
-                  text: `Deadline request is now ${deadlineRequest.status}.`,
+                  text: `Muddat so‘rovi ${deadlineRequest.status === "APPROVED" ? "tasdiqlandi" : "rad etildi"}.`,
                 }]
               : [],
           };
@@ -280,6 +291,15 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
       const firstWord = text.split(/\s+/, 1)[0]?.split("@", 1)[0]?.toLowerCase() ?? "";
 
       if (firstWord === "/start" && message.chat.type === "private") {
+        if (/^\/start(?:@\w+)?\s+wl_/i.test(text)) {
+          const code = text.match(/^\/start(?:@\w+)?\s+(wl_[A-Za-z0-9_-]{24})$/i)?.[1];
+          const approved = code && message.chat.id === message.from.id
+            ? await service.approveWebBotLogin(String(message.from.id), code)
+            : false;
+          return { messages: [{ chatId: message.chat.id, text: approved
+            ? "✅ Web kirish tasdiqlandi. O‘zingiz ochgan brauzer sahifasiga qayting. Agar bu so‘rovni siz boshlamagan bo‘lsangiz, rahbarga xabar bering."
+            : "Kirish havolasi eskirgan yoki noto‘g‘ri. Web sahifada yangi havola yarating." }] };
+        }
         const user = await service.onboardTelegram(
           {
             telegramUserId: String(message.from.id),
@@ -292,10 +312,10 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
           messages: [{
             chatId: message.chat.id,
             text: user.isActive
-              ? `Welcome, ${user.displayName}. Your role is ${user.role}. Open the Mini App to manage tasks.`
+              ? `Xush kelibsiz, ${user.displayName}. Rolingiz: ${uz.role[user.role]}. Vazifalarni boshqarish uchun Mini App’ni oching. Savol yoki reja uchun shu chatga yozing — AI yordamchi javob beradi.`
               : user.deactivatedAt
-                ? "Siz hozir aktiv marketing jamoasida emassiz. Head of Marketing bilan bog‘laning."
-                : `Thanks, ${user.displayName}. Your account is pending activation by Head of Marketing.`,
+                ? "Siz hozir faol marketing jamoasida emassiz. Marketing rahbari bilan bog‘laning."
+                : `Rahmat, ${user.displayName}. Hisobingiz Marketing rahbari tomonidan faollashtirilishini kutmoqda.`,
           }],
         };
       }
@@ -307,7 +327,7 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
       if (isGroupChat) {
         if (!isConfiguredMarketingGroup) {
           if (looksLikeTaskCreationAttempt(text)) {
-            throw new ApplicationError("FORBIDDEN", "Tasks may only be created in the configured marketing group.");
+            throw new ApplicationError("FORBIDDEN", "Vazifalarni faqat belgilangan marketing guruhida yaratish mumkin.");
           }
           return { messages: [] };
         }
@@ -332,7 +352,7 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
       const action = commandAction(firstWord);
       if (action) {
         const taskId = text.split(/\s+/)[1];
-        if (!taskId) throw new TaskShorthandError("A full task ID is required.");
+        if (!taskId) throw new TaskShorthandError("Vazifaning to‘liq ID raqami kerak.");
         if (action === "SUBMIT_REVIEW") {
           const detail = await service.getTaskDetails(actor, taskId);
           if (detail.postingChecklist?.items.some((item) => !item.isCompleted)) {
@@ -340,13 +360,13 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
           }
         }
         const task = await service.performTaskAction(actor, taskId, { action });
-        return { messages: [{ chatId: message.chat.id, text: `Task is now ${task.status}.` }] };
+        return { messages: [{ chatId: message.chat.id, text: `Vazifa holati: ${uz.taskStatus[task.status]}.` }] };
       }
 
       const blockMatch = text.match(/^\/block\s+([0-9a-f-]{36})\s+(.+)$/is);
       if (blockMatch) {
         const task = await service.performTaskAction(actor, blockMatch[1], { action: "BLOCK", reason: blockMatch[2] });
-        return { messages: [{ chatId: message.chat.id, text: `Task blocked: ${task.blockedReason}` }] };
+        return { messages: [{ chatId: message.chat.id, text: `Vazifa bloklandi: ${task.blockedReason}` }] };
       }
 
       const revisionMatch = text.match(/^\/revision\s+([0-9a-f-]{36})(?:\s+(.+))?$/is);
@@ -355,7 +375,7 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
           action: "REQUEST_REVISION",
           reason: revisionMatch[2],
         });
-        return { messages: [{ chatId: message.chat.id, text: `Revision requested. Task is now ${task.status}.` }] };
+        return { messages: [{ chatId: message.chat.id, text: `Tuzatish so‘raldi. Vazifa holati: ${uz.taskStatus[task.status]}.` }] };
       }
 
       const deadlineMatch = text.match(/^\/deadline\s+([0-9a-f-]{36})\s+(\d{1,2}\.\d{1,2}(?:\.\d{4})?\s+\d{1,2}:\d{2})\s+(.+)$/is);
@@ -364,13 +384,27 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
           requestedDeadline: parseTashkentDeadline(deadlineMatch[2]),
           reason: deadlineMatch[3],
         });
-        return { messages: [{ chatId: message.chat.id, text: `Deadline request created: ${request.id}` }] };
+        return { messages: [{ chatId: message.chat.id, text: `Muddatni o‘zgartirish so‘rovi yaratildi: ${request.id}` }] };
       }
 
       if (looksLikeTaskShorthand(text)) {
-        throw new ApplicationError("FORBIDDEN", "Tasks may only be created in the configured marketing group.");
+        throw new ApplicationError("FORBIDDEN", "Vazifalarni faqat belgilangan marketing guruhida yaratish mumkin.");
       }
 
+      if (isPrivateChat && assistant && (firstWord === "/ai" || !firstWord.startsWith("/"))) {
+        const question = firstWord === "/ai" ? text.replace(/^\/ai(?:@\w+)?\s*/i, "").trim() : text;
+        if (!question) return { messages: [{ chatId: message.chat.id, text: "Nimani rejalash yoki aniqlashtirish kerak? Savolingizni yozing." }] };
+        const response = await assistant.respond(actor, {
+          source: "TELEGRAM", requestKey: `tg_${update.update_id}`, text: question,
+        });
+        return { messages: [{ chatId: message.chat.id,
+          text: [response.answer?.slice(0, 2500) ?? "Javob tayyorlanmoqda. Birozdan keyin qayta urinib ko‘ring.",
+            response.proposal ? `\n\n📌 Taklif:\n${response.proposal.summary}` : ""].join(""),
+          ...(response.proposal ? { replyMarkup: { inline_keyboard: [[{
+            text: "✅ Tasdiqlash va bajarish", callback_data: `ai:${response.turnId}`,
+          }]] } } : {}),
+        }] };
+      }
       return { messages: [] };
     } catch (error) {
       const chatId = update.message?.chat.id ?? update.callback_query?.message?.chat.id;
@@ -379,7 +413,7 @@ export function createTelegramUpdateHandler(service: MarketingService, config: T
         ? taskFormatError(error.message)
         : error instanceof ApplicationError
           ? error.message
-        : "The task service is temporarily unavailable.";
+        : "Vazifalar xizmati vaqtincha ishlamayapti.";
       return { messages: [{ chatId, text: message }], callbackQueryId: update.callback_query?.id };
     }
   };

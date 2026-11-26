@@ -36,14 +36,14 @@ function morningEmployee(user: User, tasks: Task[], now: Date) {
   const dueToday = mine.filter((task) => isOpenTask(task) && inRange(task.deadline, today.start, today.end))
     .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
   if (!dueToday.length) {
-    return ["☀️ Bugungi tasklaringiz", "", "Bugun deadline bo‘lgan task yo‘q.", `Overdue: ${counts.overdue}`].join("\n");
+    return ["☀️ Bugungi vazifalaringiz", "", "Bugun muddati tugaydigan vazifa yo‘q.", `Kechikkan: ${counts.overdue}`].join("\n");
   }
   return [
-    "☀️ Bugungi tasklaringiz", "",
-    `Bugun deadline: ${counts.dueToday}`,
-    `Overdue: ${counts.overdue}`,
-    `In progress: ${counts.inProgress}`,
-    `Blocked: ${counts.blocked}`,
+    "☀️ Bugungi vazifalaringiz", "",
+    `Bugun muddati tugaydi: ${counts.dueToday}`,
+    `Kechikkan: ${counts.overdue}`,
+    `Jarayonda: ${counts.inProgress}`,
+    `Bloklangan: ${counts.blocked}`,
     "", "Bugun:", "",
     ...dueToday.slice(0, 5).map((task, index) => `${index + 1}. ${task.title} — ${formatTaskTime(task.deadline)}`),
     ...(dueToday.length > 5 ? [`… yana ${dueToday.length - 5} ta`] : []),
@@ -55,20 +55,20 @@ function morningHead(tasks: Task[], users: User[], now: Date) {
   const open = tasks.filter(isOpenTask);
   const lines = [
     "☀️ Marketing — Bugun", "",
-    `Today deadline: ${counts.dueToday}`,
-    `Overdue: ${counts.overdue}`,
-    `Blocked: ${counts.blocked}`,
-    `Review: ${counts.review}`,
-    "", "Team:", "",
+    `Bugun muddati tugaydi: ${counts.dueToday}`,
+    `Kechikkan: ${counts.overdue}`,
+    `Bloklangan: ${counts.blocked}`,
+    `Tekshiruvda: ${counts.review}`,
+    "", "Jamoa:", "",
     ...activeUsers(users).map((user) => {
       const metric = workloadMetrics(tasks, now, user.id);
-      return `${user.displayName} — Open ${metric.open} | Today ${metric.dueToday} | Overdue ${metric.overdue}`;
+      return `${user.displayName} — Ochiq ${metric.open} | Bugun ${metric.dueToday} | Kechikkan ${metric.overdue}`;
     }),
   ];
   lines.push(
-    ...importantSection("🔴", "Overdue", open.filter((task) => new Date(task.deadline) < now), users),
-    ...importantSection("🚫", "Blocked", open.filter((task) => task.status === "BLOCKED"), users),
-    ...importantSection("📝", "Review", open.filter((task) => task.status === "REVIEW"), users),
+    ...importantSection("🔴", "Kechikkan", open.filter((task) => new Date(task.deadline) < now), users),
+    ...importantSection("🚫", "Bloklangan", open.filter((task) => task.status === "BLOCKED"), users),
+    ...importantSection("📝", "Tekshiruvda", open.filter((task) => task.status === "REVIEW"), users),
   );
   return lines.join("\n");
 }
@@ -84,12 +84,13 @@ function eveningEmployee(user: User, tasks: Task[], events: TaskEvent[], now: Da
   const urgent = mine.filter((task) => isOpenTask(task) && (task.priority === "high" || new Date(task.deadline) < now))
     .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime()).slice(0, 3);
   return [
-    "🌙 Bugungi natija", "",
+    "🌙 Bugungi vazifalaringizni tekshiring", "",
+    "Qaysilari bajarildi, qaysilari ertaga qoldi? Mini App orqali holatini yangilang.", "",
     `Bajarildi: ${completed}`,
-    `Overdue: ${counts.overdue}`,
-    `Blocked: ${counts.blocked}`,
-    `Reviewga yuborildi: ${review}`,
-    `Keyingi kunga qolgan open task: ${counts.open}`,
+    `Kechikkan: ${counts.overdue}`,
+    `Bloklangan: ${counts.blocked}`,
+    `Tekshiruvga yuborildi: ${review}`,
+    `Keyingi kunga qolgan ochiq vazifa: ${counts.open}`,
     ...(urgent.length ? ["", "Muhim qolganlar:", ...urgent.map((task) => `• ${task.title}`)] : []),
   ].join("\n");
 }
@@ -102,17 +103,17 @@ function eveningHead(tasks: Task[], events: TaskEvent[], users: User[], now: Dat
   return [
     "🌙 Marketing — Kun yakuni", "",
     `Bugun yaratildi: ${created}`,
-    `Done: ${completed}`,
-    `Overdue: ${counts.overdue}`,
-    `Blocked: ${counts.blocked}`,
-    `Review: ${counts.review}`,
+    `Bajarildi: ${completed}`,
+    `Kechikkan: ${counts.overdue}`,
+    `Bloklangan: ${counts.blocked}`,
+    `Tekshiruvda: ${counts.review}`,
     `Keyingi kunga qoldi: ${counts.open}`,
-    "", "Team:", "",
+    "", "Jamoa:", "",
     ...activeUsers(users).map((user) => {
       const mine = tasks.filter((task) => task.assigneeId === user.id);
       const metric = workloadMetrics(mine, now);
       const done = mine.filter((task) => inRange(task.completedAt, range.start, now)).length;
-      return `${user.displayName} — Done ${done} | Open ${metric.open} | Overdue ${metric.overdue}`;
+      return `${user.displayName} — Bajarildi ${done} | Ochiq ${metric.open} | Kechikkan ${metric.overdue}`;
     }),
   ].join("\n");
 }
@@ -122,14 +123,14 @@ function weeklyEmployee(user: User, tasks: Task[], events: TaskEvent[], requests
   const metric = weeklyMetrics({ tasks, events, requests, ...range, userId: user.id });
   return [
     "📊 Haftalik natija", "",
-    `Created: ${metric.created}`,
-    `Completed: ${metric.completed}`,
-    `On time: ${metric.onTimeCompleted}`,
-    `Overdue: ${metric.overdue}`,
-    `Blocked: ${metric.blocked}`,
-    `Revision: ${metric.revisions}`,
-    `Deadline changes: ${metric.deadlineChanges}`,
-    `Next week carry-over: ${metric.carryOver}`,
+    `Yaratildi: ${metric.created}`,
+    `Bajarildi: ${metric.completed}`,
+    `Vaqtida: ${metric.onTimeCompleted}`,
+    `Kechikkan: ${metric.overdue}`,
+    `Bloklangan: ${metric.blocked}`,
+    `Tuzatishlar: ${metric.revisions}`,
+    `Muddat o‘zgarishlari: ${metric.deadlineChanges}`,
+    `Keyingi haftaga qoldi: ${metric.carryOver}`,
   ].join("\n");
 }
 
@@ -138,20 +139,20 @@ function weeklyHead(tasks: Task[], events: TaskEvent[], requests: DeadlineChange
   const metric = weeklyMetrics({ tasks, events, requests, ...range });
   return [
     "📊 Marketing — Haftalik natija", "",
-    `Created: ${metric.created}`,
-    `Completed: ${metric.completed}`,
-    `Created vs completed: ${metric.created} / ${metric.completed}`,
-    `On time: ${metric.onTimeCompleted}`,
-    `Overdue: ${metric.overdue}`,
-    `Current overdue: ${metric.currentOverdue}`,
-    `Blocked: ${metric.blocked}`,
-    `Revision: ${metric.revisions}`,
-    `Deadline changes: ${metric.deadlineChanges}`,
-    `Carry-over: ${metric.carryOver}`,
-    "", "Team:", "",
+    `Yaratildi: ${metric.created}`,
+    `Bajarildi: ${metric.completed}`,
+    `Reja va natija: ${metric.created} / ${metric.completed}`,
+    `Vaqtida: ${metric.onTimeCompleted}`,
+    `Kechikkan: ${metric.overdue}`,
+    `Hozir kechikkan: ${metric.currentOverdue}`,
+    `Bloklangan: ${metric.blocked}`,
+    `Tuzatishlar: ${metric.revisions}`,
+    `Muddat o‘zgarishlari: ${metric.deadlineChanges}`,
+    `Keyingi davrga qoldi: ${metric.carryOver}`,
+    "", "Jamoa:", "",
     ...activeUsers(users).map((user) => {
       const personal = weeklyMetrics({ tasks, events, requests, ...range, userId: user.id });
-      return `${user.displayName} — Done ${personal.completed} | On time ${personal.onTimeCompleted} | Overdue ${personal.currentOverdue}`;
+      return `${user.displayName} — Bajarildi ${personal.completed} | Vaqtida ${personal.onTimeCompleted} | Kechikkan ${personal.currentOverdue}`;
     }),
   ].join("\n");
 }
@@ -200,7 +201,7 @@ export class ReportingService {
       const claimed = await this.repository.claimReportDelivery({ reportType: type, intervalKey, recipientUserId: recipient.id });
       if (!claimed) { deduplicated += 1; continue; }
       try {
-        await this.dispatcher.sendReport(recipient, text);
+        await this.dispatcher.sendReport(recipient, text, `report:${type}:${intervalKey}:${recipient.id}`);
         await this.repository.completeReportDelivery({ reportType: type, intervalKey, recipientUserId: recipient.id, status: "SENT" });
         sent += 1;
       } catch {

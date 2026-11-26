@@ -5,6 +5,7 @@ import { z } from "zod";
 
 export const SESSION_COOKIE_NAME = "marketing_session";
 export const SESSION_MAX_AGE_SECONDS = 12 * 60 * 60;
+export const WEB_SESSION_MAX_AGE_SECONDS = 14 * 24 * 60 * 60;
 
 const SessionPayloadSchema = z.object({
   v: z.literal(1),
@@ -27,12 +28,13 @@ export function createSessionToken(
   input: Readonly<{ userId: string; telegramUserId: string }>,
   secret: string,
   now: Date = new Date(),
+  maxAgeSeconds = SESSION_MAX_AGE_SECONDS,
 ): string {
   const payload: SessionPayload = {
     v: 1,
     userId: input.userId,
     telegramUserId: input.telegramUserId,
-    expiresAt: Math.floor(now.getTime() / 1000) + SESSION_MAX_AGE_SECONDS,
+    expiresAt: Math.floor(now.getTime() / 1000) + maxAgeSeconds,
   };
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return `${encoded}.${signature(encoded, secret).toString("base64url")}`;

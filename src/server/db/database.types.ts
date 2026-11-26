@@ -33,6 +33,8 @@ type TaskRow = {
   creator_id: string;
   assignee_id: string;
   deadline: string;
+  shoot_at: string | null;
+  publication_at: string | null;
   blocked_reason: string | null;
   source_telegram_update_id: number | null;
   completed_at: string | null;
@@ -41,6 +43,105 @@ type TaskRow = {
   updated_at: string;
   recurring_definition_id: string | null;
   scheduled_occurrence_at: string | null;
+  workflow_run_id: string | null;
+  workflow_step_id: string | null;
+  participant_ids: string[];
+  workflow_next_deadline: string | null;
+}
+
+type WorkflowTemplateRow = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  is_system: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type TaskTemplateRow = {
+  id: string; replaces_id: string | null; name: string;
+  deadline_offset_days: number; deadline_local_time: string;
+  checkpoints: Json; is_active: boolean; created_by: string; created_at: string;
+}
+
+type TaskTemplateInstanceRow = {
+  task_id: string; template_id: string; event_on: string;
+  deadline_is_auto: boolean; created_at: string;
+}
+
+type WorkflowTemplateStepRow = {
+  id: string;
+  template_id: string;
+  position: number;
+  title: string;
+  description: string | null;
+  assignee_role: UserRow["role"];
+  priority: TaskRow["priority"];
+  due_after_hours: number;
+  estimated_minutes: number | null;
+  checkpoint_titles: string[];
+  video_kind: "SHOOT" | "EDIT" | null;
+}
+
+type TaskVideoBriefRow = {
+  task_id: string;
+  kind: "SHOOT" | "EDIT";
+  scenario_url: string | null;
+  on_camera_person: string | null;
+  location: string | null;
+  scheduled_at: string | null;
+  duration_minutes: number | null;
+  confirmed_by: string | null;
+  confirmed_at: string | null;
+  footage_url: string | null;
+  output_spec: string | null;
+  edit_level: "SIMPLE" | "STANDARD" | "COMPLEX" | null;
+  updated_at: string;
+}
+
+type WorkflowRunRow = {
+  id: string;
+  template_id: string;
+  created_by: string;
+  subject: string;
+  assignee_map: Json;
+  status: "ACTIVE" | "COMPLETED" | "CANCELLED";
+  current_position: number;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  step_assignments: Json | null;
+}
+
+type AssistantTurnRow = {
+  id: string;
+  user_id: string;
+  request_key: string;
+  source: "WEB" | "TELEGRAM";
+  user_text: string;
+  answer_text: string | null;
+  status: "PENDING" | "COMPLETE" | "FAILED";
+  input_tokens: number | null;
+  output_tokens: number | null;
+  created_at: string;
+  completed_at: string | null;
+  action_proposal: Json | null;
+  action_status: "PENDING" | "CLAIMED" | "DONE" | "FAILED" | null;
+  action_expires_at: string | null;
+  action_result: string | null;
+}
+
+type TaskCommentRow = {
+  id: string;
+  task_id: string;
+  author_id: string;
+  kind: "COMMENT" | "RESULT";
+  body: string | null;
+  attachment_url: string | null;
+  created_at: string;
 }
 
 type TaskEventRow = {
@@ -53,6 +154,44 @@ type TaskEventRow = {
   new_value: Json | null;
   metadata: Json;
   created_at: string;
+}
+
+type UserTaskPlanRow = {
+  user_id: string;
+  task_id: string;
+  is_important: boolean | null;
+  urgent_override: boolean | null;
+  planned_on: string | null;
+  estimated_minutes: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type TaskCheckpointRow = {
+  id: string;
+  task_id: string;
+  title: string;
+  due_at: string | null;
+  position: number;
+  created_by: string;
+  completed_by: string | null;
+  completed_at: string | null;
+  created_at: string;
+  template_offset_days: number | null;
+  template_local_time: string | null;
+  due_is_manual: boolean;
+}
+
+type WebLoginChallengeRow = {
+  id: string;
+  browser_hash: string;
+  code_hash: string;
+  status: "PENDING" | "APPROVED" | "CONSUMED";
+  user_id: string | null;
+  created_at: string;
+  expires_at: string;
+  approved_at: string | null;
+  consumed_at: string | null;
 }
 
 type DeadlineRequestRow = {
@@ -133,6 +272,9 @@ type ReportDeliveryRow = {
   failure_reason: string | null;
   created_at: string;
   completed_at: string | null;
+  attempt_count: number;
+  next_attempt_at: string;
+  claimed_at: string | null;
 }
 
 type ReminderDeliveryRow = {
@@ -145,6 +287,37 @@ type ReminderDeliveryRow = {
   metadata: Json;
   created_at: string;
   completed_at: string | null;
+  attempt_count: number;
+  next_attempt_at: string;
+  claimed_at: string | null;
+}
+
+type NotificationOutboxRow = {
+  id: string;
+  dedupe_key: string;
+  notification_type: "ASSIGNMENT" | "BULK_ASSIGNMENT" | "WORKFLOW" | "REPORT" | "SHOOT_SCENARIO";
+  recipient_user_id: string | null;
+  task_id: string | null;
+  payload: Json;
+  status: "PENDING" | "CLAIMED" | "SENT" | "FAILED";
+  attempt_count: number;
+  next_attempt_at: string;
+  claimed_at: string | null;
+  sent_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+type NotificationPreferencesRow = {
+  user_id: string;
+  assignments: boolean;
+  workflow: boolean;
+  reminders: boolean;
+  daily_check: boolean;
+  reports: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 type TableDefinition<Row> = {
@@ -160,6 +333,10 @@ export interface Database {
       users: TableDefinition<UserRow>;
       tasks: TableDefinition<TaskRow>;
       task_events: TableDefinition<TaskEventRow>;
+      task_comments: TableDefinition<TaskCommentRow>;
+      user_task_plans: TableDefinition<UserTaskPlanRow>;
+      task_checkpoints: TableDefinition<TaskCheckpointRow>;
+      web_login_challenges: TableDefinition<WebLoginChallengeRow>;
       deadline_change_requests: TableDefinition<DeadlineRequestRow>;
       reassign_requests: TableDefinition<ReassignRequestRow>;
       task_revisions: TableDefinition<RevisionRow>;
@@ -169,9 +346,75 @@ export interface Database {
       report_deliveries: TableDefinition<ReportDeliveryRow>;
       user_events: TableDefinition<UserEventRow>;
       task_reminder_deliveries: TableDefinition<ReminderDeliveryRow>;
+      notification_outbox: TableDefinition<NotificationOutboxRow>;
+      browser_task_requests: TableDefinition<{
+        request_id: string; actor_id: string; request_hash: string; task_id: string | null;
+        created_at: string; notification_queued_at: string | null;
+      }>;
+      user_notification_preferences: TableDefinition<NotificationPreferencesRow>;
+      workflow_templates: TableDefinition<WorkflowTemplateRow>;
+      task_templates: TableDefinition<TaskTemplateRow>;
+      task_template_instances: TableDefinition<TaskTemplateInstanceRow>;
+      workflow_template_steps: TableDefinition<WorkflowTemplateStepRow>;
+      task_video_briefs: TableDefinition<TaskVideoBriefRow>;
+      workflow_runs: TableDefinition<WorkflowRunRow>;
+      assistant_turns: TableDefinition<AssistantTurnRow>;
     };
     Views: Record<never, never>;
     Functions: {
+      create_browser_task_with_checkpoints: { Args: {
+        p_request_id: string; p_request_hash: string; p_creator_id: string; p_assignee_id: string;
+        p_title: string; p_description: string; p_priority: "high" | "normal" | "low";
+        p_deadline: string; p_video_kind: "SHOOT" | "EDIT" | null; p_video_brief: Json | null;
+        p_template_id: string | null; p_event_on: string | null; p_deadline_override: boolean;
+        p_manual_checkpoints: Json;
+      }; Returns: TaskRow };
+      create_browser_task: { Args: {
+        p_request_id: string; p_request_hash: string; p_creator_id: string; p_assignee_id: string;
+        p_title: string; p_description: string; p_priority: "high" | "normal" | "low";
+        p_deadline: string; p_video_kind: "SHOOT" | "EDIT" | null; p_video_brief: Json | null;
+        p_template_id: string | null; p_event_on: string | null; p_deadline_override: boolean;
+      }; Returns: TaskRow };
+      save_task_template_version: { Args: { p_actor_id: string; p_source_template_id: string | null;
+        p_name: string; p_deadline_offset_days: number; p_deadline_local_time: string; p_checkpoints: Json }; Returns: string };
+      archive_task_template: { Args: { p_actor_id: string; p_template_id: string }; Returns: boolean };
+      create_task_from_template: { Args: { p_creator_id: string; p_assignee_id: string;
+        p_template_id: string; p_event_on: string; p_title: string; p_description: string;
+        p_priority: "high" | "normal" | "low"; p_deadline_override: string | null }; Returns: TaskRow };
+      rebase_task_template_event: { Args: { p_task_id: string; p_actor_id: string; p_event_on: string }; Returns: TaskTemplateInstanceRow };
+      set_task_checkpoint_due: { Args: { p_checkpoint_id: string; p_actor_id: string; p_due_at: string | null }; Returns: TaskCheckpointRow };
+      claim_assistant_action: {
+        Args: { p_turn_id: string; p_user_id: string };
+        Returns: Json;
+      };
+      finish_assistant_action: {
+        Args: { p_turn_id: string; p_user_id: string; p_result: string; p_success: boolean };
+        Returns: boolean;
+      };
+      enqueue_shoot_scenario_notification: {
+        Args: { p_dedupe_key: string; p_task_id: string; p_payload: Json };
+        Returns: NotificationOutboxRow;
+      };
+      create_task_with_video_brief: {
+        Args: { p_creator_id: string; p_assignee_id: string; p_title: string;
+          p_description: string; p_priority: "high" | "normal" | "low";
+          p_deadline: string; p_video_kind: "SHOOT" | "EDIT"; p_video_brief: Json };
+        Returns: TaskRow;
+      };
+      save_task_video_brief: {
+        Args: { p_task_id: string; p_actor_id: string; p_kind: "SHOOT" | "EDIT";
+          p_brief: Json; p_confirm: boolean };
+        Returns: TaskVideoBriefRow;
+      };
+      claim_assistant_turn: {
+        Args: { p_user_id: string; p_request_key: string; p_source: string; p_user_text: string };
+        Returns: Json;
+      };
+      finish_assistant_turn: {
+        Args: { p_turn_id: string; p_user_id: string; p_answer_text: string | null;
+          p_input_tokens: number | null; p_output_tokens: number | null };
+        Returns: AssistantTurnRow;
+      };
       register_telegram_user: {
         Args: {
           p_telegram_user_id: string;
@@ -207,9 +450,126 @@ export interface Database {
         };
         Returns: TaskRow;
       };
+      update_task_with_events: {
+        Args: { p_task_id: string; p_actor_id: string; p_patch: Json };
+        Returns: TaskRow;
+      };
+      add_task_comment_with_event: {
+        Args: {
+          p_task_id: string;
+          p_author_id: string;
+          p_kind: "COMMENT" | "RESULT";
+          p_body: string | null;
+          p_attachment_url: string | null;
+        };
+        Returns: TaskCommentRow;
+      };
+      enqueue_notification_outbox: {
+        Args: {
+          p_dedupe_key: string;
+          p_notification_type: NotificationOutboxRow["notification_type"];
+          p_recipient_user_id: string;
+          p_task_id: string | null;
+          p_payload: Json;
+        };
+        Returns: NotificationOutboxRow;
+      };
+      claim_notification_outbox: { Args: { p_id: string }; Returns: boolean };
+      claim_due_notification_outbox: { Args: { p_limit: number }; Returns: NotificationOutboxRow[] };
+      complete_notification_outbox: {
+        Args: { p_id: string; p_sent: boolean; p_error: string | null };
+        Returns: undefined;
+      };
+      claim_report_delivery: {
+        Args: { p_report_type: string; p_interval_key: string; p_recipient_user_id: string };
+        Returns: boolean;
+      };
+      complete_report_delivery: {
+        Args: {
+          p_report_type: string;
+          p_interval_key: string;
+          p_recipient_user_id: string;
+          p_status: string;
+          p_failure_reason: string | null;
+        };
+        Returns: undefined;
+      };
+      claim_task_reminder_delivery: {
+        Args: { p_task_id: string; p_deadline: string; p_reminder_type: string };
+        Returns: Json;
+      };
+      complete_task_reminder_delivery: {
+        Args: {
+          p_task_id: string;
+          p_deadline: string;
+          p_reminder_type: string;
+          p_status: string;
+          p_failure_reason: string | null;
+          p_metadata: Json;
+        };
+        Returns: undefined;
+      };
+      update_user_notification_preferences: {
+        Args: {
+          p_user_id: string;
+          p_assignments: boolean;
+          p_workflow: boolean;
+          p_reminders: boolean;
+          p_daily_check: boolean;
+          p_reports: boolean;
+        };
+        Returns: NotificationPreferencesRow;
+      };
+      start_workflow_run: {
+        Args: { p_template_id: string; p_actor_id: string; p_subject: string; p_assignee_map: Json };
+        Returns: TaskRow;
+      };
+      start_workflow_run_v2: {
+        Args: { p_template_id: string; p_actor_id: string; p_subject: string; p_first_deadline: string; p_step_assignments: Json };
+        Returns: TaskRow;
+      };
+      submit_workflow_step_for_review: {
+        Args: { p_task_id: string; p_actor_id: string; p_next_deadline: string | null };
+        Returns: TaskRow;
+      };
+      complete_self_owned_task: {
+        Args: { p_task_id: string; p_actor_id: string; p_next_deadline: string | null };
+        Returns: TaskRow;
+      };
+      save_workflow_template_version: {
+        Args: {
+          p_actor_id: string;
+          p_source_template_id: string | null;
+          p_name: string;
+          p_description: string | null;
+          p_steps: Json;
+        };
+        Returns: string;
+      };
+      advance_workflow_run: {
+        Args: { p_completed_task_id: string; p_actor_id: string };
+        Returns: TaskRow | null;
+      };
+      recover_workflow_runs: { Args: Record<never, never>; Returns: TaskRow[] };
       toggle_posting_checklist_item: {
         Args: { p_item_id: string; p_actor_id: string };
         Returns: ChecklistItemRow;
+      };
+      add_task_checkpoint_with_event: {
+        Args: { p_task_id: string; p_actor_id: string; p_title: string; p_due_at: string | null };
+        Returns: TaskCheckpointRow;
+      };
+      toggle_task_checkpoint_with_event: {
+        Args: { p_checkpoint_id: string; p_actor_id: string };
+        Returns: TaskCheckpointRow;
+      };
+      complete_task_checkpoint_with_event: {
+        Args: { p_checkpoint_id: string; p_actor_id: string };
+        Returns: TaskCheckpointRow;
+      };
+      remove_task_checkpoint_with_event: {
+        Args: { p_checkpoint_id: string; p_actor_id: string };
+        Returns: undefined;
       };
       generate_recurring_task: {
         Args: { p_definition_id: string; p_scheduled_occurrence_at: string; p_next_occurrence_at: string | null };

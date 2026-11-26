@@ -47,7 +47,17 @@ export class ReminderService {
    * re-sends. One recipient or task failing never aborts the sweep.
    */
   async deliver(now = new Date()): Promise<ReminderDeliverySummary> {
-    const [tasks, users] = await Promise.all([this.repository.listTasks(), this.repository.listUsers()]);
+    // Across all five thresholds and the six-hour catch-up window, no task
+    // outside [now-30h, now+24h] can be eligible. Filtering in Postgres avoids
+    // downloading the full task history on every ten-minute cron run.
+    const hour = 60 * 60 * 1000;
+    const [tasks, users] = await Promise.all([
+      this.repository.listReminderCandidates({
+        deadlineFrom: new Date(now.getTime() - 30 * hour).toISOString(),
+        deadlineTo: new Date(now.getTime() + 24 * hour).toISOString(),
+      }),
+      this.repository.listUsers(),
+    ]);
     const summary = { tasksChecked: 0, sent: 0, deduplicated: 0, failed: 0, skippedNoRecipients: 0 };
 
     for (const task of tasks) {
@@ -76,23 +86,43 @@ export class ReminderService {
       return;
     }
 
-    const claimed = await this.repository.claimReminderDelivery({ taskId: task.id, deadline: task.deadline, reminderType: type });
-    if (!claimed) {
+    const claim = await this.repository.claimReminderDelivery({ taskId: task.id, deadline: task.deadline, reminderType: type });
+    if (!claim.claimed) {
+      summary.deduplicated += 1;
+      return;
+    }
+
+    const previousByRecipient = new Map(claim.deliveries.map((delivery) => [delivery.recipientUserId, delivery]));
+    const pendingRecipients = recipients.filter((recipient) => previousByRecipient.get(recipient.id)?.status !== "SENT");
+    if (pendingRecipients.length === 0) {
+      await this.repository.completeReminderDelivery({
+        taskId: task.id,
+        deadline: task.deadline,
+        reminderType: type,
+        status: "SENT",
+        metadata: { deliveries: claim.deliveries },
+      });
       summary.deduplicated += 1;
       return;
     }
 
     try {
-      const result = await this.dispatcher.notifyReminder({ task, reminderType: type, recipients });
-      const anySent = result.deliveries.some((delivery) => delivery.status === "SENT");
-      const status = anySent ? "SENT" : "FAILED";
+      const result = await this.dispatcher.notifyReminder({ task, reminderType: type, recipients: pendingRecipients });
+      for (const delivery of result.deliveries) previousByRecipient.set(delivery.recipientUserId, delivery);
+      const deliveries = recipients.map((recipient) => previousByRecipient.get(recipient.id) ?? {
+        recipientUserId: recipient.id,
+        status: "FAILED" as const,
+        reason: "DELIVERY_FAILED",
+      });
+      const allSent = deliveries.every((delivery) => delivery.status === "SENT");
+      const status = allSent ? "SENT" : "FAILED";
       await this.repository.completeReminderDelivery({
         taskId: task.id,
         deadline: task.deadline,
         reminderType: type,
         status,
-        failureReason: anySent ? undefined : "DELIVERY_FAILED",
-        metadata: { deliveries: result.deliveries },
+        failureReason: allSent ? undefined : "PARTIAL_OR_TOTAL_DELIVERY_FAILED",
+        metadata: { deliveries },
       });
       if (status === "SENT") summary.sent += 1; else summary.failed += 1;
       console.info(JSON.stringify({

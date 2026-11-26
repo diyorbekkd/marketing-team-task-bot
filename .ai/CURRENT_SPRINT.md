@@ -1,5 +1,9 @@
 # Current sprint
 
+## 2026-11-23 active sprint: focus and reliable release
+
+The Head authorized the [focus and reliable release sprint](../docs/SPRINT_2026-11-23_FOCUS.md). Codex owns implementation, verification, and release preparation. The Head owns the Production AI key, ordinary employee Preview acceptance, and production-backlog decisions. The video operator's production-bot check is deferred until the Head reports its status; this is a known unknown, not a passed test. Production remains untouched. The historical fast-track plan below is retained for context.
+
 ## Fast-track MVP vertical slice
 
 - Branch: `fast-track/mvp` (to be created after the Sprint 0 closeout commit)
